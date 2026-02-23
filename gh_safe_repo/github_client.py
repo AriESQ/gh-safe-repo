@@ -51,6 +51,14 @@ class GitHubClient:
         data = self.get_json("/user")
         return data["login"]
 
+    def get_plan_name(self) -> str:
+        """Return the authenticated user's GitHub plan ('free', 'pro', etc.)."""
+        try:
+            data = self.get_json("/user")
+            return data.get("plan", {}).get("name", "free") or "free"
+        except APIError:
+            return "free"
+
     def call_api(self, method, endpoint, body=None):
         """
         Call the GitHub API via `gh api`.

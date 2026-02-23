@@ -1,7 +1,7 @@
 """Tests for diff.py — Change and Plan."""
 
 import pytest
-from lib.diff import Change, ChangeCategory, ChangeType, Plan
+from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
 
 
 def make_change(type=ChangeType.ADD, category=ChangeCategory.REPO, key="test"):

@@ -4,13 +4,13 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from lib.config_manager import ConfigManager
-from lib.diff import ChangeCategory, ChangeType
-from lib.errors import APIError, RepoExistsError
-from lib.plugins.actions import ActionsPlugin
-from lib.plugins.branch_protection import BranchProtectionPlugin
-from lib.plugins.repository import RepositoryPlugin
-from lib.plugins.security import SecurityPlugin
+from gh_safe_repo.config_manager import ConfigManager
+from gh_safe_repo.diff import ChangeCategory, ChangeType
+from gh_safe_repo.errors import APIError, RepoExistsError
+from gh_safe_repo.plugins.actions import ActionsPlugin
+from gh_safe_repo.plugins.branch_protection import BranchProtectionPlugin
+from gh_safe_repo.plugins.repository import RepositoryPlugin
+from gh_safe_repo.plugins.security import SecurityPlugin
 
 
 def make_mock_client():
@@ -216,6 +216,60 @@ class TestBranchProtectionPlugin:
         plugin.apply(plan)
         assert "branches/master/protection" in client.call_json.call_args.args[1]
 
+    # --- Paid plan private repo ---
+
+    def test_plan_private_paid_repo_emits_add_changes(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        assert len(adds) > 0
+
+    # --- Rulesets API ---
+
+    def test_apply_uses_rulesets_endpoint_when_configured(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        config = make_config({("branch_protection", "use_rulesets"): "true"})
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        assert client.call_json.called
+        call = client.call_json.call_args
+        assert call.args[0] == "POST"
+        assert call.args[1].endswith("/rulesets")
+
+    def test_apply_uses_classic_endpoint_by_default(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        assert client.call_json.called
+        call = client.call_json.call_args
+        assert call.args[0] == "PUT"
+        assert "branches/main/protection" in call.args[1]
+
+    def test_ruleset_body_includes_pr_rule(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        desired = plugin._desired()
+        body = plugin._build_ruleset_body(desired)
+        rule_types = [r["type"] for r in body["rules"]]
+        assert "pull_request" in rule_types
+
+    def test_ruleset_body_admin_bypass_when_enforce_admins_false(self):
+        client = make_mock_client()
+        # enforce_admins defaults to false in safe defaults
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        desired = plugin._desired()
+        body = plugin._build_ruleset_body(desired)
+        assert len(body["bypass_actors"]) == 1
+        assert body["bypass_actors"][0]["actor_id"] == 5
+        assert body["bypass_actors"][0]["actor_type"] == "RepositoryRole"
+
 
 class TestSecurityPlugin:
     # --- Private repo (default) — all changes should be SKIP ---
@@ -273,3 +327,43 @@ class TestSecurityPlugin:
         plan = plugin.plan()
         adds = [c for c in plan.changes if c.type == ChangeType.ADD]
         assert not any(c.key == "dependabot_alerts" for c in adds)
+
+    # --- Private paid plan repo ---
+
+    def test_plan_private_paid_repo_has_dependabot_add(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        dep = next((c for c in adds if c.key == "dependabot_alerts"), None)
+        assert dep is not None
+        assert dep.new is True
+
+    def test_plan_private_paid_repo_has_secret_scanning_add(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        ss = next((c for c in adds if c.key == "secret_scanning"), None)
+        assert ss is not None
+        assert ss.new is True
+
+    def test_apply_private_paid_repo_enables_secret_scanning(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        plan = plugin.plan()
+        plugin.apply(plan)
+        # Find the PATCH call for secret scanning
+        patch_calls = [
+            c for c in client.call_json.call_args_list if c.args[0] == "PATCH"
+        ]
+        assert len(patch_calls) == 1
+        body = patch_calls[0].args[2]
+        assert body == {"security_and_analysis": {"secret_scanning": {"status": "enabled"}}}

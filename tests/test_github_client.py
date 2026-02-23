@@ -5,8 +5,8 @@ import subprocess
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-from lib.errors import APIError, AuthError
-from lib.github_client import GitHubClient
+from gh_safe_repo.errors import APIError, AuthError
+from gh_safe_repo.github_client import GitHubClient
 
 
 def make_completed_process(stdout="", stderr="", returncode=0):
@@ -226,3 +226,40 @@ class TestCloneForScan:
             with pytest.raises(APIError) as exc_info:
                 client.clone_for_scan("alice", "private-repo", "/tmp/scan")
         assert "clone" in str(exc_info.value).lower()
+
+
+class TestGetPlanName:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            return GitHubClient()
+
+    def test_returns_plan_name_from_user_endpoint(self):
+        client = self._make_client()
+        user_data = {"login": "alice", "plan": {"name": "pro"}}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(user_data), stderr=""
+            )
+            result = client.get_plan_name()
+        assert result == "pro"
+
+    def test_returns_free_when_plan_key_missing(self):
+        client = self._make_client()
+        user_data = {"login": "alice"}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(user_data), stderr=""
+            )
+            result = client.get_plan_name()
+        assert result == "free"
+
+    def test_returns_free_when_plan_name_missing(self):
+        client = self._make_client()
+        user_data = {"login": "alice", "plan": {}}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(user_data), stderr=""
+            )
+            result = client.get_plan_name()
+        assert result == "free"

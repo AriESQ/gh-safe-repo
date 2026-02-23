@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gh-safe-repo"
+version = "0.1.0"
+description = "Create GitHub repositories with safe defaults applied"
+requires-python = ">=3.8"
+
+[project.scripts]
+gh-safe-repo = "gh_safe_repo.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gh_safe_repo"]

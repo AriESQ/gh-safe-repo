@@ -37,6 +37,7 @@ SAFE_DEFAULTS = {
         "enforce_admins": "false",
         "allow_force_pushes": "false",
         "allow_deletions": "false",
+        "use_rulesets": "false",
     },
     "security": {
         "enable_dependabot_alerts": "true",

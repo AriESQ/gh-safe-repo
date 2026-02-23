@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lib.security_scanner import (
+from gh_safe_repo.security_scanner import (
     Finding,
     FindingCategory,
     SecurityScanner,

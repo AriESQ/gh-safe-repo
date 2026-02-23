@@ -5,8 +5,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from lib.config_manager import ConfigManager
-from lib.errors import ConfigError
+from gh_safe_repo.config_manager import ConfigManager
+from gh_safe_repo.errors import ConfigError
 
 
 class TestConfigManagerDefaults:

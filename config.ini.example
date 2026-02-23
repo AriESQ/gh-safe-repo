@@ -66,6 +66,9 @@ allow_force_pushes = false
 # Block deletion of the protected branch
 allow_deletions = false
 
+# Use the Rulesets API instead of classic branch protection (same rules, adds bypass actors)
+# use_rulesets = false
+
 [security]
 # Enable Dependabot vulnerability alerts (public repos only on free plan)
 enable_dependabot_alerts = true

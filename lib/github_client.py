@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 from .errors import APIError, AuthError
 
@@ -113,6 +114,61 @@ class GitHubClient:
         if suffix:
             return f"{base}/{suffix.lstrip('/')}"
         return base
+
+    def copy_repo(self, owner, source_repo, dest_repo):
+        """
+        Mirror-clone source_repo and push all refs to dest_repo.
+        Both repos must belong to owner.
+        Uses x-access-token HTTPS auth so no SSH setup is required.
+        """
+        source_url = f"https://x-access-token:{self._token}@github.com/{owner}/{source_repo}.git"
+        dest_url = f"https://x-access-token:{self._token}@github.com/{owner}/{dest_repo}.git"
+
+        # Sanitised versions for debug output (never log the real token)
+        source_display = f"https://github.com/{owner}/{source_repo}.git"
+        dest_display = f"https://github.com/{owner}/{dest_repo}.git"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mirror_path = os.path.join(tmpdir, "mirror")
+
+            if self.debug:
+                print(f"[debug] git clone --mirror {source_display}", file=sys.stderr)
+
+            try:
+                subprocess.run(
+                    ["git", "clone", "--mirror", source_url, mirror_path],
+                    check=True,
+                    capture_output=not self.debug,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise APIError(
+                    f"git clone failed for {source_display}: {(e.stderr or '').strip()}"
+                )
+
+            if self.debug:
+                print(f"[debug] git remote set-url --push origin {dest_display}", file=sys.stderr)
+
+            subprocess.run(
+                ["git", "-C", mirror_path, "remote", "set-url", "--push", "origin", dest_url],
+                check=True,
+                capture_output=True,
+            )
+
+            if self.debug:
+                print(f"[debug] git push --mirror origin -> {dest_display}", file=sys.stderr)
+
+            try:
+                subprocess.run(
+                    ["git", "-C", mirror_path, "push", "--mirror", "origin"],
+                    check=True,
+                    capture_output=not self.debug,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise APIError(
+                    f"git push failed to {dest_display}: {(e.stderr or '').strip()}"
+                )
 
     def _parse_status(self, stderr):
         """Extract HTTP status code from gh stderr output."""

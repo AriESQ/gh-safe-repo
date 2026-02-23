@@ -28,6 +28,19 @@ SAFE_DEFAULTS = {
         "default_workflow_permissions": "read",
         "can_approve_pull_request_reviews": "false",
     },
+    "branch_protection": {
+        "protected_branch": "main",
+        "require_pull_request": "true",
+        "required_approving_reviews": "1",
+        "dismiss_stale_reviews": "true",
+        "require_conversation_resolution": "true",
+        "enforce_admins": "false",
+        "allow_force_pushes": "false",
+        "allow_deletions": "false",
+    },
+    "security": {
+        "enable_dependabot_alerts": "true",
+    },
 }
 
 CONFIG_PATH = Path.home() / ".config" / "gh-safe-repo" / "config.ini"
@@ -77,6 +90,13 @@ class ConfigManager:
     def actions_settings(self):
         """Return the full actions settings dict."""
         section = "actions"
+        if not self._config.has_section(section):
+            return {}
+        return dict(self._config[section])
+
+    def branch_protection_settings(self):
+        """Return the full branch protection settings dict."""
+        section = "branch_protection"
         if not self._config.has_section(section):
             return {}
         return dict(self._config[section])

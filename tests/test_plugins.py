@@ -141,31 +141,135 @@ class TestActionsPlugin:
 
 
 class TestBranchProtectionPlugin:
-    def test_plan_emits_skip(self):
+    # --- Private repo (default) — all changes should be SKIP ---
+
+    def test_plan_private_repo_emits_skip(self):
         client = make_mock_client()
         plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         assert all(c.type == ChangeType.SKIP for c in plan.changes)
 
-    def test_apply_does_nothing(self):
+    def test_apply_private_repo_does_nothing(self):
         client = make_mock_client()
         plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         plugin.apply(plan)
         client.call_json.assert_not_called()
 
+    # --- Public repo — should add protection rules ---
+
+    def test_plan_public_repo_emits_add_changes(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        assert len(adds) > 0
+
+    def test_plan_public_repo_includes_force_push_change(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        fp_change = next((c for c in adds if c.key == "allow_force_pushes"), None)
+        assert fp_change is not None
+        assert fp_change.new is False  # we disable force pushes (GH default is True)
+
+    def test_plan_public_repo_includes_require_pr_change(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        pr_change = next((c for c in adds if c.key == "require_pull_request"), None)
+        assert pr_change is not None
+        assert pr_change.new is True
+
+    def test_apply_public_repo_puts_branch_protection(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        assert client.call_json.called
+        call = client.call_json.call_args
+        assert call.args[0] == "PUT"
+        assert "branches/main/protection" in call.args[1]
+
+    def test_apply_public_repo_body_has_correct_fields(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        body = client.call_json.call_args.args[2]
+        assert body["allow_force_pushes"] is False
+        assert body["allow_deletions"] is False
+        assert body["enforce_admins"] is False
+        assert body["required_pull_request_reviews"]["dismiss_stale_reviews"] is True
+        assert body["required_pull_request_reviews"]["required_approving_review_count"] == 1
+
+    def test_apply_public_repo_uses_configured_branch(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        config = make_config({("branch_protection", "protected_branch"): "master"})
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        assert "branches/master/protection" in client.call_json.call_args.args[1]
+
 
 class TestSecurityPlugin:
-    def test_plan_emits_skips(self):
+    # --- Private repo (default) — all changes should be SKIP ---
+
+    def test_plan_private_repo_emits_skips(self):
         client = make_mock_client()
         plugin = SecurityPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         assert len(plan.changes) == 2
         assert all(c.type == ChangeType.SKIP for c in plan.changes)
 
-    def test_apply_does_nothing(self):
+    def test_apply_private_repo_does_nothing(self):
         client = make_mock_client()
         plugin = SecurityPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         plugin.apply(plan)
         client.call_json.assert_not_called()
+
+    # --- Public repo — should enable Dependabot ---
+
+    def test_plan_public_repo_has_dependabot_add(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        dep = next((c for c in adds if c.key == "dependabot_alerts"), None)
+        assert dep is not None
+        assert dep.new is True
+
+    def test_plan_public_repo_secret_scanning_is_skip(self):
+        # Secret scanning is automatic for public repos — no API action needed
+        client = make_mock_client()
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        ss = next((c for c in skips if c.key == "secret_scanning"), None)
+        assert ss is not None
+        assert "automatic" in ss.reason.lower()
+
+    def test_apply_public_repo_enables_dependabot(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        assert client.call_json.called
+        call = client.call_json.call_args
+        assert call.args[0] == "PUT"
+        assert "vulnerability-alerts" in call.args[1]
+
+    def test_plan_public_repo_no_dependabot_when_disabled(self):
+        client = make_mock_client()
+        config = make_config({("security", "enable_dependabot_alerts"): "false"})
+        plugin = SecurityPlugin(client, "alice", "my-repo", config, is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        assert not any(c.key == "dependabot_alerts" for c in adds)

@@ -1,7 +1,8 @@
 """Tests for github_client.py — all subprocess calls are mocked."""
 
 import json
-from unittest.mock import MagicMock, patch
+import subprocess
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from lib.errors import APIError, AuthError
@@ -120,3 +121,73 @@ class TestHelpers:
         assert client._parse_status("HTTP 404 Not Found") == 404
         assert client._parse_status("HTTP 200 OK") == 200
         assert client._parse_status("") is None
+
+
+class TestCopyRepo:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            client = GitHubClient()
+            client._token = "ghp_testtoken"
+            return client
+
+    def test_copy_repo_calls_git_clone_mirror(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.copy_repo("alice", "private-repo", "public-repo")
+
+        # First subprocess.run call should be git clone --mirror
+        clone_call = mock_run.call_args_list[0]
+        cmd = clone_call.args[0]
+        assert cmd[0] == "git"
+        assert "--mirror" in cmd
+        assert any("private-repo.git" in arg for arg in cmd)
+        assert any("x-access-token:" in arg for arg in cmd)
+
+    def test_copy_repo_calls_git_push_mirror(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.copy_repo("alice", "private-repo", "public-repo")
+
+        # Last subprocess.run call should be git push --mirror
+        push_call = mock_run.call_args_list[-1]
+        cmd = push_call.args[0]
+        assert cmd[0] == "git"
+        assert "--mirror" in cmd
+        assert "push" in cmd
+
+    def test_copy_repo_sets_push_url_to_dest(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.copy_repo("alice", "private-repo", "public-repo")
+
+        # Middle call should be git remote set-url --push with dest URL
+        set_url_call = mock_run.call_args_list[1]
+        cmd = set_url_call.args[0]
+        assert "set-url" in cmd
+        assert any("public-repo.git" in arg for arg in cmd)
+
+    def test_copy_repo_raises_api_error_on_clone_failure(self):
+        client = self._make_client()
+        clone_error = subprocess.CalledProcessError(128, "git", stderr="fatal: repo not found")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = clone_error
+            with pytest.raises(APIError) as exc_info:
+                client.copy_repo("alice", "private-repo", "public-repo")
+        assert "clone" in str(exc_info.value).lower()
+
+    def test_copy_repo_raises_api_error_on_push_failure(self):
+        client = self._make_client()
+        success = make_completed_process()
+        push_error = subprocess.CalledProcessError(1, "git", stderr="error: push rejected")
+
+        with patch("subprocess.run") as mock_run:
+            # clone and set-url succeed, push fails
+            mock_run.side_effect = [success, success, push_error]
+            with pytest.raises(APIError) as exc_info:
+                client.copy_repo("alice", "private-repo", "public-repo")
+        assert "push" in str(exc_info.value).lower()

@@ -1,0 +1,20 @@
+# Containerfile for truffleHog
+#
+# The tools/trufflehog wrapper script uses ghcr.io/trufflesecurity/trufflehog:latest
+# by default, which is pulled automatically on first use.
+#
+# Use this Containerfile only if you want to:
+#   - Pin to a specific truffleHog version
+#   - Build an air-gapped / offline image
+#   - Add custom detectors or configuration
+#
+# Build:
+#   podman build -t trufflehog:local -f tools/Containerfile tools/
+#
+# Then point the wrapper at your local image:
+#   TRUFFLEHOG_IMAGE=trufflehog:local gh-safe-repo my-public-repo --from my-private --public
+#
+# Or set it permanently in your shell profile:
+#   export TRUFFLEHOG_IMAGE=trufflehog:local
+
+FROM ghcr.io/trufflesecurity/trufflehog:latest

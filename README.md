@@ -283,6 +283,28 @@ The scanner runs automatically during `--from --public` workflows. It never send
 - **truffleHog v3** is used if installed (`trufflehog filesystem … --json`). This gives high-accuracy secret detection.
 - **Regex fallback** runs automatically if truffleHog is unavailable or returns an unexpected exit code. It also runs in addition to truffleHog for emails and TODOs.
 
+### Running truffleHog via podman (no local install)
+
+A transparent wrapper script is included at `tools/trufflehog`. It intercepts the `filesystem` subcommand, mounts the scan path into a container, and forwards all other arguments unchanged — so `security_scanner.py` sees no difference.
+
+```bash
+# Make the wrapper available as "trufflehog" on your PATH
+cp tools/trufflehog ~/.local/bin/trufflehog   # or: ln -s "$PWD/tools/trufflehog" ~/.local/bin/trufflehog
+chmod +x ~/.local/bin/trufflehog
+```
+
+On first use, podman pulls `ghcr.io/trufflesecurity/trufflehog:latest` automatically. To pin a specific version or build an offline image:
+
+```bash
+# Build a local image from tools/Containerfile
+podman build -t trufflehog:local -f tools/Containerfile tools/
+
+# Point the wrapper at your local image
+export TRUFFLEHOG_IMAGE=trufflehog:local
+```
+
+The wrapper also works with Docker — it prefers podman if both are installed. Override with `CONTAINER_RUNTIME=docker`.
+
 ### Interactive review
 
 ```

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# tools/trufflehog — transparent podman/docker wrapper for truffleHog
+#
+# Drop this script somewhere on your PATH (e.g. copy it to ~/.local/bin/trufflehog
+# and make it executable) to run truffleHog in a container with no local install.
+#
+# Compatible with the gh-safe-repo scanner interface:
+#   trufflehog filesystem /path/to/scan --json --no-update
+#
+# When the "filesystem" subcommand is used, the scan path is mounted read-only
+# into the container as /scan and the argument is rewritten accordingly.
+# All other subcommands are passed straight through to the container.
+#
+# Configuration via environment variables:
+#   TRUFFLEHOG_IMAGE   Container image to use (default: ghcr.io/trufflesecurity/trufflehog:latest)
+#   CONTAINER_RUNTIME  Override runtime detection (podman or docker)
+
+set -euo pipefail
+
+IMAGE="${TRUFFLEHOG_IMAGE:-ghcr.io/trufflesecurity/trufflehog:latest}"
+
+# --- Detect container runtime ---
+if [[ -n "${CONTAINER_RUNTIME:-}" ]]; then
+    RUNTIME="$CONTAINER_RUNTIME"
+elif command -v podman &>/dev/null; then
+    RUNTIME="podman"
+elif command -v docker &>/dev/null; then
+    RUNTIME="docker"
+else
+    echo "trufflehog wrapper: neither podman nor docker found in PATH" >&2
+    exit 2
+fi
+
+# --- Dispatch ---
+# The scanner calls: trufflehog filesystem <abs-path> [flags...]
+# We intercept the "filesystem" subcommand, mount the path, and rewrite it.
+if [[ "${1:-}" == "filesystem" && -n "${2:-}" ]]; then
+    SCAN_PATH="$(realpath "$2")"
+    shift 2   # consume "filesystem" and the path; remaining args pass through
+    exec "$RUNTIME" run --rm \
+        --volume "$SCAN_PATH:/scan:ro" \
+        "$IMAGE" \
+        filesystem /scan "$@"
+else
+    # Any other subcommand (e.g. git, github, s3) — pass straight through
+    exec "$RUNTIME" run --rm "$IMAGE" "$@"
+fi

@@ -170,6 +170,22 @@ class GitHubClient:
                     f"git push failed to {dest_display}: {(e.stderr or '').strip()}"
                 )
 
+    def clone_for_scan(self, owner: str, repo: str, dest_path: str) -> None:
+        """Shallow-clone repo into dest_path for pre-flight scanning."""
+        clone_url = f"https://x-access-token:{self._token}@github.com/{owner}/{repo}.git"
+        display_url = f"https://github.com/{owner}/{repo}.git"
+        if self.debug:
+            print(f"[debug] git clone --depth=1 {display_url} {dest_path}", file=sys.stderr)
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth=1", clone_url, dest_path],
+                check=True,
+                capture_output=not self.debug,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise APIError(f"git clone (scan) failed for {display_url}: {(e.stderr or '').strip()}")
+
     def _parse_status(self, stderr):
         """Extract HTTP status code from gh stderr output."""
         if not stderr:

@@ -21,6 +21,7 @@ class ChangeCategory(Enum):
     BRANCH_PROTECTION = "branch_protection"
     SECURITY = "security"
     FILE = "file"
+    SCAN = "scan"
 
 
 @dataclass

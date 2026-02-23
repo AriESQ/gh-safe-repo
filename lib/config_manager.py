@@ -41,6 +41,13 @@ SAFE_DEFAULTS = {
     "security": {
         "enable_dependabot_alerts": "true",
     },
+    "pre_flight_scan": {
+        "scan_for_secrets": "true",
+        "scan_for_emails":  "true",
+        "scan_for_todos":   "true",
+        "max_file_size_mb": "100",
+        "use_trufflehog":   "true",
+    },
 }
 
 CONFIG_PATH = Path.home() / ".config" / "gh-safe-repo" / "config.ini"

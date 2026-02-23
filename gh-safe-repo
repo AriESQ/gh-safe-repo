@@ -12,7 +12,9 @@ Usage:
 
 import argparse
 import base64
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 # Allow running from the repo root without installing
@@ -26,6 +28,7 @@ from lib.plugins.actions import ActionsPlugin
 from lib.plugins.branch_protection import BranchProtectionPlugin
 from lib.plugins.repository import RepositoryPlugin
 from lib.plugins.security import SecurityPlugin
+from lib.security_scanner import FindingCategory, SecurityScanner, Severity
 
 # ANSI escape codes
 _RESET  = "\033[0m"
@@ -127,6 +130,60 @@ def create_security_md(client, owner, repo, config, dry_run=False):
         "message": "Add SECURITY.md",
         "content": encoded,
     })
+
+
+def run_preflight_scan(client, owner, from_repo, config, debug=False):
+    """
+    Clone from_repo, scan locally, display findings, prompt user.
+    Returns True to continue, False to abort. Raises APIError on clone failure.
+    """
+    scanner = SecurityScanner(config, debug=debug)
+    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        scan_dir = os.path.join(tmpdir, "scan")
+        client.clone_for_scan(owner, from_repo, scan_dir)   # raises APIError on failure
+        findings = scanner.scan(scan_dir)
+    # tmpdir cleaned up here
+
+    criticals = [f for f in findings if f.severity == Severity.CRITICAL]
+    warnings  = [f for f in findings if f.severity == Severity.WARNING]
+    infos     = [f for f in findings if f.severity == Severity.INFO]
+
+    if not findings:
+        print(_c(_GREEN, "  No issues found."))
+        return True
+
+    for f in criticals:
+        loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
+        print(f"  {_c(_RED, '[CRITICAL]')} {f.rule}")
+        print(_c(_DIM, f"             in {loc}"))
+    for f in warnings:
+        loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
+        print(f"  {_c(_YELLOW, '[WARNING]')} {f.rule}")
+        print(_c(_DIM, f"             in {loc}"))
+        if f.match and f.match != "[redacted]":
+            print(_c(_DIM, f"             {f.match[:80]}"))
+    for f in infos:
+        loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
+        print(_c(_DIM, f"  [INFO] {f.rule} in {loc}"))
+
+    print()
+    if criticals:
+        prompt = _c(_BOLD + _RED, "Critical issues found. Continue anyway? [y/N]: ")
+    else:
+        prompt = _c(_YELLOW, "Warnings found. Continue? [Y/n]: ")
+
+    try:
+        answer = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+    if criticals:
+        return answer in ("y", "yes")
+    else:
+        return answer not in ("n", "no")
 
 
 def check_repo_exists(client, owner, repo):
@@ -260,6 +317,19 @@ def main():
             error(f"Failed to check source repo: {e}")
             sys.exit(1)
 
+    # Pre-flight security scan (--from workflow, non-dry-run only)
+    if args.from_repo and not args.dry_run:
+        try:
+            should_continue = run_preflight_scan(
+                client, owner, args.from_repo, config, debug=args.debug
+            )
+        except APIError as e:
+            error(f"Pre-flight scan failed (clone error): {e}")
+            sys.exit(1)
+        if not should_continue:
+            info(_c(_YELLOW, "\nAborted by user."))
+            sys.exit(0)
+
     # Run each plugin's plan()
     plugins = [
         RepositoryPlugin(client, owner, repo_name, config),
@@ -286,8 +356,14 @@ def main():
         new="SECURITY.md (from template)",
     ))
 
-    # Add code mirror step to the plan if --from is specified
+    # Add scan + code mirror steps to the plan if --from is specified
     if args.from_repo:
+        full_plan.add(Change(
+            type=ChangeType.ADD,
+            category=ChangeCategory.SCAN,
+            key="pre_flight_scan",
+            new=f"Scan {owner}/{args.from_repo} locally for secrets, emails, large files, TODOs",
+        ))
         full_plan.add(Change(
             type=ChangeType.ADD,
             category=ChangeCategory.FILE,

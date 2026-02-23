@@ -191,3 +191,38 @@ class TestCopyRepo:
             with pytest.raises(APIError) as exc_info:
                 client.copy_repo("alice", "private-repo", "public-repo")
         assert "push" in str(exc_info.value).lower()
+
+
+class TestCloneForScan:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            client = GitHubClient()
+            client._token = "ghp_testtoken"
+            return client
+
+    def test_clone_for_scan_uses_depth_1(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.clone_for_scan("alice", "private-repo", "/tmp/scan_dir")
+        cmd = mock_run.call_args.args[0]
+        assert "--depth=1" in cmd
+
+    def test_clone_for_scan_includes_dest_path(self):
+        client = self._make_client()
+        dest = "/tmp/my_scan_dir"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.clone_for_scan("alice", "private-repo", dest)
+        cmd = mock_run.call_args.args[0]
+        assert dest in cmd
+
+    def test_clone_for_scan_raises_api_error_on_failure(self):
+        client = self._make_client()
+        clone_error = subprocess.CalledProcessError(128, "git", stderr="fatal: repo not found")
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = clone_error
+            with pytest.raises(APIError) as exc_info:
+                client.clone_for_scan("alice", "private-repo", "/tmp/scan")
+        assert "clone" in str(exc_info.value).lower()

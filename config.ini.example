@@ -73,3 +73,12 @@ enable_dependabot_alerts = true
 # Email address shown in SECURITY.md template
 # If not set, a placeholder is used
 # contact_email = security@example.com
+
+[pre_flight_scan]
+# Only runs when using --from --public (making a private repo public).
+# Scans the source repo locally before any code is copied or made public.
+scan_for_secrets = true
+scan_for_emails = true
+scan_for_todos = true
+max_file_size_mb = 100
+use_trufflehog = true

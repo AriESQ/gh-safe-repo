@@ -22,9 +22,25 @@ def _parse_bool(value):
 
 
 class ActionsPlugin(BasePlugin):
-    def plan(self) -> Plan:
+    def fetch_current_state(self) -> dict:
+        path = self.client.repo_path(
+            self.owner, self.repo, "actions/permissions/workflow"
+        )
+        data = self.client.get_json(path)
+        return {
+            "default_workflow_permissions": data.get(
+                "default_workflow_permissions", "write"
+            ),
+            "can_approve_pull_request_reviews": data.get(
+                "can_approve_pull_request_reviews", True
+            ),
+        }
+
+    def plan(self, current_state=None) -> Plan:
         plan = Plan()
         settings = self.config.actions_settings()
+        baseline = current_state if current_state is not None else GITHUB_DEFAULTS
+        is_audit = current_state is not None
 
         desired_workflow_perms = settings.get(
             "default_workflow_permissions",
@@ -37,33 +53,60 @@ class ActionsPlugin(BasePlugin):
             )
         )
 
-        if desired_workflow_perms != GITHUB_DEFAULTS["default_workflow_permissions"]:
+        current_workflow_perms = baseline.get(
+            "default_workflow_permissions",
+            GITHUB_DEFAULTS["default_workflow_permissions"],
+        )
+        current_can_approve = baseline.get(
+            "can_approve_pull_request_reviews",
+            GITHUB_DEFAULTS["can_approve_pull_request_reviews"],
+        )
+        if isinstance(current_can_approve, str):
+            current_can_approve = _parse_bool(current_can_approve)
+
+        if desired_workflow_perms != current_workflow_perms:
             plan.add(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
                     key="default_workflow_permissions",
-                    old=GITHUB_DEFAULTS["default_workflow_permissions"],
+                    old=current_workflow_perms,
                     new=desired_workflow_perms,
                 )
             )
+        elif is_audit:
+            plan.add(
+                Change(
+                    type=ChangeType.SKIP,
+                    category=ChangeCategory.ACTIONS,
+                    key="default_workflow_permissions",
+                    reason="Already at desired value",
+                )
+            )
 
-        if desired_can_approve != GITHUB_DEFAULTS["can_approve_pull_request_reviews"]:
+        if desired_can_approve != current_can_approve:
             plan.add(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
                     key="can_approve_pull_request_reviews",
-                    old=GITHUB_DEFAULTS["can_approve_pull_request_reviews"],
+                    old=current_can_approve,
                     new=desired_can_approve,
+                )
+            )
+        elif is_audit:
+            plan.add(
+                Change(
+                    type=ChangeType.SKIP,
+                    category=ChangeCategory.ACTIONS,
+                    key="can_approve_pull_request_reviews",
+                    reason="Already at desired value",
                 )
             )
 
         return plan
 
     def apply(self, plan: Plan) -> None:
-        settings = self.config.actions_settings()
-
         # Build workflow permissions body from plan changes
         workflow_body = {}
         for change in plan.actionable_changes:

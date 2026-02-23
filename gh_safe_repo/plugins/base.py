@@ -14,12 +14,17 @@ class BasePlugin(ABC):
         self.config = config
 
     @abstractmethod
-    def plan(self) -> Plan:
+    def plan(self, current_state=None) -> Plan:
         """
-        Compare desired state against GitHub defaults.
-        Returns a Plan describing what changes will be made.
-        No API calls that read state — for new repos the state is always GitHub defaults.
+        Compare desired state against a baseline and return a Plan.
+
+        current_state=None  → compare against hardcoded GitHub defaults (create mode).
+        current_state=dict  → compare against actual API-fetched values (audit mode).
         """
+
+    @abstractmethod
+    def fetch_current_state(self) -> dict:
+        """Fetch this plugin's settings from the GitHub API. Used in audit mode."""
 
     @abstractmethod
     def apply(self, plan: Plan) -> None:

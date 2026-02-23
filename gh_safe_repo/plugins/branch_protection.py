@@ -6,7 +6,10 @@ Paid plan (Pro/Team): available for private repos too.
 Rulesets: opt-in via use_rulesets = true in config.
 """
 
+import json
+
 from ..diff import Change, ChangeCategory, ChangeType, Plan
+from ..errors import APIError
 from .base import BasePlugin
 
 # GitHub's defaults for a newly created repo — no branch protection at all
@@ -27,7 +30,58 @@ class BranchProtectionPlugin(BasePlugin):
         self.is_public = is_public
         self.is_paid_plan = is_paid_plan
 
-    def plan(self) -> Plan:
+    def fetch_current_state(self) -> dict:
+        branch = self.config.get("branch_protection", "protected_branch", fallback="main")
+        path = self.client.repo_path(self.owner, self.repo, f"branches/{branch}/protection")
+        status, text = self.client.call_api("GET", path)
+        if status == 404:
+            # No protection set — return permissive defaults
+            return dict(GITHUB_DEFAULTS)
+        if status and status >= 400:
+            raise APIError(f"GET {path} returned {status}", status_code=status)
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            raise APIError(f"GET {path} returned non-JSON response")
+
+        result = {}
+        result["enforce_admins"] = (
+            data.get("enforce_admins", {}).get("enabled", False)
+            if isinstance(data.get("enforce_admins"), dict)
+            else bool(data.get("enforce_admins", False))
+        )
+        result["allow_force_pushes"] = (
+            data.get("allow_force_pushes", {}).get("enabled", True)
+            if isinstance(data.get("allow_force_pushes"), dict)
+            else bool(data.get("allow_force_pushes", True))
+        )
+        result["allow_deletions"] = (
+            data.get("allow_deletions", {}).get("enabled", True)
+            if isinstance(data.get("allow_deletions"), dict)
+            else bool(data.get("allow_deletions", True))
+        )
+
+        rpr = data.get("required_pull_request_reviews")
+        if rpr is not None:
+            result["require_pull_request"] = True
+            result["required_approving_reviews"] = rpr.get(
+                "required_approving_review_count", 0
+            )
+            result["dismiss_stale_reviews"] = rpr.get("dismiss_stale_reviews", False)
+        else:
+            result["require_pull_request"] = False
+            result["required_approving_reviews"] = 0
+            result["dismiss_stale_reviews"] = False
+
+        rcr = data.get("required_conversation_resolution")
+        if isinstance(rcr, dict):
+            result["require_conversation_resolution"] = rcr.get("enabled", False)
+        else:
+            result["require_conversation_resolution"] = bool(rcr) if rcr is not None else False
+
+        return result
+
+    def plan(self, current_state=None) -> Plan:
         plan = Plan()
 
         if not self.is_public and not self.is_paid_plan:
@@ -40,14 +94,27 @@ class BranchProtectionPlugin(BasePlugin):
             return plan
 
         desired = self._desired()
+        is_audit = current_state is not None
+        baseline = current_state if is_audit else GITHUB_DEFAULTS
+
         for key, desired_val in desired.items():
-            github_default = GITHUB_DEFAULTS.get(key)
-            if desired_val != github_default:
+            current_val = baseline.get(key)
+            if current_val is None:
+                continue
+            if desired_val != current_val:
                 plan.add(Change(
-                    type=ChangeType.ADD,
+                    type=ChangeType.UPDATE if is_audit else ChangeType.ADD,
                     category=ChangeCategory.BRANCH_PROTECTION,
                     key=key,
+                    old=current_val if is_audit else None,
                     new=desired_val,
+                ))
+            elif is_audit:
+                plan.add(Change(
+                    type=ChangeType.SKIP,
+                    category=ChangeCategory.BRANCH_PROTECTION,
+                    key=key,
+                    reason="Already at desired value",
                 ))
 
         return plan

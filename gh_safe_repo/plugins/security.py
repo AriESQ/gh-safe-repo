@@ -16,8 +16,32 @@ class SecurityPlugin(BasePlugin):
         self.is_public = is_public
         self.is_paid_plan = is_paid_plan
 
-    def plan(self) -> Plan:
+    def fetch_current_state(self) -> dict:
+        result = {}
+
+        # Check Dependabot alerts: 204 = enabled, 404 = disabled
+        path = self.client.repo_path(self.owner, self.repo, "vulnerability-alerts")
+        status, _ = self.client.call_api("GET", path)
+        result["dependabot_alerts"] = (status == 204)
+
+        # Check secret scanning
+        if self.is_public:
+            # Always enabled by GitHub for public repos
+            result["secret_scanning"] = True
+        else:
+            try:
+                data = self.client.get_json(self.client.repo_path(self.owner, self.repo))
+                sa = data.get("security_and_analysis") or {}
+                ss = sa.get("secret_scanning") or {}
+                result["secret_scanning"] = ss.get("status") == "enabled"
+            except Exception:
+                result["secret_scanning"] = False
+
+        return result
+
+    def plan(self, current_state=None) -> Plan:
         plan = Plan()
+        is_audit = current_state is not None
 
         if not self.is_public and not self.is_paid_plan:
             plan.add(Change(
@@ -34,15 +58,33 @@ class SecurityPlugin(BasePlugin):
             ))
             return plan
 
-        # Dependabot alerts can be enabled via API (public or private paid)
+        # Dependabot alerts
         if self.config.getbool("security", "enable_dependabot_alerts", fallback=True):
-            plan.add(Change(
-                type=ChangeType.ADD,
-                category=ChangeCategory.SECURITY,
-                key="dependabot_alerts",
-                new=True,
-            ))
+            if is_audit:
+                if current_state.get("dependabot_alerts", False):
+                    plan.add(Change(
+                        type=ChangeType.SKIP,
+                        category=ChangeCategory.SECURITY,
+                        key="dependabot_alerts",
+                        reason="Already at desired value",
+                    ))
+                else:
+                    plan.add(Change(
+                        type=ChangeType.UPDATE,
+                        category=ChangeCategory.SECURITY,
+                        key="dependabot_alerts",
+                        old=False,
+                        new=True,
+                    ))
+            else:
+                plan.add(Change(
+                    type=ChangeType.ADD,
+                    category=ChangeCategory.SECURITY,
+                    key="dependabot_alerts",
+                    new=True,
+                ))
 
+        # Secret scanning
         if self.is_public:
             # Secret scanning is automatic for public repos — no API call needed
             plan.add(Change(
@@ -53,12 +95,29 @@ class SecurityPlugin(BasePlugin):
             ))
         else:
             # Private repo on paid plan — enable via PATCH security_and_analysis
-            plan.add(Change(
-                type=ChangeType.ADD,
-                category=ChangeCategory.SECURITY,
-                key="secret_scanning",
-                new=True,
-            ))
+            if is_audit:
+                if current_state.get("secret_scanning", False):
+                    plan.add(Change(
+                        type=ChangeType.SKIP,
+                        category=ChangeCategory.SECURITY,
+                        key="secret_scanning",
+                        reason="Already at desired value",
+                    ))
+                else:
+                    plan.add(Change(
+                        type=ChangeType.UPDATE,
+                        category=ChangeCategory.SECURITY,
+                        key="secret_scanning",
+                        old=False,
+                        new=True,
+                    ))
+            else:
+                plan.add(Change(
+                    type=ChangeType.ADD,
+                    category=ChangeCategory.SECURITY,
+                    key="secret_scanning",
+                    new=True,
+                ))
 
         return plan
 

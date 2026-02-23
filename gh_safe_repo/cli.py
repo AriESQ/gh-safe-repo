@@ -7,6 +7,8 @@ Usage:
     gh-safe-repo my-project --debug      # Show every API call
     gh-safe-repo my-project --no-wiki    # Override specific setting
     gh-safe-repo my-public --from my-private --public  # Public repo from private source
+    gh-safe-repo my-repo --audit         # Audit existing repo and apply safe defaults
+    gh-safe-repo my-repo --audit --dry-run  # Read-only audit: show diff only
 """
 
 import argparse
@@ -108,6 +110,18 @@ def print_success(owner, repo):
     print(f"{_GREEN}{bottom}{_RESET}\n")
 
 
+def print_success_audit(owner, repo):
+    url = f"https://github.com/{owner}/{repo}"
+    inner = f"  Repository updated successfully!  \n  {url}  "
+    width = max(len(line) for line in inner.splitlines()) + 2
+    top    = "╭─ Done " + "─" * (width - 7) + "╮"
+    bottom = "╰" + "─" * (width + 1) + "╯"
+    print(f"\n{_GREEN}{top}{_RESET}")
+    for line in inner.splitlines():
+        print(f"{_GREEN}│{_RESET} {line.ljust(width)} {_GREEN}│{_RESET}")
+    print(f"{_GREEN}{bottom}{_RESET}\n")
+
+
 def create_security_md(client, owner, repo, config, dry_run=False):
     """Upload SECURITY.md to the new repo."""
     template_path = Path(__file__).parent / "templates" / "SECURITY.md"
@@ -126,6 +140,25 @@ def create_security_md(client, owner, repo, config, dry_run=False):
         "message": "Add SECURITY.md",
         "content": encoded,
     })
+
+
+def audit_security_md(client, owner, repo, config) -> Change:
+    """Check whether SECURITY.md exists in the repo. Returns a Change for the plan."""
+    path = client.repo_path(owner, repo, "contents/SECURITY.md")
+    status, _ = client.call_api("GET", path)
+    if status == 200:
+        return Change(
+            type=ChangeType.SKIP,
+            category=ChangeCategory.FILE,
+            key="SECURITY.md",
+            reason="Already exists",
+        )
+    return Change(
+        type=ChangeType.ADD,
+        category=ChangeCategory.FILE,
+        key="SECURITY.md",
+        new="SECURITY.md (from template)",
+    )
 
 
 def run_preflight_scan(client, owner, from_repo, config, debug=False):
@@ -194,7 +227,7 @@ def main():
         prog="gh-safe-repo",
         description="Create GitHub repositories with safe defaults applied.",
     )
-    parser.add_argument("repo", help="Name of the repository to create")
+    parser.add_argument("repo", help="Name of the repository to create or audit")
     parser.add_argument(
         "--from",
         dest="from_repo",
@@ -202,9 +235,14 @@ def main():
         help="Mirror code from this existing private repo into the new public repo",
     )
     parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="Audit an existing repo and apply safe defaults (read, show diff, prompt, apply)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview what would be configured without creating anything",
+        help="Preview what would be configured without creating or changing anything",
     )
     parser.add_argument(
         "--debug",
@@ -243,6 +281,10 @@ def main():
     if args.from_repo and not args.public:
         parser.error("--from requires --public (code copying is only for public repos)")
 
+    # --audit and --from are mutually exclusive
+    if args.audit and args.from_repo:
+        parser.error("--audit and --from are mutually exclusive")
+
     def info(msg):
         print(msg)
 
@@ -270,7 +312,7 @@ def main():
     if overrides:
         config.apply_overrides(overrides)
 
-    # Determine visibility (used by branch protection and security plugins)
+    # Determine visibility (used by branch protection and security plugins in create mode)
     is_public = not config.getbool("repo", "private", fallback=True)
 
     # Authenticate
@@ -298,6 +340,110 @@ def main():
 
     repo_name = args.repo
 
+    # ── Audit mode ────────────────────────────────────────────────────────────
+    if args.audit:
+        info(f"\nAuditing {_BOLD}{owner}/{repo_name}{_RESET}...")
+
+        # Verify repo exists
+        try:
+            if not check_repo_exists(client, owner, repo_name):
+                error(
+                    f"Repository '{owner}/{repo_name}' does not exist. "
+                    "Use without --audit to create it."
+                )
+                sys.exit(1)
+        except APIError as e:
+            error(f"Failed to check if repo exists: {e}")
+            sys.exit(1)
+
+        # Derive is_public from the actual repo, not from config/flags
+        try:
+            repo_data = client.get_json(client.repo_path(owner, repo_name))
+            is_public = not repo_data.get("private", True)
+        except APIError as e:
+            error(f"Failed to fetch repository info: {e}")
+            sys.exit(1)
+
+        # Build plugins and fetch current state per plugin
+        plugins = [
+            RepositoryPlugin(client, owner, repo_name, config),
+            ActionsPlugin(client, owner, repo_name, config),
+            BranchProtectionPlugin(
+                client, owner, repo_name, config,
+                is_public=is_public, is_paid_plan=is_paid_plan,
+            ),
+            SecurityPlugin(
+                client, owner, repo_name, config,
+                is_public=is_public, is_paid_plan=is_paid_plan,
+            ),
+        ]
+
+        full_plan = Plan()
+        for plugin in plugins:
+            try:
+                current_state = plugin.fetch_current_state()
+                plugin_plan = plugin.plan(current_state=current_state)
+                full_plan.merge(plugin_plan)
+            except APIError as e:
+                error(f"Failed to fetch current state: {e}")
+                sys.exit(1)
+
+        # Check SECURITY.md
+        try:
+            security_md_change = audit_security_md(client, owner, repo_name, config)
+        except APIError as e:
+            error(f"Failed to check SECURITY.md: {e}")
+            sys.exit(1)
+        full_plan.add(security_md_change)
+
+        # Print plan
+        print_plan(full_plan)
+
+        counts = full_plan.count_by_type()
+        actionable_count = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
+        skipped = counts.get(ChangeType.SKIP, 0)
+        info(_c(_DIM, f"{actionable_count} change(s) to apply, {skipped} skipped"))
+
+        if args.dry_run:
+            info(_c(_YELLOW, "\nDry run — no changes made."))
+            sys.exit(0)
+
+        # Check if there is anything to do
+        actionable = full_plan.actionable_changes
+        if not actionable:
+            info(_c(_GREEN, "\nAlready at desired state — nothing to do."))
+            sys.exit(0)
+
+        # Prompt confirmation
+        try:
+            answer = input(
+                f"\nApply {len(actionable)} change(s) to {owner}/{repo_name}? [y/N]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(0)
+        if answer not in ("y", "yes"):
+            info(_c(_YELLOW, "Aborted."))
+            sys.exit(0)
+
+        # Apply settings (RepositoryPlugin.apply() skips POST automatically in audit mode)
+        for plugin in plugins:
+            try:
+                plugin.apply(full_plan)
+            except APIError as e:
+                warn(f"Some settings failed to apply: {e}")
+
+        # Upload SECURITY.md if it was missing
+        if security_md_change.type == ChangeType.ADD:
+            try:
+                create_security_md(client, owner, repo_name, config)
+            except APIError as e:
+                warn(f"SECURITY.md upload failed: {e}")
+
+        print_success_audit(owner, repo_name)
+        return
+
+    # ── Create mode ───────────────────────────────────────────────────────────
     info(f"\nConfiguring {_BOLD}{owner}/{repo_name}{_RESET}...")
 
     # Check repo doesn't already exist

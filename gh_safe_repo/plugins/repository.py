@@ -41,36 +41,60 @@ def _parse_bool(value):
 
 
 class RepositoryPlugin(BasePlugin):
-    def plan(self) -> Plan:
+    def fetch_current_state(self) -> dict:
+        path = self.client.repo_path(self.owner, self.repo)
+        data = self.client.get_json(path)
+        return {
+            "private": data.get("private", False),
+            "has_wiki": data.get("has_wiki", True),
+            "has_issues": data.get("has_issues", True),
+            "has_projects": data.get("has_projects", True),
+            "delete_branch_on_merge": data.get("delete_branch_on_merge", False),
+            "allow_squash_merge": data.get("allow_squash_merge", True),
+            "allow_merge_commit": data.get("allow_merge_commit", True),
+            "allow_rebase_merge": data.get("allow_rebase_merge", True),
+        }
+
+    def plan(self, current_state=None) -> Plan:
         plan = Plan()
         settings = self.config.repo_settings()
+        baseline = current_state if current_state is not None else GITHUB_DEFAULTS
+        is_audit = current_state is not None
 
-        # Repo creation is always an ADD
-        plan.add(
-            Change(
-                type=ChangeType.ADD,
-                category=ChangeCategory.REPO,
-                key="repository",
-                new=f"{self.owner}/{self.repo}",
+        if not is_audit:
+            plan.add(
+                Change(
+                    type=ChangeType.ADD,
+                    category=ChangeCategory.REPO,
+                    key="repository",
+                    new=f"{self.owner}/{self.repo}",
+                )
             )
-        )
 
-        # Compare each PATCH-able setting against GitHub defaults
         for key in PATCH_FIELDS:
             if key not in settings:
                 continue
             desired = _parse_bool(settings[key])
-            github_default = GITHUB_DEFAULTS.get(key)
-            if github_default is None:
+            current = baseline.get(key)
+            if current is None:
                 continue
-            if desired != github_default:
+            if desired != current:
                 plan.add(
                     Change(
                         type=ChangeType.UPDATE,
                         category=ChangeCategory.REPO,
                         key=key,
-                        old=github_default,
+                        old=current,
                         new=desired,
+                    )
+                )
+            elif is_audit:
+                plan.add(
+                    Change(
+                        type=ChangeType.SKIP,
+                        category=ChangeCategory.REPO,
+                        key=key,
+                        reason="Already at desired value",
                     )
                 )
 
@@ -79,20 +103,25 @@ class RepositoryPlugin(BasePlugin):
     def apply(self, plan: Plan) -> None:
         settings = self.config.repo_settings()
 
-        # Build POST body
-        create_body = {"name": self.repo}
-        for key in CREATE_FIELDS:
-            if key in settings:
-                create_body[key] = _parse_bool(settings[key])
+        # Only POST to create the repo if the plan has a CREATE entry for it
+        has_create = any(
+            c.type == ChangeType.ADD and c.key == "repository"
+            for c in plan.actionable_changes
+        )
 
-        # Create the repo
-        try:
-            self.client.call_json("POST", "/user/repos", create_body)
-        except Exception as e:
-            from ..errors import APIError
-            if isinstance(e, APIError) and e.status_code == 422:
-                raise RepoExistsError(self.owner, self.repo)
-            raise
+        if has_create:
+            create_body = {"name": self.repo}
+            for key in CREATE_FIELDS:
+                if key in settings:
+                    create_body[key] = _parse_bool(settings[key])
+
+            try:
+                self.client.call_json("POST", "/user/repos", create_body)
+            except Exception as e:
+                from ..errors import APIError
+                if isinstance(e, APIError) and e.status_code == 422:
+                    raise RepoExistsError(self.owner, self.repo)
+                raise
 
         # Build PATCH body from actionable changes
         patch_body = {}

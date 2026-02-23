@@ -1,0 +1,46 @@
+# gh-safe-repo configuration
+# Copy to ~/.config/gh-safe-repo/config.ini and edit as needed.
+# All values shown here are the safe defaults — you only need to specify
+# values you want to change.
+
+[repo]
+# Whether new repos are private by default
+private = true
+
+# Disable features that create clutter if unused
+has_wiki = false
+has_projects = false
+
+# Issues are usually wanted
+has_issues = true
+
+# Clean up merged branches automatically
+delete_branch_on_merge = true
+
+# Merge strategy: squash-only is cleanest for most projects
+allow_squash_merge = true
+allow_merge_commit = false
+allow_rebase_merge = true
+
+# Initialize with a README so the repo is non-empty
+auto_init = true
+
+[actions]
+# Allow Actions to run
+enabled = true
+
+# Restrict to actions from GitHub and verified creators
+# Options: all, local_only, selected
+allowed_actions = selected
+
+# Principle of least privilege: read-only by default
+# Options: read, write
+default_workflow_permissions = read
+
+# Prevent Actions from approving pull requests
+can_approve_pull_request_reviews = false
+
+[security]
+# Email address shown in SECURITY.md template
+# If not set, a placeholder is used
+# contact_email = security@example.com

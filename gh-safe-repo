@@ -26,80 +26,86 @@ from lib.plugins.branch_protection import BranchProtectionPlugin
 from lib.plugins.repository import RepositoryPlugin
 from lib.plugins.security import SecurityPlugin
 
-try:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich import print as rprint
-    HAS_RICH = True
-except ImportError:
-    HAS_RICH = False
+# ANSI escape codes
+_RESET  = "\033[0m"
+_BOLD   = "\033[1m"
+_DIM    = "\033[2m"
+_RED    = "\033[31m"
+_GREEN  = "\033[32m"
+_YELLOW = "\033[33m"
 
 
-def build_console(stderr=False):
-    if HAS_RICH:
-        return Console(stderr=stderr)
-    return None
+def _c(code, text):
+    """Wrap text in an ANSI code."""
+    return f"{code}{text}{_RESET}"
 
 
-def print_plan(plan, console):
-    if HAS_RICH:
-        table = Table(title="Planned Changes", show_header=True, header_style="bold")
-        table.add_column("Type", style="cyan", width=8)
-        table.add_column("Category", style="magenta", width=18)
-        table.add_column("Setting", style="white", width=35)
-        table.add_column("Value / Note", style="green")
+def print_plan(plan):
+    headers = ["Type", "Category", "Setting", "Value / Note"]
 
-        for change in plan.changes:
-            if change.type == ChangeType.SKIP:
-                table.add_row(
-                    "[dim]SKIP[/dim]",
-                    f"[dim]{change.category.value}[/dim]",
-                    f"[dim]{change.key}[/dim]",
-                    f"[dim]{change.reason}[/dim]",
-                )
-            elif change.type == ChangeType.ADD:
-                table.add_row(
-                    "[green]ADD[/green]",
-                    change.category.value,
-                    change.key,
-                    str(change.new),
-                )
-            elif change.type == ChangeType.UPDATE:
-                table.add_row(
-                    "[yellow]UPDATE[/yellow]",
-                    change.category.value,
-                    change.key,
-                    f"{change.old!r} → {change.new!r}",
-                )
-            elif change.type == ChangeType.DELETE:
-                table.add_row(
-                    "[red]DELETE[/red]",
-                    change.category.value,
-                    change.key,
-                    str(change.old),
-                )
+    rows = []
+    for change in plan.changes:
+        if change.type == ChangeType.SKIP:
+            rows.append(("SKIP", change.category.value, change.key, change.reason, "skip"))
+        elif change.type == ChangeType.ADD:
+            rows.append(("ADD", change.category.value, change.key, str(change.new), "add"))
+        elif change.type == ChangeType.UPDATE:
+            rows.append(("UPDATE", change.category.value, change.key, f"{change.old!r} → {change.new!r}", "update"))
+        elif change.type == ChangeType.DELETE:
+            rows.append(("DELETE", change.category.value, change.key, str(change.old), "delete"))
 
-        console.print(table)
-    else:
-        print("\nPlanned Changes:")
-        print("-" * 60)
-        for change in plan.changes:
-            print(f"  {change.describe()}")
-        print()
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row[:4]):
+            col_widths[i] = max(col_widths[i], len(cell))
 
+    sep = "  "
+    header_line = sep.join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
+    divider = sep.join("-" * w for w in col_widths)
 
-def print_success(owner, repo, console):
-    url = f"https://github.com/{owner}/{repo}"
-    if HAS_RICH:
-        console.print(
-            Panel(
-                f"[green]Repository created successfully![/green]\n[link={url}]{url}[/link]",
-                title="[bold green]Done[/bold green]",
+    print(f"\n{_BOLD}Planned Changes{_RESET}")
+    print(_c(_DIM, header_line))
+    print(_c(_DIM, divider))
+
+    for row in rows:
+        type_str, cat, key, value, kind = row
+        if kind == "skip":
+            line = sep.join(cell.ljust(col_widths[i]) for i, cell in enumerate(row[:4]))
+            print(_c(_DIM, line))
+        elif kind == "add":
+            print(
+                _c(_GREEN, type_str.ljust(col_widths[0])) + sep
+                + cat.ljust(col_widths[1]) + sep
+                + key.ljust(col_widths[2]) + sep
+                + value
             )
-        )
-    else:
-        print(f"\nRepository created: {url}\n")
+        elif kind == "update":
+            print(
+                _c(_YELLOW, type_str.ljust(col_widths[0])) + sep
+                + cat.ljust(col_widths[1]) + sep
+                + key.ljust(col_widths[2]) + sep
+                + value
+            )
+        elif kind == "delete":
+            print(
+                _c(_RED, type_str.ljust(col_widths[0])) + sep
+                + cat.ljust(col_widths[1]) + sep
+                + key.ljust(col_widths[2]) + sep
+                + value
+            )
+    print()
+
+
+def print_success(owner, repo):
+    url = f"https://github.com/{owner}/{repo}"
+    inner = f"  Repository created successfully!  \n  {url}  "
+    width = max(len(line) for line in inner.splitlines()) + 2
+    top    = "╭─ Done " + "─" * (width - 7) + "╮"
+    bottom = "╰" + "─" * (width + 1) + "╯"
+    print(f"\n{_GREEN}{top}{_RESET}")
+    for line in inner.splitlines():
+        print(f"{_GREEN}│{_RESET} {line.ljust(width)} {_GREEN}│{_RESET}")
+    print(f"{_GREEN}{bottom}{_RESET}\n")
 
 
 def create_security_md(client, owner, repo, config, dry_run=False):
@@ -173,26 +179,14 @@ def main():
 
     args = parser.parse_args()
 
-    console = build_console()
-    err_console = build_console(stderr=True)
-
     def info(msg):
-        if HAS_RICH:
-            console.print(msg)
-        else:
-            print(msg)
+        print(msg)
 
     def error(msg):
-        if HAS_RICH:
-            err_console.print(f"[bold red]Error:[/bold red] {msg}")
-        else:
-            print(f"Error: {msg}", file=sys.stderr)
+        print(f"{_c(_BOLD + _RED, 'Error:')} {msg}", file=sys.stderr)
 
     def warn(msg):
-        if HAS_RICH:
-            err_console.print(f"[yellow]Warning:[/yellow] {msg}")
-        else:
-            print(f"Warning: {msg}", file=sys.stderr)
+        print(f"{_c(_YELLOW, 'Warning:')} {msg}", file=sys.stderr)
 
     # Load config
     try:
@@ -228,7 +222,7 @@ def main():
 
     repo_name = args.repo
 
-    info(f"\nConfiguring [bold]{owner}/{repo_name}[/bold]..." if HAS_RICH else f"\nConfiguring {owner}/{repo_name}...")
+    info(f"\nConfiguring {_BOLD}{owner}/{repo_name}{_RESET}...")
 
     # Check repo doesn't already exist
     if not args.dry_run:
@@ -270,22 +264,16 @@ def main():
     ))
 
     # Print the plan
-    print_plan(full_plan, console)
+    print_plan(full_plan)
 
     counts = full_plan.count_by_type()
     actionable = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
     skipped = counts.get(ChangeType.SKIP, 0)
 
-    if HAS_RICH:
-        info(f"[dim]{actionable} change(s) to apply, {skipped} skipped (deferred to later phases)[/dim]")
-    else:
-        info(f"{actionable} change(s) to apply, {skipped} skipped")
+    info(_c(_DIM, f"{actionable} change(s) to apply, {skipped} skipped"))
 
     if args.dry_run:
-        if HAS_RICH:
-            info("\n[yellow]Dry run — no changes made.[/yellow]")
-        else:
-            info("\nDry run — no changes made.")
+        info(_c(_YELLOW, "\nDry run — no changes made."))
         sys.exit(0)
 
     # Apply changes
@@ -314,7 +302,7 @@ def main():
     except APIError as e:
         warn(f"Repository created but SECURITY.md upload failed: {e}")
 
-    print_success(owner, repo_name, console)
+    print_success(owner, repo_name)
 
 
 if __name__ == "__main__":

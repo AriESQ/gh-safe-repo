@@ -9,7 +9,8 @@
 #   trufflehog filesystem /path/to/scan --json --no-update
 #
 # When the "filesystem" subcommand is used, the scan path is mounted read-only
-# into the container as /scan and the argument is rewritten accordingly.
+# at the same absolute path inside the container so that file paths in
+# truffleHog's JSON output are identical to native runs — no translation needed.
 # All other subcommands are passed straight through to the container.
 #
 # Configuration via environment variables:
@@ -34,14 +35,18 @@ fi
 
 # --- Dispatch ---
 # The scanner calls: trufflehog filesystem <abs-path> [flags...]
-# We intercept the "filesystem" subcommand, mount the path, and rewrite it.
+# We intercept the "filesystem" subcommand and mount the scan path at the
+# *same absolute path* inside the container.  This means the JSON output
+# contains "file": "/abs/path/file.py" — identical to native trufflehog —
+# so the scanner's os.path.relpath() call produces correct relative paths
+# without any translation layer.
 if [[ "${1:-}" == "filesystem" && -n "${2:-}" ]]; then
     SCAN_PATH="$(realpath "$2")"
     shift 2   # consume "filesystem" and the path; remaining args pass through
     exec "$RUNTIME" run --rm \
-        --volume "$SCAN_PATH:/scan:ro" \
+        --volume "$SCAN_PATH:$SCAN_PATH:ro" \
         "$IMAGE" \
-        filesystem /scan "$@"
+        filesystem "$SCAN_PATH" "$@"
 else
     # Any other subcommand (e.g. git, github, s3) — pass straight through
     exec "$RUNTIME" run --rm "$IMAGE" "$@"

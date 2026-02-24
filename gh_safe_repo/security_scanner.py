@@ -127,6 +127,12 @@ class SecurityScanner:
         return findings
 
     def _try_trufflehog(self, root_path: str) -> Optional[List[Finding]]:
+        # Resolve symlinks so the path we pass to trufflehog matches the
+        # "file" paths it emits in JSON output.  Without this, on macOS
+        # /tmp (→ /private/tmp) causes os.path.relpath() to produce a
+        # traversal string rather than the correct relative path.
+        root_path = os.path.realpath(root_path)
+
         try:
             result = subprocess.run(
                 ["trufflehog", "filesystem", root_path, "--json", "--no-update"],
@@ -138,7 +144,12 @@ class SecurityScanner:
                 print("[debug] trufflehog not found, falling back to regex scanner", file=sys.stderr)
             return None
 
-        # returncode 0 = no findings, 1 = findings found; anything else = error/wrong version
+        # truffleHog v3 exit codes (tested against v3.93.4):
+        #   0 = scan completed — may have 0 or more unverified findings in JSON
+        #   1 = scan completed with verified findings
+        #   anything else = crash / wrong version / unexpected error
+        # JSON stdout is the authoritative source of findings regardless of
+        # exit code; the code below parses it in all (0, 1) cases.
         if result.returncode not in (0, 1):
             if self.debug:
                 print(

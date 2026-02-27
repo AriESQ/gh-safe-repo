@@ -29,7 +29,7 @@ SAFE_DEFAULTS = {
         "can_approve_pull_request_reviews": "false",
     },
     "branch_protection": {
-        "protected_branch": "main",
+        "protected_branch": "master, main",
         "require_pull_request": "true",
         "required_approving_reviews": "1",
         "dismiss_stale_reviews": "true",

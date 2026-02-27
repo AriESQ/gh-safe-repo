@@ -207,14 +207,65 @@ class TestBranchProtectionPlugin:
         assert body["required_pull_request_reviews"]["dismiss_stale_reviews"] is True
         assert body["required_pull_request_reviews"]["required_approving_review_count"] == 1
 
-    def test_apply_public_repo_uses_configured_branch(self):
+    def test_apply_public_repo_uses_explicit_branches(self):
         client = make_mock_client()
         client.call_json.return_value = {}
-        config = make_config({("branch_protection", "protected_branch"): "master"})
-        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True, branches=["master"])
         plan = plugin.plan()
         plugin.apply(plan)
         assert "branches/master/protection" in client.call_json.call_args.args[1]
+
+    def test_apply_multi_branch_calls_put_for_each(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["master", "main"]
+        )
+        plan = plugin.plan()
+        plugin.apply(plan)
+        put_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PUT"]
+        urls = [c.args[1] for c in put_calls]
+        assert any("branches/master/protection" in u for u in urls)
+        assert any("branches/main/protection" in u for u in urls)
+
+    def test_apply_404_branch_not_found_skips_gracefully(self):
+        from gh_safe_repo.errors import APIError as _APIError
+        client = make_mock_client()
+        # master → 404, main → success
+        def side_effect(method, path, body=None):
+            if "master" in path:
+                raise _APIError("not found", status_code=404)
+            return {}
+        client.call_json.side_effect = side_effect
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["master", "main"]
+        )
+        plan = plugin.plan()
+        plugin.apply(plan)  # should not raise
+        put_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PUT"]
+        assert len(put_calls) == 2  # both attempted
+
+    def test_plan_public_repo_includes_protected_branches_key(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["main"]
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        pb = next((c for c in adds if c.key == "protected_branches"), None)
+        assert pb is not None
+        assert pb.new == "main"
+
+    def test_plan_multi_branch_protected_branches_value(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["master", "main"]
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        pb = next((c for c in adds if c.key == "protected_branches"), None)
+        assert pb is not None
+        assert pb.new == "master, main"
 
     # --- Paid plan private repo ---
 
@@ -269,6 +320,27 @@ class TestBranchProtectionPlugin:
         assert len(body["bypass_actors"]) == 1
         assert body["bypass_actors"][0]["actor_id"] == 5
         assert body["bypass_actors"][0]["actor_type"] == "RepositoryRole"
+
+    def test_ruleset_body_includes_all_branches(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["master", "main"]
+        )
+        desired = plugin._desired()
+        body = plugin._build_ruleset_body(desired)
+        include = body["conditions"]["ref_name"]["include"]
+        assert "refs/heads/master" in include
+        assert "refs/heads/main" in include
+
+    def test_ruleset_body_single_branch(self):
+        client = make_mock_client()
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["develop"]
+        )
+        desired = plugin._desired()
+        body = plugin._build_ruleset_body(desired)
+        include = body["conditions"]["ref_name"]["include"]
+        assert include == ["refs/heads/develop"]
 
 
 class TestSecurityPlugin:

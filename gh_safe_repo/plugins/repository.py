@@ -109,6 +109,8 @@ class RepositoryPlugin(BasePlugin):
             for c in plan.actionable_changes
         )
 
+        self.created_default_branch = None
+
         if has_create:
             create_body = {"name": self.repo}
             for key in CREATE_FIELDS:
@@ -116,7 +118,9 @@ class RepositoryPlugin(BasePlugin):
                     create_body[key] = _parse_bool(settings[key])
 
             try:
-                self.client.call_json("POST", "/user/repos", create_body)
+                response = self.client.call_json("POST", "/user/repos", create_body)
+                if isinstance(response, dict):
+                    self.created_default_branch = response.get("default_branch")
             except Exception as e:
                 from ..errors import APIError
                 if isinstance(e, APIError) and e.status_code == 422:

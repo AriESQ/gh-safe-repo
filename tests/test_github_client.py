@@ -230,6 +230,51 @@ class TestCloneForScan:
         assert "clone" in str(exc_info.value).lower()
 
 
+class TestGetDefaultBranch:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            return GitHubClient()
+
+    def test_returns_default_branch_on_200(self):
+        client = self._make_client()
+        repo_data = {"default_branch": "main", "name": "my-repo"}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(repo_data), stderr=""
+            )
+            result = client.get_default_branch("alice", "my-repo")
+        assert result == "main"
+
+    def test_returns_master_when_default_branch_is_master(self):
+        client = self._make_client()
+        repo_data = {"default_branch": "master", "name": "old-repo"}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(repo_data), stderr=""
+            )
+            result = client.get_default_branch("alice", "old-repo")
+        assert result == "master"
+
+    def test_returns_none_on_404(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout="", stderr="HTTP 404 Not Found"
+            )
+            result = client.get_default_branch("alice", "missing-repo")
+        assert result is None
+
+    def test_returns_none_on_non_json_response(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout="not-json", stderr=""
+            )
+            result = client.get_default_branch("alice", "my-repo")
+        assert result is None
+
+
 class TestGetPlanName:
     def _make_client(self):
         with patch("subprocess.run") as mock_run:

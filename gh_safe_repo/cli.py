@@ -15,6 +15,7 @@ import argparse
 import base64
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -244,6 +245,35 @@ def check_repo_exists(client, owner, repo):
     return status == 200
 
 
+def _resolve_branches(config, post_default_branch=None, source_default_branch=None) -> list:
+    """
+    Determine the list of branches to protect, in priority order:
+      1. POST /user/repos response default_branch (new repo, non-dry-run)
+      2. GET /repos/{owner}/{source} default_branch (--from workflow, non-dry-run)
+      3. git symbolic-ref --short HEAD (local CWD, works in dry-run too)
+      4. protected_branch from config (may be "master, main" from SAFE_DEFAULTS)
+    """
+    if post_default_branch:
+        return [post_default_branch]
+    if source_default_branch:
+        return [source_default_branch]
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            if branch:
+                return [branch]
+    except Exception:
+        pass
+    raw = config.get("branch_protection", "protected_branch", fallback="master, main")
+    return [b.strip() for b in raw.split(",") if b.strip()]
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="gh-safe-repo",
@@ -398,13 +428,19 @@ def main():
             error(f"Failed to check if repo exists: {e}")
             sys.exit(1)
 
-        # Derive is_public from the actual repo, not from config/flags
+        # Derive is_public and default branch from the actual repo, not from config/flags
         try:
             repo_data = client.get_json(client.repo_path(owner, repo_name))
             is_public = not repo_data.get("private", True)
+            audit_default_branch = repo_data.get("default_branch")
         except APIError as e:
             error(f"Failed to fetch repository info: {e}")
             sys.exit(1)
+
+        audit_branches = (
+            [audit_default_branch] if audit_default_branch
+            else _resolve_branches(config)
+        )
 
         # Build plugins and fetch current state per plugin
         plugins = [
@@ -413,6 +449,7 @@ def main():
             BranchProtectionPlugin(
                 client, owner, repo_name, config,
                 is_public=is_public, is_paid_plan=is_paid_plan,
+                branches=audit_branches,
             ),
             SecurityPlugin(
                 client, owner, repo_name, config,
@@ -500,12 +537,14 @@ def main():
             error(f"Failed to check if repo exists: {e}")
             sys.exit(1)
 
-    # Validate source repo exists (--from workflow)
+    # Validate source repo exists (--from workflow) and capture its default branch
+    source_default_branch = None
     if args.from_repo and not args.dry_run:
         try:
             if not check_repo_exists(client, owner, args.from_repo):
                 error(f"Source repo '{owner}/{args.from_repo}' does not exist.")
                 sys.exit(1)
+            source_default_branch = client.get_default_branch(owner, args.from_repo)
         except APIError as e:
             error(f"Failed to check source repo: {e}")
             sys.exit(1)
@@ -523,11 +562,14 @@ def main():
             info(_c(_YELLOW, "\nAborted by user."))
             sys.exit(0)
 
+    # Resolve branches to protect (priority: source default > git HEAD > config > fallback)
+    branches = _resolve_branches(config, source_default_branch=source_default_branch)
+
     # Run each plugin's plan()
     plugins = [
         RepositoryPlugin(client, owner, repo_name, config),
         ActionsPlugin(client, owner, repo_name, config),
-        BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
+        BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
     ]
 
@@ -592,6 +634,11 @@ def main():
     except APIError as e:
         error(f"Failed to create repository: {e}")
         sys.exit(1)
+
+    # Refine branch list from POST response (priority 1 detection)
+    post_default = repo_plugin.created_default_branch
+    if post_default:
+        bp_plugin.branches = [post_default]
 
     # Apply Actions settings
     try:

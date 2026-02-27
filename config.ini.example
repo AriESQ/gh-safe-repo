@@ -39,8 +39,9 @@ can_approve_pull_request_reviews = false
 
 [branch_protection]
 # Only applied to public repos (free plan) or any repo on a paid plan.
-# Branch to protect — set to your default branch name if not "main"
-protected_branch = main
+# Branch(es) to protect — comma-separated. The tool auto-detects your default
+# branch at runtime; this is only used as a fallback when detection is unavailable.
+protected_branch = master, main
 
 # Require a pull request before merging to the protected branch
 require_pull_request = true

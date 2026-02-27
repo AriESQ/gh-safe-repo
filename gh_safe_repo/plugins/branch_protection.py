@@ -7,6 +7,7 @@ Rulesets: opt-in via use_rulesets = true in config.
 """
 
 import json
+import sys
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError
@@ -25,13 +26,14 @@ GITHUB_DEFAULTS = {
 
 
 class BranchProtectionPlugin(BasePlugin):
-    def __init__(self, client, owner, repo, config, is_public=False, is_paid_plan=False):
+    def __init__(self, client, owner, repo, config, is_public=False, is_paid_plan=False, branches=None):
         super().__init__(client, owner, repo, config)
         self.is_public = is_public
         self.is_paid_plan = is_paid_plan
+        self.branches = branches or ["master", "main"]
 
     def fetch_current_state(self) -> dict:
-        branch = self.config.get("branch_protection", "protected_branch", fallback="main")
+        branch = self.branches[0]
         path = self.client.repo_path(self.owner, self.repo, f"branches/{branch}/protection")
         status, text = self.client.call_api("GET", path)
         if status == 404:
@@ -97,6 +99,15 @@ class BranchProtectionPlugin(BasePlugin):
         is_audit = current_state is not None
         baseline = current_state if is_audit else GITHUB_DEFAULTS
 
+        # Show which branches will be protected (create mode only)
+        if not is_audit:
+            plan.add(Change(
+                type=ChangeType.ADD,
+                category=ChangeCategory.BRANCH_PROTECTION,
+                key="protected_branches",
+                new=", ".join(self.branches),
+            ))
+
         for key, desired_val in desired.items():
             current_val = baseline.get(key)
             if current_val is None:
@@ -135,7 +146,6 @@ class BranchProtectionPlugin(BasePlugin):
             path = self.client.repo_path(self.owner, self.repo, "rulesets")
             self.client.call_json("POST", path, body)
         else:
-            branch = self.config.get("branch_protection", "protected_branch", fallback="main")
             body = {
                 "required_status_checks": None,
                 "enforce_admins": desired["enforce_admins"],
@@ -149,11 +159,20 @@ class BranchProtectionPlugin(BasePlugin):
                 "allow_deletions": desired["allow_deletions"],
                 "required_conversation_resolution": desired["require_conversation_resolution"],
             }
-            path = self.client.repo_path(self.owner, self.repo, f"branches/{branch}/protection")
-            self.client.call_json("PUT", path, body)
+            for branch in self.branches:
+                path = self.client.repo_path(self.owner, self.repo, f"branches/{branch}/protection")
+                try:
+                    self.client.call_json("PUT", path, body)
+                except APIError as e:
+                    if e.status_code in (404, 422):
+                        print(
+                            f"[skip] Branch '{branch}' not found — skipping protection",
+                            file=sys.stderr,
+                        )
+                        continue
+                    raise
 
     def _build_ruleset_body(self, desired: dict) -> dict:
-        branch = self.config.get("branch_protection", "protected_branch", fallback="main")
         rules = []
         if not desired["allow_force_pushes"]:
             rules.append({"type": "non_fast_forward"})
@@ -181,7 +200,12 @@ class BranchProtectionPlugin(BasePlugin):
             "name": "gh-safe-repo defaults",
             "target": "branch",
             "enforcement": "active",
-            "conditions": {"ref_name": {"include": [f"refs/heads/{branch}"], "exclude": []}},
+            "conditions": {
+                "ref_name": {
+                    "include": [f"refs/heads/{b}" for b in self.branches],
+                    "exclude": [],
+                }
+            },
             "rules": rules,
             "bypass_actors": bypass_actors,
         }

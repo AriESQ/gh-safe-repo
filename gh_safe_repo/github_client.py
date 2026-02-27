@@ -123,6 +123,17 @@ class GitHubClient:
             return f"{base}/{suffix.lstrip('/')}"
         return base
 
+    def get_default_branch(self, owner: str, repo: str):
+        """Return the default branch name for an existing repo, or None on failure."""
+        path = self.repo_path(owner, repo)
+        status, text = self.call_api("GET", path)
+        if status and status >= 400:
+            return None
+        try:
+            return json.loads(text).get("default_branch")
+        except (json.JSONDecodeError, ValueError):
+            return None
+
     def copy_repo(self, owner, source_repo, dest_repo):
         """
         Mirror-clone source_repo and push all refs to dest_repo.

@@ -14,6 +14,7 @@ Usage:
 import argparse
 import base64
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -161,27 +162,15 @@ def audit_security_md(client, owner, repo, config) -> Change:
     )
 
 
-def run_preflight_scan(client, owner, from_repo, config, debug=False):
-    """
-    Clone from_repo, scan locally, display findings, prompt user.
-    Returns True to continue, False to abort. Raises APIError on clone failure.
-    """
-    scanner = SecurityScanner(config, debug=debug)
-    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        scan_dir = os.path.join(tmpdir, "scan")
-        client.clone_for_scan(owner, from_repo, scan_dir)   # raises APIError on failure
-        findings = scanner.scan(scan_dir)
-    # tmpdir cleaned up here
-
+def _print_findings(findings, config):
+    """Print scan findings with ANSI formatting. Returns True if any criticals."""
     criticals = [f for f in findings if f.severity == Severity.CRITICAL]
     warnings  = [f for f in findings if f.severity == Severity.WARNING]
     infos     = [f for f in findings if f.severity == Severity.INFO]
 
     if not findings:
         print(_c(_GREEN, "  No issues found."))
-        return True
+        return False
 
     for f in criticals:
         loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
@@ -198,7 +187,40 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False):
         print(_c(_DIM, f"  [INFO] {f.rule} in {loc}"))
 
     print()
-    if criticals:
+    banned_strings = [
+        s.strip()
+        for s in re.split(r"[\n,]", config.get("pre_flight_scan", "banned_strings", fallback=""))
+        if s.strip()
+    ]
+    if banned_strings and any(f.category == FindingCategory.BANNED_STRING for f in findings):
+        print(_c(_BOLD, "Banned strings found. To scrub from git history, run in your source repo:"))
+        replacements = "\n".join(f"literal:{s}==>***REMOVED***" for s in banned_strings)
+        print(_c(_DIM, f"  git filter-repo --replace-text <(printf '{replacements}')"))
+        print()
+
+    return bool(criticals)
+
+
+def run_preflight_scan(client, owner, from_repo, config, debug=False):
+    """
+    Clone from_repo, scan locally, display findings, prompt user.
+    Returns True to continue, False to abort. Raises APIError on clone failure.
+    """
+    scanner = SecurityScanner(config, debug=debug)
+    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        scan_dir = os.path.join(tmpdir, "scan")
+        client.clone_for_scan(owner, from_repo, scan_dir)   # raises APIError on failure
+        findings = scanner.scan(scan_dir)
+    # tmpdir cleaned up here
+
+    has_criticals = _print_findings(findings, config)
+
+    if not findings:
+        return True
+
+    if has_criticals:
         prompt = _c(_BOLD + _RED, "Critical issues found. Continue anyway? [y/N]: ")
     else:
         prompt = _c(_YELLOW, "Warnings found. Continue? [Y/n]: ")
@@ -209,7 +231,7 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False):
         print()
         return False
 
-    if criticals:
+    if has_criticals:
         return answer in ("y", "yes")
     else:
         return answer not in ("n", "no")
@@ -227,7 +249,7 @@ def main():
         prog="gh-safe-repo",
         description="Create GitHub repositories with safe defaults applied.",
     )
-    parser.add_argument("repo", help="Name of the repository to create or audit")
+    parser.add_argument("repo", nargs="?", help="Name of the repository to create or audit")
     parser.add_argument(
         "--from",
         dest="from_repo",
@@ -274,8 +296,33 @@ def main():
         metavar="PATH",
         help="Path to config file (default: ~/.config/gh-safe-repo/config.ini)",
     )
+    parser.add_argument(
+        "--scan",
+        metavar="PATH",
+        help="Scan a local directory for secrets and exit (no GitHub interaction)",
+    )
 
     args = parser.parse_args()
+
+    # --scan: standalone local scan, no GitHub interaction
+    if args.scan:
+        scan_path = os.path.abspath(args.scan)
+        if not os.path.isdir(scan_path):
+            print(f"\033[1m\033[31mError:\033[0m '{args.scan}' is not a directory", file=sys.stderr)
+            sys.exit(2)
+        try:
+            config = ConfigManager(config_path=args.config)
+        except ConfigError as e:
+            print(f"\033[1m\033[31mError:\033[0m {e}", file=sys.stderr)
+            sys.exit(1)
+        scanner = SecurityScanner(config, debug=args.debug)
+        print(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
+        findings = scanner.scan(scan_path)
+        has_criticals = _print_findings(findings, config)
+        sys.exit(1 if has_criticals else 0)
+
+    if not args.repo:
+        parser.error("the following arguments are required: repo")
 
     # --from implies --public (can't copy code to a private repo without extra work)
     if args.from_repo and not args.public:

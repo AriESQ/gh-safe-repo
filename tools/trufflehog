@@ -43,8 +43,22 @@ fi
 if [[ "${1:-}" == "filesystem" && -n "${2:-}" ]]; then
     SCAN_PATH="$(realpath "$2")"
     shift 2   # consume "filesystem" and the path; remaining args pass through
+
+    # If a --config file is passed (e.g. a banned-strings detector YAML written
+    # to a host temp path), mount it at the same absolute path inside the container.
+    CONFIG_MOUNT_ARGS=()
+    args=("$@")
+    for i in "${!args[@]}"; do
+        if [[ "${args[$i]}" == "--config" && $((i + 1)) -lt ${#args[@]} ]]; then
+            config_file="$(realpath "${args[$((i + 1))]}")"
+            CONFIG_MOUNT_ARGS=(--volume "$config_file:$config_file:ro")
+            break
+        fi
+    done
+
     exec "$RUNTIME" run --rm \
         --volume "$SCAN_PATH:$SCAN_PATH:ro" \
+        "${CONFIG_MOUNT_ARGS[@]}" \
         "$IMAGE" \
         filesystem "$SCAN_PATH" "$@"
 else

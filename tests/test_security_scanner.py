@@ -289,6 +289,78 @@ class TestTruffleHogIntegration:
         assert len(emails) >= 1
 
 
+class TestBannedStringScanning:
+    def test_detects_exact_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED"})
+            write_file(tmpdir, "readme.md", "This project is by REDACTED.\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 1
+        assert banned[0].match == "[redacted]"
+
+    def test_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED"})
+            write_file(tmpdir, "notes.txt", "Project REDACTED internal docs.\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 1
+
+    def test_multiple_strings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,REDACTED,REDACTED"})
+            write_file(tmpdir, "config.py", "owner = 'REDACTED'\n# REDACTED project\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 2  # one per matching line
+
+    def test_no_match_produces_no_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "supersecret"})
+            write_file(tmpdir, "clean.py", "x = 1\nprint('hello')\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert banned == []
+
+    def test_empty_banned_strings_produces_no_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, "file.txt", "REDACTED REDACTED REDACTED\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert banned == []
+
+    def test_rule_includes_string_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED"})
+            write_file(tmpdir, "file.txt", "author: REDACTED\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert any("REDACTED" in f.rule for f in banned)
+
+    def test_newline_separated_strings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED\nUSER"})
+            write_file(tmpdir, "file.txt", "org: REDACTED\nuser: REDACTED\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 2
+
+    def test_trufflehog_config_generated_for_banned_strings(self):
+        scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,REDACTED"})
+        path = scanner._build_trufflehog_config(scanner._banned_strings)
+        try:
+            with open(path) as f:
+                content = f.read()
+            assert "banned-strings" in content
+            assert "REDACTED" in content
+            assert "REDACTED" in content
+            assert "(?i)" in content
+        finally:
+            os.unlink(path)
+
+
 class TestFormatFindings:
     def test_empty_list_returns_empty_string(self):
         assert format_findings([]) == ""

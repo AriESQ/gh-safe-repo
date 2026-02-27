@@ -22,6 +22,7 @@ Branch protection, Dependabot, restricted Actions permissions, disabled wiki and
 - [Audit Mode](#audit-mode)
 - [Public Repos from Private (`--from`)](#public-repos-from-private---from)
 - [Pre-flight Security Scanner](#pre-flight-security-scanner)
+  - [Standalone scan](#standalone-scan)
 - [Configuration](#configuration)
 - [GitHub Plan Limitations](#github-plan-limitations)
 - [How It Works](#how-it-works)
@@ -147,6 +148,10 @@ gh-safe-repo my-existing-repo --audit
 
 # Audit without making changes
 gh-safe-repo my-existing-repo --audit --dry-run
+
+# Scan a local repo for secrets before pushing anywhere
+gh-safe-repo --scan .
+gh-safe-repo --scan ~/projects/myapp
 ```
 
 ---
@@ -155,18 +160,20 @@ gh-safe-repo my-existing-repo --audit --dry-run
 
 ```
 gh-safe-repo REPO_NAME [OPTIONS]
+gh-safe-repo --scan PATH [OPTIONS]
 ```
 
 ### Arguments
 
 | Argument | Description |
 |---|---|
-| `REPO_NAME` | Name of the repository to create or audit |
+| `REPO_NAME` | Name of the repository to create or audit (not required with `--scan`) |
 
 ### Options
 
 | Option | Description |
 |---|---|
+| `--scan PATH` | Scan a local directory for secrets and exit. No GitHub interaction. Exit code 0 = clean, 1 = critical findings. |
 | `--dry-run` | Print the plan without making any changes |
 | `--public` | Create as a public repo (default: private) |
 | `--from REPO` | Mirror code from an existing private repo before making public. Requires `--public`. |
@@ -267,13 +274,32 @@ Branch protection is applied before the push intentionally. If the scan reveals 
 
 ## Pre-flight Security Scanner
 
-The scanner runs automatically during `--from --public` workflows. It never sends code to GitHub — the scan is local only.
+The scanner runs locally and never sends code to GitHub. Use it standalone before any push, or it runs automatically as part of the `--from --public` workflow.
+
+### Standalone scan
+
+```bash
+# Scan the current directory
+gh-safe-repo --scan .
+
+# Scan an explicit path
+gh-safe-repo --scan ~/projects/myapp
+```
+
+Exit code is `0` if no critical findings, `1` if criticals are found — so it composes cleanly with other commands:
+
+```bash
+gh-safe-repo --scan . && git push
+```
+
+The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb`, `use_trufflehog`, etc.
 
 ### What it detects
 
 | Category | Severity | Examples |
 |---|---|---|
 | Hardcoded secrets | Critical | AWS keys (`AKIA…`), GitHub tokens (`ghp_…`, `github_pat_…`), private keys, database URLs |
+| Banned strings | Critical | Any literal strings you configure (usernames, internal hostnames, codenames) |
 | Email addresses | Warning | Any `user@domain.tld` pattern |
 | Large files | Warning | Files over the configured size threshold (default: 100 MB) |
 | TODO/FIXME comments | Info | `# TODO`, `# FIXME`, `# HACK`, `# XXX` |
@@ -304,6 +330,8 @@ export TRUFFLEHOG_IMAGE=trufflehog:local
 ```
 
 The wrapper prefers podman if both are installed. Override with `CONTAINER_RUNTIME=docker`.
+
+When `banned_strings` are configured, the scanner writes a temporary YAML detector config and passes it via `--config`. The wrapper detects this flag and mounts the config file into the container automatically — no extra setup required.
 
 ### Interactive review
 
@@ -336,7 +364,17 @@ scan_for_emails = true
 scan_for_todos = true
 max_file_size_mb = 100
 use_trufflehog = true
+
+# Literal strings to flag as critical findings — useful for usernames,
+# internal hostnames, project codenames, or any known value you don't want public.
+# Comma-separated or one per line (continuation lines must be indented).
+# Matching is case-insensitive.
+# banned_strings = REDACTED
+#     REDACTED
+#     REDACTED
 ```
+
+When banned strings are found the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.
 
 ---
 
@@ -438,7 +476,6 @@ enable_dependabot_alerts = true
 
 
 [pre_flight_scan]
-# Only runs for --from --public workflows.
 scan_for_secrets = true
 scan_for_emails = true
 scan_for_todos = true
@@ -448,6 +485,12 @@ max_file_size_mb = 100
 
 # Use truffleHog v3 if installed (falls back to regex if not available)
 use_trufflehog = true
+
+# Literal strings to flag as critical findings (case-insensitive).
+# Comma-separated, or one per line with continuation indentation.
+# banned_strings = secret
+#     password
+#     credential
 ```
 
 ---

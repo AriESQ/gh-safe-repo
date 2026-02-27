@@ -6,9 +6,3 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-
-# Reference implementations (cloned locally for pattern study)
-app/
-gh-create-repo/
-gh-repo-settings/
-safe-settings/

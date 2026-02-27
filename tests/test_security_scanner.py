@@ -301,16 +301,16 @@ class TestBannedStringScanning:
 
     def test_case_insensitive(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED"})
-            write_file(tmpdir, "notes.txt", "Project REDACTED internal docs.\n")
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "projectx"})
+            write_file(tmpdir, "notes.txt", "Project PROJECTX internal docs.\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 1
 
     def test_multiple_strings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,REDACTED,REDACTED"})
-            write_file(tmpdir, "config.py", "owner = 'REDACTED'\n# REDACTED project\n")
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,octocat,projectx"})
+            write_file(tmpdir, "config.py", "owner = 'octocat'\n# projectx project\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 2  # one per matching line
@@ -326,36 +326,36 @@ class TestBannedStringScanning:
     def test_empty_banned_strings_produces_no_findings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
-            write_file(tmpdir, "file.txt", "REDACTED REDACTED REDACTED\n")
+            write_file(tmpdir, "file.txt", "REDACTED octocat projectx\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert banned == []
 
     def test_rule_includes_string_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED"})
-            write_file(tmpdir, "file.txt", "author: REDACTED\n")
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "octocat"})
+            write_file(tmpdir, "file.txt", "author: octocat\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
-        assert any("REDACTED" in f.rule for f in banned)
+        assert any("octocat" in f.rule for f in banned)
 
     def test_newline_separated_strings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED\nUSER"})
-            write_file(tmpdir, "file.txt", "org: REDACTED\nuser: REDACTED\n")
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED\noctocat"})
+            write_file(tmpdir, "file.txt", "org: REDACTED\nuser: octocat\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 2
 
     def test_trufflehog_config_generated_for_banned_strings(self):
-        scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,REDACTED"})
+        scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,projectx"})
         path = scanner._build_trufflehog_config(scanner._banned_strings)
         try:
             with open(path) as f:
                 content = f.read()
             assert "banned-strings" in content
             assert "REDACTED" in content
-            assert "REDACTED" in content
+            assert "projectx" in content
             assert "(?i)" in content
         finally:
             os.unlink(path)

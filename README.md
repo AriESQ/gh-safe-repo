@@ -369,9 +369,9 @@ use_trufflehog = true
 # internal hostnames, project codenames, or any known value you don't want public.
 # Comma-separated or one per line (continuation lines must be indented).
 # Matching is case-insensitive.
-# banned_strings = REDACTED
-#     REDACTED
-#     REDACTED
+# banned_strings = secret
+#     password
+#     credential
 ```
 
 When banned strings are found the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.

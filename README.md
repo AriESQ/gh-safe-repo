@@ -179,7 +179,6 @@ gh-safe-repo --scan PATH [OPTIONS]
 | `--audit` | Audit an existing repo and apply missing safe defaults |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
 | `--debug` | Print every API call and response |
-| `--no-wiki` | Disable wiki (overrides config) |
 | `--help` | Show help and exit |
 
 ---
@@ -252,7 +251,7 @@ gh-safe-repo my-public-project --from my-private-project --public
 
 **What happens, in order:**
 
-1. The source repo (`my-private-project`) is cloned locally with `git clone --depth=1`
+1. The source repo (`my-private-project`) is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
 3. You review findings and confirm (or abort)
 4. A new repo (`my-public-project`) is created as **public**
@@ -502,7 +501,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 gh-safe-repo my-project
       │
       ├─ Load config (~/.config/gh-safe-repo/config.ini)
-      ├─ Apply CLI flag overrides (--public, --no-wiki, etc.)
+      ├─ Apply CLI flag overrides (--public, etc.)
       ├─ Authenticate via gh CLI or GITHUB_TOKEN
       ├─ GET /user → owner login + plan level  (single cached call)
       │

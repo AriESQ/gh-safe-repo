@@ -5,7 +5,6 @@ Usage:
     gh-safe-repo my-project              # Create private repo with safe defaults
     gh-safe-repo my-project --dry-run    # Preview without creating
     gh-safe-repo my-project --debug      # Show every API call
-    gh-safe-repo my-project --no-wiki    # Override specific setting
     gh-safe-repo my-public --from my-private --public  # Public repo from private source
     gh-safe-repo my-repo --audit         # Audit existing repo and apply safe defaults
     gh-safe-repo my-repo --audit --dry-run  # Read-only audit: show diff only
@@ -263,16 +262,6 @@ def main():
         help="Show every API call made",
     )
     parser.add_argument(
-        "--no-wiki",
-        action="store_true",
-        help="Disable the wiki (also the default; overrides config)",
-    )
-    parser.add_argument(
-        "--wiki",
-        action="store_true",
-        help="Enable the wiki",
-    )
-    parser.add_argument(
         "--public",
         action="store_true",
         help="Create a public repository instead of private",
@@ -336,10 +325,6 @@ def main():
 
     # Apply CLI overrides
     overrides = {}
-    if args.no_wiki:
-        overrides[("repo", "has_wiki")] = "false"
-    if args.wiki:
-        overrides[("repo", "has_wiki")] = "true"
     if args.public:
         overrides[("repo", "private")] = "false"
     if overrides:

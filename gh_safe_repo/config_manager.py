@@ -48,6 +48,7 @@ SAFE_DEFAULTS = {
         "scan_for_todos":   "true",
         "max_file_size_mb": "100",
         "use_trufflehog":   "true",
+        "banned_strings":   "",
     },
 }
 

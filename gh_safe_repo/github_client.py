@@ -179,14 +179,18 @@ class GitHubClient:
                 )
 
     def clone_for_scan(self, owner: str, repo: str, dest_path: str) -> None:
-        """Shallow-clone repo into dest_path for pre-flight scanning."""
+        """Full-clone repo into dest_path for pre-flight scanning.
+
+        A full clone (no --depth) is required so truffleHog can scan the
+        complete git history for secrets, not just the working-tree snapshot.
+        """
         clone_url = f"https://x-access-token:{self._token}@github.com/{owner}/{repo}.git"
         display_url = f"https://github.com/{owner}/{repo}.git"
         if self.debug:
-            print(f"[debug] git clone --depth=1 {display_url} {dest_path}", file=sys.stderr)
+            print(f"[debug] git clone {display_url} {dest_path}", file=sys.stderr)
         try:
             subprocess.run(
-                ["git", "clone", "--depth=1", clone_url, dest_path],
+                ["git", "clone", clone_url, dest_path],
                 check=True,
                 capture_output=not self.debug,
                 text=True,

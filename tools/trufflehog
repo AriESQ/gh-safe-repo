@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#
+# tools/trufflehog — transparent podman/docker wrapper for truffleHog
+#
+# Drop this script somewhere on your PATH (e.g. copy it to ~/.local/bin/trufflehog
+# and make it executable) to run truffleHog in a container with no local install.
+#
+# Compatible with the gh-safe-repo scanner interface:
+#   trufflehog filesystem /path/to/scan --json --no-update
+#   trufflehog git file:///path/to/repo --json --no-update
+#
+# When the "filesystem" subcommand is used, the scan path is mounted read-only
+# at the same absolute path inside the container so that file paths in
+# truffleHog's JSON output are identical to native runs — no translation needed.
+#
+# When the "git" subcommand is used with a file:// URL, the local repo path is
+# extracted from the URL and mounted the same way, so git history scanning works
+# without a native truffleHog install.
+#
+# All other subcommands (e.g. git https://..., github, s3) are passed straight
+# through to the container with no volume mounts.
+#
+# Configuration via environment variables:
+#   TRUFFLEHOG_IMAGE   Container image to use (default: ghcr.io/trufflesecurity/trufflehog:latest)
+#   CONTAINER_RUNTIME  Override runtime detection (podman or docker)
+
+set -euo pipefail
+
+IMAGE="${TRUFFLEHOG_IMAGE:-ghcr.io/trufflesecurity/trufflehog:latest}"
+
+# --- Detect container runtime ---
+if [[ -n "${CONTAINER_RUNTIME:-}" ]]; then
+    RUNTIME="$CONTAINER_RUNTIME"
+elif command -v podman &>/dev/null; then
+    RUNTIME="podman"
+elif command -v docker &>/dev/null; then
+    RUNTIME="docker"
+else
+    echo "trufflehog wrapper: neither podman nor docker found in PATH" >&2
+    exit 2
+fi
+
+# Shared helper: scan optional args for --config and return mount args.
+# Writes nothing and sets CONFIG_MOUNT_ARGS as a side effect.
+_config_mount_args() {
+    CONFIG_MOUNT_ARGS=()
+    local args=("$@")
+    local i
+    for i in "${!args[@]}"; do
+        if [[ "${args[$i]}" == "--config" && $((i + 1)) -lt ${#args[@]} ]]; then
+            local config_file
+            config_file="$(realpath "${args[$((i + 1))]}")"
+            CONFIG_MOUNT_ARGS=(--volume "$config_file:$config_file:ro")
+            break
+        fi
+    done
+}
+
+# --- Dispatch ---
+if [[ "${1:-}" == "filesystem" && -n "${2:-}" ]]; then
+    # trufflehog filesystem <abs-path> [flags...]
+    # Mount the scan path at the same absolute path inside the container so
+    # JSON output paths are identical to native runs (no translation needed).
+    SCAN_PATH="$(realpath "$2")"
+    shift 2   # consume "filesystem" and the path; remaining args pass through
+    _config_mount_args "$@"
+
+    exec "$RUNTIME" run --rm \
+        --volume "$SCAN_PATH:$SCAN_PATH:ro" \
+        "${CONFIG_MOUNT_ARGS[@]}" \
+        "$IMAGE" \
+        filesystem "$SCAN_PATH" "$@"
+
+elif [[ "${1:-}" == "git" && "${2:-}" == file://* ]]; then
+    # trufflehog git file:///abs/path [flags...]
+    # Strip the file:// scheme to get the host path, then mount it.
+    SCAN_PATH="$(realpath "${2#file://}")"
+    shift 2   # consume "git" and the URL; remaining args pass through
+    _config_mount_args "$@"
+
+    exec "$RUNTIME" run --rm \
+        --volume "$SCAN_PATH:$SCAN_PATH:ro" \
+        "${CONFIG_MOUNT_ARGS[@]}" \
+        "$IMAGE" \
+        git "file://$SCAN_PATH" "$@"
+
+else
+    # Remote targets: git https://..., github --org, s3 --bucket, etc.
+    # These subcommands fetch data over the network; the container needs no
+    # volume mounts.  gh-safe-repo itself never reaches this branch — it only
+    # ever calls "filesystem" or "git file://".  The passthrough is here so
+    # the wrapper can also serve as a general drop-in replacement for a native
+    # trufflehog install.
+    exec "$RUNTIME" run --rm "$IMAGE" "$@"
+fi

@@ -201,13 +201,15 @@ class TestCloneForScan:
             client._token = "ghp_testtoken"
             return client
 
-    def test_clone_for_scan_uses_depth_1(self):
+    def test_clone_for_scan_is_full_clone(self):
+        # A full clone (no --depth) is required so truffleHog can walk the
+        # entire git history, not just the HEAD working-tree snapshot.
         client = self._make_client()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
             client.clone_for_scan("alice", "private-repo", "/tmp/scan_dir")
         cmd = mock_run.call_args.args[0]
-        assert "--depth=1" in cmd
+        assert "--depth=1" not in cmd
 
     def test_clone_for_scan_includes_dest_path(self):
         client = self._make_client()

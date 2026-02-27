@@ -288,6 +288,119 @@ class TestTruffleHogIntegration:
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) >= 1
 
+    def test_uses_git_subcommand_for_git_repo(self):
+        # When the scanned directory contains a .git folder, trufflehog must
+        # use the `git` subcommand so it scans full commit history.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert cmd[1] == "git"
+
+    def test_uses_filesystem_subcommand_for_non_git_dir(self):
+        # Without a .git folder the directory is not a repo; use `filesystem`.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert cmd[1] == "filesystem"
+
+    def test_parses_git_source_metadata(self):
+        # trufflehog git emits Git metadata; the parser must handle it.
+        import json as _json
+        git_line = _json.dumps({
+            "SourceMetadata": {"Data": {"Git": {"file": "/abs/path/secrets.txt", "line": 7}}},
+            "DetectorName": "AWSKeyID",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            completed = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=git_line + "\n", stderr=""
+            )
+            with patch("subprocess.run", return_value=completed):
+                findings = scanner._try_trufflehog(tmpdir)
+        assert findings is not None
+        assert len(findings) == 1
+        assert findings[0].category == FindingCategory.SECRET
+        assert findings[0].line_number == 7
+
+
+class TestBannedStringScanning:
+    def test_detects_exact_match(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme"})
+            write_file(tmpdir, "readme.md", "This project is by acme.\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 1
+        assert banned[0].match == "[redacted]"
+
+    def test_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "projectx"})
+            write_file(tmpdir, "notes.txt", "Project PROJECTX internal docs.\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 1
+
+    def test_multiple_strings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme,octocat,projectx"})
+            write_file(tmpdir, "config.py", "owner = 'octocat'\n# projectx project\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 2  # one per matching line
+
+    def test_no_match_produces_no_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "supersecret"})
+            write_file(tmpdir, "clean.py", "x = 1\nprint('hello')\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert banned == []
+
+    def test_empty_banned_strings_produces_no_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, "file.txt", "acme octocat projectx\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert banned == []
+
+    def test_rule_includes_string_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "octocat"})
+            write_file(tmpdir, "file.txt", "author: octocat\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert any("octocat" in f.rule for f in banned)
+
+    def test_newline_separated_strings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme\noctocat"})
+            write_file(tmpdir, "file.txt", "org: acme\nuser: octocat\n")
+            findings = scanner._scan_regex(tmpdir, secrets=False)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 2
+
+    def test_trufflehog_config_generated_for_banned_strings(self):
+        scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme,projectx"})
+        path = scanner._build_trufflehog_config(scanner._banned_strings)
+        try:
+            with open(path) as f:
+                content = f.read()
+            assert "banned-strings" in content
+            assert "acme" in content
+            assert "projectx" in content
+            assert "(?i)" in content
+        finally:
+            os.unlink(path)
+
 
 class TestFormatFindings:
     def test_empty_list_returns_empty_string(self):

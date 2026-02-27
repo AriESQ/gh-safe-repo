@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from typing import Generator, List, Optional
@@ -48,6 +49,7 @@ class FindingCategory(Enum):
     EMAIL = "email"
     LARGE_FILE = "large_file"
     TODO = "todo"
+    BANNED_STRING = "banned_string"
 
 
 # --- Dataclass ---
@@ -105,6 +107,9 @@ class SecurityScanner:
         self._max_file_size_bytes = int(
             float(config.get("pre_flight_scan", "max_file_size_mb", fallback="100")) * 1024 * 1024
         )
+        # Banned strings: split on newlines and commas, strip whitespace, drop empties
+        raw = config.get("pre_flight_scan", "banned_strings", fallback="")
+        self._banned_strings = [s.strip() for s in re.split(r"[\n,]", raw) if s.strip()]
 
     def scan(self, root_path: str) -> List[Finding]:
         findings = []
@@ -126,19 +131,75 @@ class SecurityScanner:
 
         return findings
 
+    def _build_trufflehog_config(self, strings: List[str]) -> str:
+        """Write a temporary truffleHog YAML config with a custom banned-strings detector.
+
+        Uses a single case-insensitive alternation regex so all strings are checked
+        in one pass. Returns the path to the temp file; caller must delete it.
+        """
+        # re.escape handles any regex special chars in the user's strings
+        pattern = "(?i)(" + "|".join(re.escape(s) for s in strings) + ")"
+
+        # YAML single-quoted strings: the only escape needed is '' for a literal '
+        def sq(s):
+            return "'" + s.replace("'", "''") + "'"
+
+        kw_lines = "\n".join(f"      - {sq(s.lower())}" for s in strings)
+        yaml_content = (
+            "detectors:\n"
+            "  - name: banned-strings\n"
+            "    keywords:\n"
+            f"{kw_lines}\n"
+            "    regex:\n"
+            f"      match: {sq(pattern)}\n"
+            "    verify: []\n"
+        )
+
+        fd, path = tempfile.mkstemp(suffix=".yaml", prefix="gh-safe-repo-banned-")
+        with os.fdopen(fd, "w") as f:
+            f.write(yaml_content)
+        return path
+
     def _try_trufflehog(self, root_path: str) -> Optional[List[Finding]]:
+        # Resolve symlinks so the path we pass to trufflehog matches the
+        # "file" paths it emits in JSON output.  Without this, on macOS
+        # /tmp (→ /private/tmp) causes os.path.relpath() to produce a
+        # traversal string rather than the correct relative path.
+        root_path = os.path.realpath(root_path)
+
+        # Use `trufflehog git` when scanning a git repo so the full commit
+        # history is scanned — not just the working-tree snapshot.
+        # `trufflehog filesystem` is the fallback for non-git directories
+        # (e.g. the --scan command pointed at an arbitrary directory).
+        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
+        if is_git_repo:
+            cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update"]
+        else:
+            cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+
+        config_path = None
+        if self._banned_strings:
+            config_path = self._build_trufflehog_config(self._banned_strings)
+            cmd += ["--config", config_path]
+
         try:
-            result = subprocess.run(
-                ["trufflehog", "filesystem", root_path, "--json", "--no-update"],
-                capture_output=True,
-                text=True,
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True)
         except FileNotFoundError:
             if self.debug:
                 print("[debug] trufflehog not found, falling back to regex scanner", file=sys.stderr)
+            if config_path:
+                os.unlink(config_path)
             return None
+        finally:
+            if config_path and os.path.exists(config_path):
+                os.unlink(config_path)
 
-        # returncode 0 = no findings, 1 = findings found; anything else = error/wrong version
+        # truffleHog v3 exit codes (tested against v3.93.4):
+        #   0 = scan completed — may have 0 or more unverified findings in JSON
+        #   1 = scan completed with verified findings
+        #   anything else = crash / wrong version / unexpected error
+        # JSON stdout is the authoritative source of findings regardless of
+        # exit code; the code below parses it in all (0, 1) cases.
         if result.returncode not in (0, 1):
             if self.debug:
                 print(
@@ -157,18 +218,35 @@ class SecurityScanner:
             except json.JSONDecodeError:
                 continue
             try:
-                fs_data = data["SourceMetadata"]["Data"]["Filesystem"]
-                file_path = os.path.relpath(fs_data.get("file", ""), root_path)
-                line_number = int(fs_data.get("line", 0))
+                # `trufflehog git` emits Git metadata; `trufflehog filesystem`
+                # emits Filesystem metadata.  Both carry the same file/line fields.
+                src = (
+                    data["SourceMetadata"]["Data"].get("Git")
+                    or data["SourceMetadata"]["Data"].get("Filesystem")
+                )
+                if not src:
+                    continue
+                file_path = os.path.relpath(src.get("file", ""), root_path)
+                line_number = int(src.get("line", 0))
                 detector = data.get("DetectorName", "unknown detector")
-                findings.append(Finding(
-                    severity=Severity.CRITICAL,
-                    category=FindingCategory.SECRET,
-                    file_path=file_path,
-                    line_number=line_number,
-                    rule=f"Secret detected by truffleHog ({detector})",
-                    match="[redacted]",
-                ))
+                if detector == "banned-strings":
+                    findings.append(Finding(
+                        severity=Severity.CRITICAL,
+                        category=FindingCategory.BANNED_STRING,
+                        file_path=file_path,
+                        line_number=line_number,
+                        rule="Banned string found",
+                        match="[redacted]",
+                    ))
+                else:
+                    findings.append(Finding(
+                        severity=Severity.CRITICAL,
+                        category=FindingCategory.SECRET,
+                        file_path=file_path,
+                        line_number=line_number,
+                        rule=f"Secret detected by truffleHog ({detector})",
+                        match="[redacted]",
+                    ))
             except (KeyError, TypeError, ValueError):
                 continue
 
@@ -228,6 +306,18 @@ class SecurityScanner:
                             line_number=line_number,
                             rule="TODO/FIXME/HACK/XXX comment",
                             match=line.rstrip()[:80],
+                        ))
+
+                line_lower = line.lower()
+                for banned in self._banned_strings:
+                    if banned.lower() in line_lower:
+                        findings.append(Finding(
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.BANNED_STRING,
+                            file_path=rel_path,
+                            line_number=line_number,
+                            rule=f"Banned string: {banned}",
+                            match="[redacted]",
                         ))
 
         return findings

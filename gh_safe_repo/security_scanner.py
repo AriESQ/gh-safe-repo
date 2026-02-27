@@ -167,7 +167,16 @@ class SecurityScanner:
         # traversal string rather than the correct relative path.
         root_path = os.path.realpath(root_path)
 
-        cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+        # Use `trufflehog git` when scanning a git repo so the full commit
+        # history is scanned — not just the working-tree snapshot.
+        # `trufflehog filesystem` is the fallback for non-git directories
+        # (e.g. the --scan command pointed at an arbitrary directory).
+        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
+        if is_git_repo:
+            cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update"]
+        else:
+            cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+
         config_path = None
         if self._banned_strings:
             config_path = self._build_trufflehog_config(self._banned_strings)
@@ -209,9 +218,16 @@ class SecurityScanner:
             except json.JSONDecodeError:
                 continue
             try:
-                fs_data = data["SourceMetadata"]["Data"]["Filesystem"]
-                file_path = os.path.relpath(fs_data.get("file", ""), root_path)
-                line_number = int(fs_data.get("line", 0))
+                # `trufflehog git` emits Git metadata; `trufflehog filesystem`
+                # emits Filesystem metadata.  Both carry the same file/line fields.
+                src = (
+                    data["SourceMetadata"]["Data"].get("Git")
+                    or data["SourceMetadata"]["Data"].get("Filesystem")
+                )
+                if not src:
+                    continue
+                file_path = os.path.relpath(src.get("file", ""), root_path)
+                line_number = int(src.get("line", 0))
                 detector = data.get("DetectorName", "unknown detector")
                 if detector == "banned-strings":
                     findings.append(Finding(

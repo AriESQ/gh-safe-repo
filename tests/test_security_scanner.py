@@ -288,6 +288,47 @@ class TestTruffleHogIntegration:
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) >= 1
 
+    def test_uses_git_subcommand_for_git_repo(self):
+        # When the scanned directory contains a .git folder, trufflehog must
+        # use the `git` subcommand so it scans full commit history.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert cmd[1] == "git"
+
+    def test_uses_filesystem_subcommand_for_non_git_dir(self):
+        # Without a .git folder the directory is not a repo; use `filesystem`.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert cmd[1] == "filesystem"
+
+    def test_parses_git_source_metadata(self):
+        # trufflehog git emits Git metadata; the parser must handle it.
+        import json as _json
+        git_line = _json.dumps({
+            "SourceMetadata": {"Data": {"Git": {"file": "/abs/path/secrets.txt", "line": 7}}},
+            "DetectorName": "AWSKeyID",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            completed = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=git_line + "\n", stderr=""
+            )
+            with patch("subprocess.run", return_value=completed):
+                findings = scanner._try_trufflehog(tmpdir)
+        assert findings is not None
+        assert len(findings) == 1
+        assert findings[0].category == FindingCategory.SECRET
+        assert findings[0].line_number == 7
+
 
 class TestBannedStringScanning:
     def test_detects_exact_match(self):

@@ -85,6 +85,15 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     exit 1
 }
 
+# ── Worktree guard ────────────────────────────────────────────────────────────
+# filter-branch rewrites the shared object store — running inside a worktree
+# would rewrite the main repo's history from an unexpected working directory.
+if [[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]]; then
+    err "Running inside a git worktree is not supported."
+    echo "Switch to the main working tree and run this script from there."
+    exit 1
+fi
+
 # ── Resolve file path ─────────────────────────────────────────────────────────
 if [[ "$TARGET" = /* ]]; then
     ABS_PATH="$TARGET"

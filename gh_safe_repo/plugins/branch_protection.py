@@ -39,6 +39,9 @@ class BranchProtectionPlugin(BasePlugin):
         if status == 404:
             # No protection set — return permissive defaults
             return dict(GITHUB_DEFAULTS)
+        if status == 403:
+            # Feature not available (private repo on free plan) — plan() will SKIP
+            return dict(GITHUB_DEFAULTS)
         if status and status >= 400:
             raise APIError(f"GET {path} returned {status}", status_code=status)
         try:

@@ -84,6 +84,9 @@ class GitHubClient:
         )
 
         status_code = self._parse_status(result.stderr)
+        # gh api writes nothing to stderr on success; infer 200 from exit code 0.
+        if status_code is None and result.returncode == 0:
+            status_code = 200
 
         if self.debug and result.stderr:
             print(f"[debug] stderr: {result.stderr.strip()}", file=sys.stderr)

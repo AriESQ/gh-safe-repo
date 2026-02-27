@@ -71,10 +71,6 @@ allow_deletions = false
 # Enable Dependabot vulnerability alerts (public repos only on free plan)
 enable_dependabot_alerts = true
 
-# Email address shown in SECURITY.md template
-# If not set, a placeholder is used
-# contact_email = security@example.com
-
 [pre_flight_scan]
 # Only runs when using --from --public (making a private repo public).
 # Scans the source repo locally before any code is copied or made public.

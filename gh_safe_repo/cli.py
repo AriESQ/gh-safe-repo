@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import base64
 import os
 import re
 import subprocess
@@ -123,44 +122,6 @@ def print_success_audit(owner, repo):
         print(f"{_GREEN}│{_RESET} {line.ljust(width)} {_GREEN}│{_RESET}")
     print(f"{_GREEN}{bottom}{_RESET}\n")
 
-
-def create_security_md(client, owner, repo, config, dry_run=False):
-    """Upload SECURITY.md to the new repo."""
-    template_path = Path(__file__).parent / "templates" / "SECURITY.md"
-    if not template_path.exists():
-        return
-
-    contact_email = config.get("security", "contact_email", fallback="security@example.com")
-    content = template_path.read_text().replace("{security_email}", contact_email)
-
-    if dry_run:
-        return  # Plan already shows FILE/SECURITY.md as ADD
-
-    encoded = base64.b64encode(content.encode()).decode()
-    path = client.repo_path(owner, repo, "contents/SECURITY.md")
-    client.call_json("PUT", path, {
-        "message": "Add SECURITY.md",
-        "content": encoded,
-    })
-
-
-def audit_security_md(client, owner, repo, config) -> Change:
-    """Check whether SECURITY.md exists in the repo. Returns a Change for the plan."""
-    path = client.repo_path(owner, repo, "contents/SECURITY.md")
-    status, _ = client.call_api("GET", path)
-    if status == 200:
-        return Change(
-            type=ChangeType.SKIP,
-            category=ChangeCategory.FILE,
-            key="SECURITY.md",
-            reason="Already exists",
-        )
-    return Change(
-        type=ChangeType.ADD,
-        category=ChangeCategory.FILE,
-        key="SECURITY.md",
-        new="SECURITY.md (from template)",
-    )
 
 
 def _print_findings(findings, config):
@@ -467,14 +428,6 @@ def main():
                 error(f"Failed to fetch current state: {e}")
                 sys.exit(1)
 
-        # Check SECURITY.md
-        try:
-            security_md_change = audit_security_md(client, owner, repo_name, config)
-        except APIError as e:
-            error(f"Failed to check SECURITY.md: {e}")
-            sys.exit(1)
-        full_plan.add(security_md_change)
-
         # Print plan
         print_plan(full_plan)
 
@@ -511,13 +464,6 @@ def main():
                 plugin.apply(full_plan)
             except APIError as e:
                 warn(f"Some settings failed to apply: {e}")
-
-        # Upload SECURITY.md if it was missing
-        if security_md_change.type == ChangeType.ADD:
-            try:
-                create_security_md(client, owner, repo_name, config)
-            except APIError as e:
-                warn(f"SECURITY.md upload failed: {e}")
 
         print_success_audit(owner, repo_name)
         return
@@ -582,14 +528,6 @@ def main():
         except SafeRepoError as e:
             error(f"Planning failed: {e}")
             sys.exit(1)
-
-    # Add SECURITY.md to the plan
-    full_plan.add(Change(
-        type=ChangeType.ADD,
-        category=ChangeCategory.FILE,
-        key="SECURITY.md",
-        new="SECURITY.md (from template)",
-    ))
 
     # Add scan + code mirror steps to the plan if --from is specified
     if args.from_repo:
@@ -666,11 +604,5 @@ def main():
             info(_c(_GREEN, f"  Code mirrored successfully."))
         except APIError as e:
             warn(f"Code copy failed: {e}")
-
-    # Create SECURITY.md
-    try:
-        create_security_md(client, owner, repo_name, config)
-    except APIError as e:
-        warn(f"Repository created but SECURITY.md upload failed: {e}")
 
     print_success(owner, repo_name)

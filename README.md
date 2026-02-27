@@ -6,7 +6,7 @@ Create GitHub repositories with safe defaults applied automatically. Replaces th
 gh-safe-repo my-project
 ```
 
-Branch protection, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, automatic branch cleanup, and a `SECURITY.md` — all configured before you write your first line of code.
+Branch protection, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
 
 ---
 
@@ -86,7 +86,6 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 |---|---|
 | Dependabot alerts | Enabled (public repos / paid plans) |
 | Secret scanning | Automatic on public repos; enabled on private paid plans |
-| `SECURITY.md` | Created with your contact email |
 
 ---
 
@@ -205,8 +204,6 @@ $ gh-safe-repo my-project --dry-run
   Actions             ADD     can_approve_pull_request_reviews false
   Branch Protection   SKIP    branch_protection                Not available for private repos on free plan
   Security            SKIP    dependabot_alerts                Not available for private repos on free plan
-  File                ADD     SECURITY.md                      (template)
-
   1 setting skipped (GitHub plan limitation).
   Dry run — no changes made.
 ```
@@ -261,7 +258,7 @@ gh-safe-repo my-public-project --from my-private-project --public
 4. A new repo (`my-public-project`) is created as **public**
 5. Branch protection is applied **before any code is pushed**
 6. The full history is mirrored: `git clone --mirror` + `git push --mirror`
-7. Dependabot, secret scanning, and `SECURITY.md` are configured
+7. Dependabot and secret scanning are configured
 
 Branch protection is applied before the push intentionally. If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
@@ -464,10 +461,6 @@ allow_deletions = false
 # Enable Dependabot vulnerability alerts
 enable_dependabot_alerts = true
 
-# Email address shown in the generated SECURITY.md
-# If omitted, a placeholder is used
-# contact_email = security@example.com
-
 
 [pre_flight_scan]
 scan_for_secrets = true
@@ -528,8 +521,7 @@ gh-safe-repo my-project
           ├─ PUT  /repos/{owner}/{repo}/branches/main/protection
           │   or POST /repos/{owner}/{repo}/rulesets (if use_rulesets = true)
           ├─ PUT  /repos/{owner}/{repo}/vulnerability-alerts
-          ├─ git clone --mirror + git push --mirror (if --from)
-          └─ PUT  /repos/{owner}/{repo}/contents/SECURITY.md
+          └─ git clone --mirror + git push --mirror (if --from)
 ```
 
 ### Plugin architecture
@@ -596,8 +588,7 @@ gh-safe-repo/
 │   │   ├── actions.py            # Actions permissions
 │   │   ├── branch_protection.py  # Classic + Rulesets API
 │   │   └── security.py           # Dependabot + secret scanning
-│   └── templates/
-│       └── SECURITY.md           # Security policy template
+│   └── templates/                # (currently empty)
 ├── pyproject.toml                # Build config, entry points
 ├── config.ini.example            # Fully annotated example config
 └── tests/

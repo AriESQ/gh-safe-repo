@@ -282,11 +282,6 @@ def main():
         help="Enable the wiki",
     )
     parser.add_argument(
-        "--enable-discussions",
-        action="store_true",
-        help="Enable GitHub Discussions",
-    )
-    parser.add_argument(
         "--public",
         action="store_true",
         help="Create a public repository instead of private",

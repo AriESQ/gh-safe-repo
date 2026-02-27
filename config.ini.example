@@ -26,9 +26,6 @@ allow_rebase_merge = true
 auto_init = true
 
 [actions]
-# Allow Actions to run
-enabled = true
-
 # Restrict to actions from GitHub and verified creators
 # Options: all, local_only, selected
 allowed_actions = selected
@@ -85,3 +82,9 @@ scan_for_emails = true
 scan_for_todos = true
 max_file_size_mb = 100
 use_trufflehog = true
+
+# Literal strings to flag as critical findings (case-insensitive).
+# Comma-separated, or one per line with continuation indentation.
+# banned_strings = secret
+#     password
+#     credential

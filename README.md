@@ -181,9 +181,6 @@ gh-safe-repo --scan PATH [OPTIONS]
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
 | `--debug` | Print every API call and response |
 | `--no-wiki` | Disable wiki (overrides config) |
-| `--no-issues` | Disable issues (overrides config) |
-| `--no-projects` | Disable projects (overrides config) |
-| `--enable-discussions` | Enable discussions (overrides config) |
 | `--help` | Show help and exit |
 
 ---
@@ -418,9 +415,6 @@ auto_init = true
 
 
 [actions]
-# Allow Actions to run
-enabled = true
-
 # Restrict action sources: all | local_only | selected
 # "selected" = GitHub-authored + verified marketplace creators
 allowed_actions = selected
@@ -630,6 +624,13 @@ There are **no runtime dependencies**. Everything uses the Python standard libra
 
 ---
 
-## License
+## Prior Art
 
-MIT
+These projects were studied during design and influenced the architecture of `gh-safe-repo`. They are distinct tools with different scope and user models — see [CLAUDE.md](CLAUDE.md#why-not-use-or-extend-an-existing-tool) for why none of them could serve this use case directly.
+
+- **[github/safe-settings](https://github.com/github/safe-settings)** — Org-level GitHub App (Node.js/Probot) that enforces repository settings from a central config. Source of the plugin architecture pattern (one class per setting category, fetch → diff → apply) and the `mergeDeep` comparison approach.
+
+- **[repository-settings/app](https://github.com/repository-settings/app)** — Simpler per-repo variant of safe-settings, also Node.js/Probot. Provided a cleaner reference for the `Diffable` base plugin pattern.
+
+- **[nicholasgasior/gh-repo-settings](https://github.com/nicholasgasior/gh-repo-settings)** — CLI extension written in Go with a `plan`/`apply` workflow. Primary inspiration for the `gh api` subprocess wrapper pattern and the dry-run plan output design.
+

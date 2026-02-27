@@ -16,7 +16,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generator, List, Optional
+from typing import List, Optional, Set, Tuple
 
 
 # --- Module-level constants ---
@@ -35,6 +35,25 @@ SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
 }
 
+_AI_CONTEXT_FILES = {
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".cursorrules",
+    "copilot-instructions.md",
+    ".github/copilot-instructions.md",
+    ".cursor",          # directory — flag if it exists
+}
+
+# Pre-computed lowercase sets for O(1) case-insensitive matching
+_AI_CONTEXT_BASENAMES = frozenset(
+    p.lower() for p in _AI_CONTEXT_FILES
+    if "/" not in p and p.lower() != ".cursor"
+)
+_AI_CONTEXT_REL_PATHS = frozenset(
+    p.lower() for p in _AI_CONTEXT_FILES
+    if "/" in p
+)
+
 
 # --- Enums ---
 
@@ -50,6 +69,7 @@ class FindingCategory(Enum):
     LARGE_FILE = "large_file"
     TODO = "todo"
     BANNED_STRING = "banned_string"
+    AI_CONTEXT_FILE = "ai_context_file"
 
 
 # --- Dataclass ---
@@ -94,6 +114,23 @@ EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 TODO_PATTERN = re.compile(r"(?i)#\s*(?:TODO|FIXME|HACK|XXX)\b")
 
 
+# --- Helpers ---
+
+def _ai_context_hint(rel_path: str) -> str:
+    """Build the remediation message for an AI context file finding."""
+    filename = rel_path.split("/")[-1]
+    return (
+        f"This file may contain internal development notes. Its git history may hold\n"
+        f"more sensitive content than the current version.\n"
+        f"To strip history and re-add as a clean file (run in your local source repo):\n"
+        f"  cp {rel_path} /tmp/{filename}.bak\n"
+        f"  git filter-repo --invert-paths --path {rel_path}\n"
+        f"  cp /tmp/{filename}.bak {rel_path} && git add {rel_path}\n"
+        f'  git commit -m "Add {rel_path}" && git push --force\n'
+        f"Then re-run gh-safe-repo. Or continue to mirror as-is."
+    )
+
+
 # --- Scanner class ---
 
 class SecurityScanner:
@@ -110,26 +147,178 @@ class SecurityScanner:
         # Banned strings: split on newlines and commas, strip whitespace, drop empties
         raw = config.get("pre_flight_scan", "banned_strings", fallback="")
         self._banned_strings = [s.strip() for s in re.split(r"[\n,]", raw) if s.strip()]
+        self._warn_ai_context_files = config.getbool(
+            "pre_flight_scan", "warn_ai_context_files", fallback=True
+        )
+        # Populated during scan(); readable by callers afterward to show coverage warnings
+        self.skipped_committed_dirs: List[str] = []
 
     def scan(self, root_path: str) -> List[Finding]:
-        findings = []
+        self.skipped_committed_dirs = []
 
-        # Always scan for large files (truffleHog doesn't report sizes)
-        findings.extend(self._scan_large_files(root_path))
+        if self.debug:
+            print(f"[debug] SKIP_DIRS: {sorted(SKIP_DIRS)}", file=sys.stderr)
 
+        # truffleHog handles secrets (including full git history) when available
+        secrets_via_trufflehog = False
+        findings: List[Finding] = []
         if self._scan_secrets and self._use_trufflehog:
             trufflehog_results = self._try_trufflehog(root_path)
             if trufflehog_results is not None:
-                # truffleHog handled secrets; still run regex for emails/TODOs
                 findings.extend(trufflehog_results)
-                findings.extend(self._scan_regex(root_path, secrets=False))
-            else:
-                # truffleHog unavailable or failed; fall back to regex for everything
-                findings.extend(self._scan_regex(root_path, secrets=True))
-        else:
-            findings.extend(self._scan_regex(root_path, secrets=self._scan_secrets))
+                secrets_via_trufflehog = True
+
+        # Single walk: large files, AI context files, text content (secrets if no truffleHog)
+        walk_findings, skipped = self._unified_walk(
+            root_path, scan_secrets=not secrets_via_trufflehog
+        )
+        findings.extend(walk_findings)
+        self.skipped_committed_dirs = sorted(skipped)
 
         return findings
+
+    def _unified_walk(
+        self, root_path: str, scan_secrets: bool = True
+    ) -> Tuple[List[Finding], Set[str]]:
+        """Single os.walk() pass covering large files, AI context files, and text content.
+
+        Returns (findings, skipped_dirs) where skipped_dirs is the set of SKIP_DIRS
+        subdirectory paths (relative to root_path) actually encountered during the walk.
+        .git is excluded from skipped_dirs — its presence is always expected.
+        """
+        findings: List[Finding] = []
+        skipped_dirs: Set[str] = set()
+
+        for dirpath, dirs, files in os.walk(root_path, followlinks=False):
+            # Track and prune SKIP_DIRS; record all except .git (always present)
+            for d in list(dirs):
+                if d in SKIP_DIRS:
+                    if d != ".git":
+                        rel = os.path.relpath(os.path.join(dirpath, d), root_path)
+                        skipped_dirs.add(rel)
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+
+            # AI context directory check (.cursor)
+            if self._warn_ai_context_files:
+                for d in list(dirs):
+                    if d.lower() == ".cursor":
+                        full_path = os.path.join(dirpath, d)
+                        rel_path = os.path.relpath(full_path, root_path).replace(os.sep, "/")
+                        dirs.remove(d)
+                        findings.append(Finding(
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.AI_CONTEXT_FILE,
+                            file_path=rel_path,
+                            line_number=0,
+                            rule="AI context file",
+                            match=_ai_context_hint(rel_path),
+                        ))
+
+            for filename in files:
+                full_path = os.path.join(dirpath, filename)
+                rel_path = os.path.relpath(full_path, root_path).replace(os.sep, "/")
+
+                # AI context file check (by filename / relative path)
+                if self._warn_ai_context_files:
+                    if (filename.lower() in _AI_CONTEXT_BASENAMES
+                            or rel_path.lower() in _AI_CONTEXT_REL_PATHS):
+                        findings.append(Finding(
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.AI_CONTEXT_FILE,
+                            file_path=rel_path,
+                            line_number=0,
+                            rule="AI context file",
+                            match=_ai_context_hint(rel_path),
+                        ))
+
+                # Large file check
+                try:
+                    size = os.path.getsize(full_path)
+                except OSError:
+                    continue
+                if size > self._max_file_size_bytes:
+                    size_mb = size / (1024 * 1024)
+                    findings.append(Finding(
+                        severity=Severity.WARNING,
+                        category=FindingCategory.LARGE_FILE,
+                        file_path=rel_path,
+                        line_number=0,
+                        rule="Large file",
+                        match=f"{size_mb:.1f} MB",
+                    ))
+                    continue  # skip content scanning for large files
+
+                # Skip binary files for text content scanning
+                _, ext = os.path.splitext(filename)
+                if ext.lower() in BINARY_EXTENSIONS:
+                    continue
+
+                # Text content scanning
+                try:
+                    with open(full_path, encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                except OSError:
+                    continue
+
+                for line_number, line in enumerate(lines, start=1):
+                    if scan_secrets:
+                        for pattern, rule_name in _CRITICAL_PATTERNS:
+                            if pattern.search(line):
+                                findings.append(Finding(
+                                    severity=Severity.CRITICAL,
+                                    category=FindingCategory.SECRET,
+                                    file_path=rel_path,
+                                    line_number=line_number,
+                                    rule=rule_name,
+                                    match="[redacted]",
+                                ))
+                        for pattern, rule_name in _WARNING_PATTERNS:
+                            if pattern.search(line):
+                                findings.append(Finding(
+                                    severity=Severity.WARNING,
+                                    category=FindingCategory.SECRET,
+                                    file_path=rel_path,
+                                    line_number=line_number,
+                                    rule=rule_name,
+                                    match="[redacted]",
+                                ))
+
+                    if self._scan_emails:
+                        m = EMAIL_PATTERN.search(line)
+                        if m:
+                            findings.append(Finding(
+                                severity=Severity.WARNING,
+                                category=FindingCategory.EMAIL,
+                                file_path=rel_path,
+                                line_number=line_number,
+                                rule="Email address",
+                                match=m.group(0),
+                            ))
+
+                    if self._scan_todos:
+                        if TODO_PATTERN.search(line):
+                            findings.append(Finding(
+                                severity=Severity.INFO,
+                                category=FindingCategory.TODO,
+                                file_path=rel_path,
+                                line_number=line_number,
+                                rule="TODO/FIXME/HACK/XXX comment",
+                                match=line.rstrip()[:80],
+                            ))
+
+                    line_lower = line.lower()
+                    for banned in self._banned_strings:
+                        if banned.lower() in line_lower:
+                            findings.append(Finding(
+                                severity=Severity.CRITICAL,
+                                category=FindingCategory.BANNED_STRING,
+                                file_path=rel_path,
+                                line_number=line_number,
+                                rule=f"Banned string: {banned}",
+                                match="[redacted]",
+                            ))
+
+        return findings, skipped_dirs
 
     def _build_trufflehog_config(self, strings: List[str]) -> str:
         """Write a temporary truffleHog YAML config with a custom banned-strings detector.
@@ -251,108 +440,6 @@ class SecurityScanner:
                 continue
 
         return findings
-
-    def _scan_regex(self, root_path: str, secrets: bool = True) -> List[Finding]:
-        findings = []
-        for file_path in self._walk_text_files(root_path):
-            rel_path = os.path.relpath(file_path, root_path)
-            try:
-                with open(file_path, encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-            except OSError:
-                continue
-
-            for line_number, line in enumerate(lines, start=1):
-                if secrets:
-                    for pattern, rule_name in _CRITICAL_PATTERNS:
-                        if pattern.search(line):
-                            findings.append(Finding(
-                                severity=Severity.CRITICAL,
-                                category=FindingCategory.SECRET,
-                                file_path=rel_path,
-                                line_number=line_number,
-                                rule=rule_name,
-                                match="[redacted]",
-                            ))
-                    for pattern, rule_name in _WARNING_PATTERNS:
-                        if pattern.search(line):
-                            findings.append(Finding(
-                                severity=Severity.WARNING,
-                                category=FindingCategory.SECRET,
-                                file_path=rel_path,
-                                line_number=line_number,
-                                rule=rule_name,
-                                match="[redacted]",
-                            ))
-
-                if self._scan_emails:
-                    m = EMAIL_PATTERN.search(line)
-                    if m:
-                        findings.append(Finding(
-                            severity=Severity.WARNING,
-                            category=FindingCategory.EMAIL,
-                            file_path=rel_path,
-                            line_number=line_number,
-                            rule="Email address",
-                            match=m.group(0),
-                        ))
-
-                if self._scan_todos:
-                    if TODO_PATTERN.search(line):
-                        findings.append(Finding(
-                            severity=Severity.INFO,
-                            category=FindingCategory.TODO,
-                            file_path=rel_path,
-                            line_number=line_number,
-                            rule="TODO/FIXME/HACK/XXX comment",
-                            match=line.rstrip()[:80],
-                        ))
-
-                line_lower = line.lower()
-                for banned in self._banned_strings:
-                    if banned.lower() in line_lower:
-                        findings.append(Finding(
-                            severity=Severity.CRITICAL,
-                            category=FindingCategory.BANNED_STRING,
-                            file_path=rel_path,
-                            line_number=line_number,
-                            rule=f"Banned string: {banned}",
-                            match="[redacted]",
-                        ))
-
-        return findings
-
-    def _scan_large_files(self, root_path: str) -> List[Finding]:
-        findings = []
-        for dirpath, dirs, files in os.walk(root_path, followlinks=False):
-            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-            for filename in files:
-                full_path = os.path.join(dirpath, filename)
-                try:
-                    size = os.path.getsize(full_path)
-                except OSError:
-                    continue
-                if size > self._max_file_size_bytes:
-                    rel_path = os.path.relpath(full_path, root_path)
-                    size_mb = size / (1024 * 1024)
-                    findings.append(Finding(
-                        severity=Severity.WARNING,
-                        category=FindingCategory.LARGE_FILE,
-                        file_path=rel_path,
-                        line_number=0,
-                        rule="Large file",
-                        match=f"{size_mb:.1f} MB",
-                    ))
-        return findings
-
-    def _walk_text_files(self, root_path: str) -> Generator[str, None, None]:
-        for dirpath, dirs, files in os.walk(root_path, followlinks=False):
-            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-            for filename in files:
-                _, ext = os.path.splitext(filename)
-                if ext.lower() in BINARY_EXTENSIONS:
-                    continue
-                yield os.path.join(dirpath, filename)
 
 
 # --- Module-level utility ---

@@ -13,6 +13,7 @@ from gh_safe_repo.security_scanner import (
     SecurityScanner,
     Severity,
     format_findings,
+    _ai_context_hint,
 )
 
 
@@ -50,6 +51,7 @@ def make_scanner(overrides=None):
 
 def write_file(dir_path, filename, content):
     path = os.path.join(dir_path, filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path
@@ -65,19 +67,19 @@ class TestLargeFileScanning:
             path = os.path.join(tmpdir, "big.bin")
             with open(path, "wb") as f:
                 f.write(b"x" * 1500)
-            findings = scanner._scan_large_files(tmpdir)
-        assert len(findings) == 1
-        assert findings[0].category == FindingCategory.LARGE_FILE
-        assert findings[0].severity == Severity.WARNING
-        assert findings[0].file_path == "big.bin"
-        assert findings[0].line_number == 0
-        assert "MB" in findings[0].match
+            findings = scanner.scan(tmpdir)
+        large = [f for f in findings if f.category == FindingCategory.LARGE_FILE]
+        assert len(large) == 1
+        assert large[0].severity == Severity.WARNING
+        assert large[0].file_path == "big.bin"
+        assert large[0].line_number == 0
+        assert "MB" in large[0].match
 
     def test_skips_file_under_limit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "small.txt", "tiny content")
-            findings = scanner._scan_large_files(tmpdir)
+            findings = scanner.scan(tmpdir)
         assert findings == []
 
     def test_skips_git_directory(self):
@@ -88,8 +90,9 @@ class TestLargeFileScanning:
             path = os.path.join(git_dir, "pack.bin")
             with open(path, "wb") as f:
                 f.write(b"x" * 1500)
-            findings = scanner._scan_large_files(tmpdir)
-        assert findings == []
+            findings = scanner.scan(tmpdir)
+        large = [f for f in findings if f.category == FindingCategory.LARGE_FILE]
+        assert large == []
 
 
 class TestSecretScanning:
@@ -97,7 +100,7 @@ class TestSecretScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "creds.txt", "key = AKIAIOSFODNN7EXAMPLE\n")
-            findings = scanner._scan_regex(tmpdir, secrets=True)
+            findings = scanner.scan(tmpdir)
         secrets = [f for f in findings if f.category == FindingCategory.SECRET]
         assert len(secrets) >= 1
         assert all(f.match == "[redacted]" for f in secrets)
@@ -106,7 +109,7 @@ class TestSecretScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "config.py", "TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz1234567890'\n")
-            findings = scanner._scan_regex(tmpdir, secrets=True)
+            findings = scanner.scan(tmpdir)
         secrets = [f for f in findings if f.category == FindingCategory.SECRET]
         assert len(secrets) >= 1
         assert all(f.match == "[redacted]" for f in secrets)
@@ -115,7 +118,7 @@ class TestSecretScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "key.pem", "-----BEGIN RSA PRIVATE KEY-----\n")
-            findings = scanner._scan_regex(tmpdir, secrets=True)
+            findings = scanner.scan(tmpdir)
         secrets = [f for f in findings if f.category == FindingCategory.SECRET]
         assert len(secrets) >= 1
         assert all(f.match == "[redacted]" for f in secrets)
@@ -124,7 +127,7 @@ class TestSecretScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "settings.py", "DB = 'postgres://user:password@localhost/db'\n")
-            findings = scanner._scan_regex(tmpdir, secrets=True)
+            findings = scanner.scan(tmpdir)
         secrets = [f for f in findings if f.category == FindingCategory.SECRET]
         assert len(secrets) >= 1
         assert all(f.match == "[redacted]" for f in secrets)
@@ -136,7 +139,7 @@ class TestSecretScanning:
                 ("pre_flight_scan", "scan_for_todos"): "false",
             })
             write_file(tmpdir, "clean.py", "x = 1\nprint('hello')\n")
-            findings = scanner._scan_regex(tmpdir, secrets=True)
+            findings = scanner.scan(tmpdir)
         assert findings == []
 
 
@@ -145,7 +148,7 @@ class TestEmailScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) >= 1
         assert emails[0].match == "alice@example.com"
@@ -154,7 +157,7 @@ class TestEmailScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "file.txt", "Email: user@domain.org\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert any(f.match == "user@domain.org" for f in emails)
 
@@ -162,7 +165,7 @@ class TestEmailScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "scan_for_emails"): "false"})
             write_file(tmpdir, "file.txt", "Email: user@domain.org\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
@@ -172,7 +175,7 @@ class TestTodoScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "code.py", "# TODO: fix this\nx = 1\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         todos = [f for f in findings if f.category == FindingCategory.TODO]
         assert len(todos) >= 1
 
@@ -180,7 +183,7 @@ class TestTodoScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "code.py", "# FIXME: broken\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         todos = [f for f in findings if f.category == FindingCategory.TODO]
         assert len(todos) >= 1
 
@@ -188,7 +191,7 @@ class TestTodoScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "code.py", "# HACK: workaround\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         todos = [f for f in findings if f.category == FindingCategory.TODO]
         assert len(todos) >= 1
 
@@ -196,7 +199,7 @@ class TestTodoScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "code.py", "# XXX: bad code\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         todos = [f for f in findings if f.category == FindingCategory.TODO]
         assert len(todos) >= 1
 
@@ -204,7 +207,7 @@ class TestTodoScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "scan_for_todos"): "false"})
             write_file(tmpdir, "code.py", "# TODO: ignored\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         todos = [f for f in findings if f.category == FindingCategory.TODO]
         assert todos == []
 
@@ -215,7 +218,7 @@ class TestSkipBehavior:
             scanner = make_scanner()
             # Write a .png file with email-like content — should be skipped
             write_file(tmpdir, "image.png", "alice@example.com\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
@@ -225,7 +228,7 @@ class TestSkipBehavior:
             git_dir = os.path.join(tmpdir, ".git")
             os.makedirs(git_dir)
             write_file(git_dir, "config", "alice@example.com\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
@@ -235,7 +238,7 @@ class TestSkipBehavior:
             nm_dir = os.path.join(tmpdir, "node_modules")
             os.makedirs(nm_dir)
             write_file(nm_dir, "index.js", "alice@example.com\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
@@ -245,7 +248,7 @@ class TestSkipBehavior:
             pycache_dir = os.path.join(tmpdir, "__pycache__")
             os.makedirs(pycache_dir)
             write_file(pycache_dir, "module.pyc", "alice@example.com\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
@@ -255,9 +258,56 @@ class TestSkipBehavior:
             venv_dir = os.path.join(tmpdir, ".venv")
             os.makedirs(venv_dir)
             write_file(venv_dir, "site.py", "alice@example.com\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
+
+
+class TestSkippedCommittedDirs:
+    def test_committed_skip_dir_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            os.makedirs(os.path.join(tmpdir, "node_modules"))
+            scanner.scan(tmpdir)
+        assert "node_modules" in scanner.skipped_committed_dirs
+
+    def test_git_dir_not_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            os.makedirs(os.path.join(tmpdir, ".git"))
+            scanner.scan(tmpdir)
+        assert ".git" not in scanner.skipped_committed_dirs
+
+    def test_no_skipped_dirs_when_clean(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            scanner.scan(tmpdir)
+        assert scanner.skipped_committed_dirs == []
+
+    def test_nested_skip_dir_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            os.makedirs(os.path.join(tmpdir, "packages", "node_modules"))
+            scanner.scan(tmpdir)
+        assert any("node_modules" in d for d in scanner.skipped_committed_dirs)
+
+    def test_skipped_dirs_sorted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            os.makedirs(os.path.join(tmpdir, "node_modules"))
+            os.makedirs(os.path.join(tmpdir, "dist"))
+            scanner.scan(tmpdir)
+        assert scanner.skipped_committed_dirs == sorted(scanner.skipped_committed_dirs)
+
+    def test_multiple_skip_dirs_all_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            os.makedirs(os.path.join(tmpdir, "node_modules"))
+            os.makedirs(os.path.join(tmpdir, "dist"))
+            scanner.scan(tmpdir)
+        names = {os.path.basename(d) for d in scanner.skipped_committed_dirs}
+        assert "node_modules" in names
+        assert "dist" in names
 
 
 class TestTruffleHogIntegration:
@@ -335,7 +385,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme"})
             write_file(tmpdir, "readme.md", "This project is by acme.\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 1
         assert banned[0].match == "[redacted]"
@@ -344,7 +394,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "banned_strings"): "projectx"})
             write_file(tmpdir, "notes.txt", "Project PROJECTX internal docs.\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 1
 
@@ -352,7 +402,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme,octocat,projectx"})
             write_file(tmpdir, "config.py", "owner = 'octocat'\n# projectx project\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 2  # one per matching line
 
@@ -360,7 +410,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "banned_strings"): "supersecret"})
             write_file(tmpdir, "clean.py", "x = 1\nprint('hello')\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert banned == []
 
@@ -368,7 +418,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "file.txt", "acme octocat projectx\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert banned == []
 
@@ -376,7 +426,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "banned_strings"): "octocat"})
             write_file(tmpdir, "file.txt", "author: octocat\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert any("octocat" in f.rule for f in banned)
 
@@ -384,7 +434,7 @@ class TestBannedStringScanning:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme\noctocat"})
             write_file(tmpdir, "file.txt", "org: acme\nuser: octocat\n")
-            findings = scanner._scan_regex(tmpdir, secrets=False)
+            findings = scanner.scan(tmpdir)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 2
 
@@ -400,6 +450,72 @@ class TestBannedStringScanning:
             assert "(?i)" in content
         finally:
             os.unlink(path)
+
+
+class TestAiContextFileScanning:
+    def test_detects_claude_md(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, "CLAUDE.md", "# Claude instructions\n")
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert ai[0].file_path == "CLAUDE.md"
+
+    def test_detects_agents_md_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, "agents.md", "# Agents\n")  # lowercase
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert ai[0].file_path == "agents.md"
+
+    def test_detects_cursorrules(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, ".cursorrules", "# cursor rules\n")
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert ai[0].file_path == ".cursorrules"
+
+    def test_detects_cursor_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            os.makedirs(os.path.join(tmpdir, ".cursor"))
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert ".cursor" in ai[0].file_path
+
+    def test_warn_ai_context_files_false_skips_check(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "warn_ai_context_files"): "false",
+            })
+            write_file(tmpdir, "CLAUDE.md", "# Claude instructions\n")
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert ai == []
+
+    def test_ai_context_file_finding_is_critical_severity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, "CLAUDE.md", "# Claude instructions\n")
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert ai[0].severity == Severity.CRITICAL
+
+    def test_ai_context_finding_message_includes_filter_repo_hint(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner()
+            write_file(tmpdir, "CLAUDE.md", "# Claude instructions\n")
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert "filter-repo" in ai[0].match
 
 
 class TestFormatFindings:

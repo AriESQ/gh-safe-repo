@@ -137,6 +137,9 @@ def _print_findings(findings, config):
         loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
         print(f"  {_c(_RED, '[CRITICAL]')} {f.rule}")
         print(_c(_DIM, f"             in {loc}"))
+        if f.match and f.match != "[redacted]":
+            for match_line in f.match.splitlines():
+                print(_c(_DIM, f"             {match_line}"))
     for f in warnings:
         loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
         print(f"  {_c(_YELLOW, '[WARNING]')} {f.rule}")
@@ -175,6 +178,13 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False):
         client.clone_for_scan(owner, from_repo, scan_dir)   # raises APIError on failure
         findings = scanner.scan(scan_dir)
     # tmpdir cleaned up here
+
+    if scanner.skipped_committed_dirs:
+        print(_c(_YELLOW, "  Warning: the following directories are committed to the repo"))
+        print(_c(_YELLOW, "  and were not fully scanned (secrets/large files may be missed):"))
+        for d in scanner.skipped_committed_dirs:
+            print(_c(_DIM, f"    {d}/"))
+        print()
 
     has_criticals = _print_findings(findings, config)
 
@@ -373,6 +383,18 @@ def main():
         except APIError as e:
             error(f"Failed to check if repo exists: {e}")
             sys.exit(1)
+
+        # Pre-flight scan for the audit workflow (skipped in dry-run)
+        if not args.dry_run:
+            try:
+                should_continue = run_preflight_scan(
+                    client, owner, repo_name, config, debug=args.debug
+                )
+            except APIError as e:
+                error(f"Pre-flight scan failed (clone error): {e}")
+                sys.exit(1)
+            if not should_continue:
+                sys.exit(0)
 
         # Derive is_public and default branch from the actual repo, not from config/flags
         try:

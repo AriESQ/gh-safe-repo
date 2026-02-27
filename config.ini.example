@@ -85,3 +85,7 @@ use_trufflehog = true
 # banned_strings = secret
 #     password
 #     credential
+
+# Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
+# Their git history may contain more sensitive content than the current version.
+# warn_ai_context_files = true

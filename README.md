@@ -293,6 +293,7 @@ The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb
 |---|---|---|
 | Hardcoded secrets | Critical | AWS keys (`AKIA…`), GitHub tokens (`ghp_…`, `github_pat_…`), private keys, database URLs |
 | Banned strings | Critical | Any literal strings you configure (usernames, internal hostnames, codenames) |
+| AI context files | Critical | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.cursor/` — may contain internal dev notes; git history may be more sensitive than the current version |
 | Email addresses | Warning | Any `user@domain.tld` pattern |
 | Large files | Warning | Files over the configured size threshold (default: 100 MB) |
 | TODO/FIXME comments | Info | `# TODO`, `# FIXME`, `# HACK`, `# XXX` |
@@ -358,6 +359,10 @@ scan_for_todos = true
 max_file_size_mb = 100
 use_trufflehog = true
 
+# Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
+# Their git history may contain more sensitive content than the current version.
+# warn_ai_context_files = true
+
 # Literal strings to flag as critical findings — useful for usernames,
 # internal hostnames, project codenames, or any known value you don't want public.
 # Comma-separated or one per line (continuation lines must be indented).
@@ -367,7 +372,7 @@ use_trufflehog = true
 #     credential
 ```
 
-When banned strings are found the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.
+When banned strings or AI context files are found the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.
 
 ---
 
@@ -471,6 +476,9 @@ max_file_size_mb = 100
 
 # Use truffleHog v3 if installed (falls back to regex if not available)
 use_trufflehog = true
+
+# Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
+# warn_ai_context_files = true
 
 # Literal strings to flag as critical findings (case-insensitive).
 # Comma-separated, or one per line with continuation indentation.

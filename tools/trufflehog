@@ -85,6 +85,11 @@ elif [[ "${1:-}" == "git" && "${2:-}" == file://* ]]; then
         git "file://$SCAN_PATH" "$@"
 
 else
-    # Remote targets (git https://..., github, s3, etc.) — pass straight through.
+    # Remote targets: git https://..., github --org, s3 --bucket, etc.
+    # These subcommands fetch data over the network; the container needs no
+    # volume mounts.  gh-safe-repo itself never reaches this branch — it only
+    # ever calls "filesystem" or "git file://".  The passthrough is here so
+    # the wrapper can also serve as a general drop-in replacement for a native
+    # trufflehog install.
     exec "$RUNTIME" run --rm "$IMAGE" "$@"
 fi

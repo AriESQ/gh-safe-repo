@@ -19,6 +19,7 @@ class GitHubClient:
         self.debug = debug
         self._token = None
         self._use_gh = False
+        self._user_data = None
         self._authenticate()
 
     def _authenticate(self):
@@ -46,15 +47,20 @@ class GitHubClient:
             "Run `gh auth login` or set the GITHUB_TOKEN environment variable."
         )
 
+    def _get_user(self) -> dict:
+        """Fetch /user once and cache; returns the raw response dict."""
+        if self._user_data is None:
+            self._user_data = self.get_json("/user")
+        return self._user_data
+
     def get_owner(self):
         """Return the authenticated user's login."""
-        data = self.get_json("/user")
-        return data["login"]
+        return self._get_user()["login"]
 
     def get_plan_name(self) -> str:
         """Return the authenticated user's GitHub plan ('free', 'pro', etc.)."""
         try:
-            data = self.get_json("/user")
+            data = self._get_user()
             return data.get("plan", {}).get("name", "free") or "free"
         except APIError:
             return "free"

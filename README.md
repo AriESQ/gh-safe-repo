@@ -511,7 +511,7 @@ gh-safe-repo my-project
       ├─ Load config (~/.config/gh-safe-repo/config.ini)
       ├─ Apply CLI flag overrides (--public, --no-wiki, etc.)
       ├─ Authenticate via gh CLI or GITHUB_TOKEN
-      ├─ GET /user → owner login + plan level
+      ├─ GET /user → owner login + plan level  (single cached call)
       │
       ├─ Build plan (each plugin compares desired vs. current state)
       │   ├─ RepositoryPlugin  → repo creation + basic settings
@@ -607,6 +607,10 @@ gh-safe-repo/
     ├── test_plugins.py
     └── test_security_scanner.py
 ```
+
+### Known TODOs
+
+- `GET /repos/{owner}/{repo}` is fetched independently by each plugin that needs current repo state (up to 4 calls per invocation). A response cache keyed on `(owner, repo)` would eliminate these duplicates, following the same pattern used for `GET /user`.
 
 ### Dependency policy
 

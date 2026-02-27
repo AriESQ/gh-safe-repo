@@ -292,8 +292,8 @@ class TestTruffleHogIntegration:
 class TestBannedStringScanning:
     def test_detects_exact_match(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED"})
-            write_file(tmpdir, "readme.md", "This project is by REDACTED.\n")
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme"})
+            write_file(tmpdir, "readme.md", "This project is by acme.\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 1
@@ -309,7 +309,7 @@ class TestBannedStringScanning:
 
     def test_multiple_strings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,octocat,projectx"})
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme,octocat,projectx"})
             write_file(tmpdir, "config.py", "owner = 'octocat'\n# projectx project\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
@@ -326,7 +326,7 @@ class TestBannedStringScanning:
     def test_empty_banned_strings_produces_no_findings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
-            write_file(tmpdir, "file.txt", "REDACTED octocat projectx\n")
+            write_file(tmpdir, "file.txt", "acme octocat projectx\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert banned == []
@@ -341,20 +341,20 @@ class TestBannedStringScanning:
 
     def test_newline_separated_strings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED\noctocat"})
-            write_file(tmpdir, "file.txt", "org: REDACTED\nuser: octocat\n")
+            scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme\noctocat"})
+            write_file(tmpdir, "file.txt", "org: acme\nuser: octocat\n")
             findings = scanner._scan_regex(tmpdir, secrets=False)
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 2
 
     def test_trufflehog_config_generated_for_banned_strings(self):
-        scanner = make_scanner({("pre_flight_scan", "banned_strings"): "REDACTED,projectx"})
+        scanner = make_scanner({("pre_flight_scan", "banned_strings"): "acme,projectx"})
         path = scanner._build_trufflehog_config(scanner._banned_strings)
         try:
             with open(path) as f:
                 content = f.read()
             assert "banned-strings" in content
-            assert "REDACTED" in content
+            assert "acme" in content
             assert "projectx" in content
             assert "(?i)" in content
         finally:

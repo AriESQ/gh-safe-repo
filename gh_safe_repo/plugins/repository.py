@@ -42,8 +42,7 @@ def _parse_bool(value):
 
 class RepositoryPlugin(BasePlugin):
     def fetch_current_state(self) -> dict:
-        path = self.client.repo_path(self.owner, self.repo)
-        data = self.client.get_json(path)
+        data = self.client.get_repo_data(self.owner, self.repo)
         return {
             "private": data.get("private", False),
             "has_wiki": data.get("has_wiki", True),

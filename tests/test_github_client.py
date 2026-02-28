@@ -230,6 +230,50 @@ class TestCloneForScan:
         assert "clone" in str(exc_info.value).lower()
 
 
+class TestGetRepoData:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            return GitHubClient()
+
+    def test_caches_result_on_repeated_calls(self):
+        client = self._make_client()
+        repo_data = {"name": "my-repo", "default_branch": "main"}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(repo_data), stderr=""
+            )
+            result1 = client.get_repo_data("alice", "my-repo")
+            result2 = client.get_repo_data("alice", "my-repo")
+        mock_run.assert_called_once()
+        assert result1 is result2
+
+    def test_separate_repos_have_independent_cache_entries(self):
+        client = self._make_client()
+        repo_a = {"name": "repo-a", "default_branch": "main"}
+        repo_b = {"name": "repo-b", "default_branch": "master"}
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                make_completed_process(stdout=json.dumps(repo_a), stderr=""),
+                make_completed_process(stdout=json.dumps(repo_b), stderr=""),
+            ]
+            result_a = client.get_repo_data("alice", "repo-a")
+            result_b = client.get_repo_data("alice", "repo-b")
+        assert mock_run.call_count == 2
+        assert result_a["name"] == "repo-a"
+        assert result_b["name"] == "repo-b"
+
+    def test_raises_api_error_on_404(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout="", stderr="HTTP 404 Not Found"
+            )
+            with pytest.raises(APIError) as exc_info:
+                client.get_repo_data("alice", "missing-repo")
+        assert exc_info.value.status_code == 404
+
+
 class TestGetDefaultBranch:
     def _make_client(self):
         with patch("subprocess.run") as mock_run:

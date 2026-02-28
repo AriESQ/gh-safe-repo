@@ -372,17 +372,21 @@ def main():
     if args.audit:
         info(f"\nAuditing {_BOLD}{owner}/{repo_name}{_RESET}...")
 
-        # Verify repo exists
+        # Verify repo exists and fetch its data (single cached call)
         try:
-            if not check_repo_exists(client, owner, repo_name):
+            repo_data = client.get_repo_data(owner, repo_name)
+        except APIError as e:
+            if e.status_code == 404:
                 error(
                     f"Repository '{owner}/{repo_name}' does not exist. "
                     "Use without --audit to create it."
                 )
-                sys.exit(1)
-        except APIError as e:
-            error(f"Failed to check if repo exists: {e}")
+            else:
+                error(f"Failed to fetch repository info: {e}")
             sys.exit(1)
+
+        is_public = not repo_data.get("private", True)
+        audit_default_branch = repo_data.get("default_branch")
 
         # Pre-flight scan for the audit workflow (skipped in dry-run)
         if not args.dry_run:
@@ -395,15 +399,6 @@ def main():
                 sys.exit(1)
             if not should_continue:
                 sys.exit(0)
-
-        # Derive is_public and default branch from the actual repo, not from config/flags
-        try:
-            repo_data = client.get_json(client.repo_path(owner, repo_name))
-            is_public = not repo_data.get("private", True)
-            audit_default_branch = repo_data.get("default_branch")
-        except APIError as e:
-            error(f"Failed to fetch repository info: {e}")
-            sys.exit(1)
 
         audit_branches = (
             [audit_default_branch] if audit_default_branch

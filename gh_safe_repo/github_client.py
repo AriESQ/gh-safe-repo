@@ -20,6 +20,7 @@ class GitHubClient:
         self._token = None
         self._use_gh = False
         self._user_data = None
+        self._repo_cache = {}
         self._authenticate()
 
     def _authenticate(self):
@@ -52,6 +53,13 @@ class GitHubClient:
         if self._user_data is None:
             self._user_data = self.get_json("/user")
         return self._user_data
+
+    def get_repo_data(self, owner: str, repo: str) -> dict:
+        """Fetch /repos/{owner}/{repo} once and cache; returns the raw response dict."""
+        key = (owner, repo)
+        if key not in self._repo_cache:
+            self._repo_cache[key] = self.get_json(self.repo_path(owner, repo))
+        return self._repo_cache[key]
 
     def get_owner(self):
         """Return the authenticated user's login."""
@@ -134,13 +142,9 @@ class GitHubClient:
 
     def get_default_branch(self, owner: str, repo: str):
         """Return the default branch name for an existing repo, or None on failure."""
-        path = self.repo_path(owner, repo)
-        status, text = self.call_api("GET", path)
-        if status and status >= 400:
-            return None
         try:
-            return json.loads(text).get("default_branch")
-        except (json.JSONDecodeError, ValueError):
+            return self.get_repo_data(owner, repo).get("default_branch")
+        except (APIError, ValueError):
             return None
 
     def copy_repo(self, owner, source_repo, dest_repo):

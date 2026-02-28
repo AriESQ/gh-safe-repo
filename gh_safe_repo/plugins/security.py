@@ -30,7 +30,7 @@ class SecurityPlugin(BasePlugin):
             result["secret_scanning"] = True
         else:
             try:
-                data = self.client.get_json(self.client.repo_path(self.owner, self.repo))
+                data = self.client.get_repo_data(self.owner, self.repo)
                 sa = data.get("security_and_analysis") or {}
                 ss = sa.get("secret_scanning") or {}
                 result["secret_scanning"] = ss.get("status") == "enabled"

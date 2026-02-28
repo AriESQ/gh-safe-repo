@@ -445,9 +445,9 @@ class TestSecurityPlugin:
 
 
 class TestRepositoryPluginAudit:
-    def test_fetch_current_state_calls_get_json(self):
+    def test_fetch_current_state_calls_get_repo_data(self):
         client = make_mock_client()
-        client.get_json.return_value = {
+        client.get_repo_data.return_value = {
             "private": True,
             "has_wiki": False,
             "has_issues": True,
@@ -459,7 +459,7 @@ class TestRepositoryPluginAudit:
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         state = plugin.fetch_current_state()
-        client.get_json.assert_called_once_with("/repos/alice/my-repo")
+        client.get_repo_data.assert_called_once_with("alice", "my-repo")
         assert state["has_wiki"] is False
         assert state["delete_branch_on_merge"] is True
 
@@ -715,10 +715,9 @@ class TestSecurityPluginAudit:
         assert state["dependabot_alerts"] is False
 
     def test_fetch_current_state_private_secret_scanning(self):
-        import json as _json
         client = make_mock_client()
         client.call_api.return_value = (204, "")
-        client.get_json.return_value = {
+        client.get_repo_data.return_value = {
             "security_and_analysis": {"secret_scanning": {"status": "enabled"}}
         }
         plugin = SecurityPlugin(

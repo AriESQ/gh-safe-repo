@@ -7,6 +7,7 @@ Pattern adapted from gh-repo-settings/internal/infra/github/client.go.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -196,6 +197,80 @@ class GitHubClient:
                     check=True,
                     capture_output=not self.debug,
                     text=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise APIError(
+                    f"git push failed to {dest_display}: {(e.stderr or '').strip()}"
+                )
+
+    def push_local(self, local_path: str, owner: str, dest_repo: str) -> None:
+        """
+        Push a local directory's code to a new empty GitHub repo.
+        If local_path is a git repo, its full history is pushed.
+        Otherwise files are staged in a fresh repo and pushed as an initial commit.
+        """
+        dest_url = f"https://x-access-token:{self._token}@github.com/{owner}/{dest_repo}.git"
+        dest_display = f"https://github.com/{owner}/{dest_repo}.git"
+        is_git_repo = os.path.isdir(os.path.join(local_path, ".git"))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            work_path = os.path.join(tmpdir, "work")
+
+            if is_git_repo:
+                if self.debug:
+                    print(f"[debug] git clone {local_path} {work_path}", file=sys.stderr)
+                try:
+                    subprocess.run(
+                        ["git", "clone", local_path, work_path],
+                        check=True, capture_output=not self.debug, text=True,
+                    )
+                except subprocess.CalledProcessError as e:
+                    raise APIError(f"git clone (local) failed: {(e.stderr or '').strip()}")
+            else:
+                # Not a git repo — copy files and create an initial commit
+                shutil.copytree(local_path, work_path)
+                try:
+                    subprocess.run(
+                        ["git", "init", work_path],
+                        check=True, capture_output=True, text=True,
+                    )
+                    subprocess.run(
+                        ["git", "-C", work_path, "add", "-A"],
+                        check=True, capture_output=True, text=True,
+                    )
+                    # Check whether there is anything to commit
+                    staged = subprocess.run(
+                        ["git", "-C", work_path, "diff", "--cached", "--quiet"],
+                        capture_output=True,
+                    )
+                    if staged.returncode != 0:  # has staged changes
+                        subprocess.run(
+                            ["git", "-C", work_path, "commit", "-m", "Initial commit"],
+                            check=True, capture_output=True, text=True,
+                        )
+                    else:
+                        # Empty directory — nothing to push
+                        return
+                except subprocess.CalledProcessError as e:
+                    raise APIError(
+                        f"Failed to create initial git commit: {(e.stderr or '').strip()}"
+                    )
+
+            if self.debug:
+                print(f"[debug] git push --all --tags -> {dest_display}", file=sys.stderr)
+
+            try:
+                subprocess.run(
+                    ["git", "-C", work_path, "remote", "add", "origin", dest_url],
+                    check=True, capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "-C", work_path, "push", "origin", "--all"],
+                    check=True, capture_output=not self.debug, text=True,
+                )
+                subprocess.run(
+                    ["git", "-C", work_path, "push", "origin", "--tags"],
+                    check=True, capture_output=not self.debug, text=True,
                 )
             except subprocess.CalledProcessError as e:
                 raise APIError(

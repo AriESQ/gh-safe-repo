@@ -1,9 +1,12 @@
-"""Tests for cli.py helpers — focused on _resolve_branches()."""
+"""Tests for cli.py helpers — focused on _resolve_branches() and argument validation."""
 
 import subprocess
-from unittest.mock import patch
+import sys
+from unittest.mock import MagicMock, patch
 
-from gh_safe_repo.cli import _resolve_branches
+import pytest
+
+from gh_safe_repo.cli import _resolve_branches, main
 from gh_safe_repo.config_manager import ConfigManager
 
 
@@ -88,3 +91,38 @@ class TestResolveBranches:
         with patch("subprocess.run", return_value=completed):
             result = _resolve_branches(config)
         assert result == ["main"]
+
+
+class TestLocalFlagValidation:
+    def _make_mock_client(self):
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "alice"
+        mock_client.get_plan_name.return_value = "free"
+        return mock_client
+
+    def test_local_and_from_are_mutually_exclusive(self):
+        with patch("sys.argv", [
+            "gh-safe-repo", "my-repo",
+            "--local", ".", "--from", "other-repo", "--public",
+        ]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+
+    def test_local_and_audit_are_mutually_exclusive(self):
+        with patch("sys.argv", [
+            "gh-safe-repo", "my-repo", "--local", ".", "--audit",
+        ]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+
+    def test_local_nonexistent_path_exits_with_error(self):
+        with patch("sys.argv", [
+            "gh-safe-repo", "my-repo", "--local", "/nonexistent/path/xyz", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.cli.GitHubClient") as MockClient:
+                MockClient.return_value = self._make_mock_client()
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == 2

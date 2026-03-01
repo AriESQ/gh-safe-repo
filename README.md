@@ -21,6 +21,7 @@ Branch protection, Dependabot, restricted Actions permissions, disabled wiki and
 - [Dry Run / Plan Output](#dry-run--plan-output)
 - [Audit Mode](#audit-mode)
 - [Public Repos from Private (`--from`)](#public-repos-from-private---from)
+- [Creating a Repo from a Local Directory (`--local`)](#creating-a-repo-from-a-local-directory---local)
 - [Pre-flight Security Scanner](#pre-flight-security-scanner)
   - [Standalone scan](#standalone-scan)
 - [Configuration](#configuration)
@@ -142,6 +143,12 @@ gh-safe-repo my-public-project --public
 # Mirror a private repo to a new public repo (with pre-flight scan)
 gh-safe-repo my-public-project --from my-private-project --public
 
+# Create a repo from a local directory (with pre-flight scan)
+gh-safe-repo my-project --local ~/projects/myapp
+
+# Same, but make it public (branch protection applied before push)
+gh-safe-repo my-project --local ~/projects/myapp --public
+
 # Audit an existing repo and apply any missing safe defaults
 gh-safe-repo my-existing-repo --audit
 
@@ -173,10 +180,11 @@ gh-safe-repo --scan PATH [OPTIONS]
 | Option | Description |
 |---|---|
 | `--scan PATH` | Scan a local directory for secrets and exit. No GitHub interaction. Exit code 0 = clean, 1 = critical findings. |
+| `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from` and `--audit`. |
 | `--dry-run` | Print the plan without making any changes |
 | `--public` | Create as a public repo (default: private) |
-| `--from REPO` | Mirror code from an existing private repo before making public. Requires `--public`. |
-| `--audit` | Audit an existing repo and apply missing safe defaults |
+| `--from REPO` | Mirror code from an existing private repo before making public. Requires `--public`. Mutually exclusive with `--local`. |
+| `--audit` | Audit an existing repo and apply missing safe defaults. Mutually exclusive with `--local`. |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
 | `--debug` | Print every API call and response |
 | `--help` | Show help and exit |
@@ -262,6 +270,34 @@ gh-safe-repo my-public-project --from my-private-project --public
 Branch protection is applied before the push intentionally. If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
 > **Note:** `--from` requires `--public`. Mirroring to a private repo with no branch protection is not supported.
+
+---
+
+## Creating a Repo from a Local Directory (`--local`)
+
+`--local PATH` is the local-to-GitHub counterpart to `--from`. It creates a new GitHub repo and pushes code from a directory on your machine.
+
+```bash
+gh-safe-repo my-project --local ~/projects/myapp
+gh-safe-repo my-project --local ~/projects/myapp --public
+```
+
+**What happens, in order:**
+
+1. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
+2. You review findings and confirm (or abort)
+3. A new repo is created with safe defaults applied
+4. Branch protection is applied **before any code is pushed** (when `--public`)
+5. Code is pushed:
+   - If `PATH` is a git repo: the full history is cloned locally and pushed with `push --all --tags` (all branches and tags)
+   - If `PATH` is a plain directory: files are staged in a fresh repo and pushed as an initial commit
+   - If `PATH` is an empty directory: nothing is pushed (silently skipped)
+
+Unlike `--from`, `--local` works for both private and public repos. It is mutually exclusive with `--from` and `--audit`.
+
+When `PATH` is a git repo, the local default branch (via `git symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
+
+> **Tip:** Run `gh-safe-repo --scan PATH` first if you want to inspect findings without creating anything.
 
 ---
 
@@ -528,7 +564,9 @@ gh-safe-repo my-project
           ├─ PUT  /repos/{owner}/{repo}/branches/main/protection
           │   or POST /repos/{owner}/{repo}/rulesets (if use_rulesets = true)
           ├─ PUT  /repos/{owner}/{repo}/vulnerability-alerts
-          └─ git clone --mirror + git push --mirror (if --from)
+          ├─ git clone --mirror + git push --mirror (if --from)
+          └─ git clone <local> + git push --all --tags (if --local, git repo)
+              or git init + add -A + commit + push (if --local, plain dir)
 ```
 
 ### Plugin architecture
@@ -605,10 +643,6 @@ gh-safe-repo/
     ├── test_plugins.py
     └── test_security_scanner.py
 ```
-
-### Known TODOs
-
-- `GET /repos/{owner}/{repo}` is fetched independently by each plugin that needs current repo state (up to 4 calls per invocation). A response cache keyed on `(owner, repo)` would eliminate these duplicates, following the same pattern used for `GET /user`.
 
 ### Dependency policy
 

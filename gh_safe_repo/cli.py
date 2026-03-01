@@ -6,6 +6,7 @@ Usage:
     gh-safe-repo my-project --dry-run    # Preview without creating
     gh-safe-repo my-project --debug      # Show every API call
     gh-safe-repo my-public --from my-private --public  # Public repo from private source
+    gh-safe-repo my-project --local ./my-dir  # Create repo from local directory
     gh-safe-repo my-repo --audit         # Audit existing repo and apply safe defaults
     gh-safe-repo my-repo --audit --dry-run  # Read-only audit: show diff only
 """
@@ -165,21 +166,9 @@ def _print_findings(findings, config):
     return bool(criticals)
 
 
-def run_preflight_scan(client, owner, from_repo, config, debug=False):
-    """
-    Clone from_repo, scan locally, display findings, prompt user.
-    Returns True to continue, False to abort. Raises APIError on clone failure.
-    """
-    scanner = SecurityScanner(config, debug=debug)
-    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        scan_dir = os.path.join(tmpdir, "scan")
-        client.clone_for_scan(owner, from_repo, scan_dir)   # raises APIError on failure
-        findings = scanner.scan(scan_dir)
-    # tmpdir cleaned up here
-
-    if scanner.skipped_committed_dirs:
+def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=False):
+    """Display scan findings and prompt user. Returns True to continue, False to abort."""
+    if warn_skipped_committed_dirs and scanner.skipped_committed_dirs:
         print(_c(_YELLOW, "  Warning: the following directories are committed to the repo"))
         print(_c(_YELLOW, "  and were not fully scanned (secrets/large files may be missed):"))
         for d in scanner.skipped_committed_dirs:
@@ -202,10 +191,33 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False):
         print()
         return False
 
-    if has_criticals:
-        return answer in ("y", "yes")
-    else:
-        return answer not in ("n", "no")
+    return answer in ("y", "yes") if has_criticals else answer not in ("n", "no")
+
+
+def run_preflight_scan(client, owner, from_repo, config, debug=False):
+    """
+    Clone from_repo, scan locally, display findings, prompt user.
+    Returns True to continue, False to abort. Raises APIError on clone failure.
+    """
+    scanner = SecurityScanner(config, debug=debug)
+    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        scan_dir = os.path.join(tmpdir, "scan")
+        client.clone_for_scan(owner, from_repo, scan_dir)   # raises APIError on failure
+        findings = scanner.scan(scan_dir)
+    # tmpdir cleaned up here
+
+    return _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=True)
+
+
+def run_preflight_scan_local(scan_path, config, debug=False):
+    """Scan a local path directly (no clone). Returns True to continue, False to abort."""
+    scanner = SecurityScanner(config, debug=debug)
+    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
+    findings = scanner.scan(scan_path)
+    # skipped_committed_dirs warning intentionally omitted: non-committed dirs are routine
+    return _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=False)
 
 
 def check_repo_exists(client, owner, repo):
@@ -286,6 +298,12 @@ def main():
         metavar="PATH",
         help="Scan a local directory for secrets and exit (no GitHub interaction)",
     )
+    parser.add_argument(
+        "--local",
+        dest="local_path",
+        metavar="PATH",
+        help="Push code from a local directory into the new repo",
+    )
 
     args = parser.parse_args()
 
@@ -316,6 +334,11 @@ def main():
     # --audit and --from are mutually exclusive
     if args.audit and args.from_repo:
         parser.error("--audit and --from are mutually exclusive")
+
+    if args.local_path and args.from_repo:
+        parser.error("--local and --from are mutually exclusive")
+    if args.local_path and args.audit:
+        parser.error("--local and --audit are mutually exclusive")
 
     def info(msg):
         print(msg)
@@ -485,6 +508,14 @@ def main():
             error(f"Failed to check if repo exists: {e}")
             sys.exit(1)
 
+    # Validate --local path
+    local_path = None
+    if args.local_path:
+        local_path = os.path.abspath(args.local_path)
+        if not os.path.isdir(local_path):
+            error(f"--local: '{args.local_path}' is not a directory")
+            sys.exit(2)
+
     # Validate source repo exists (--from workflow) and capture its default branch
     source_default_branch = None
     if args.from_repo and not args.dry_run:
@@ -510,8 +541,31 @@ def main():
             info(_c(_YELLOW, "\nAborted by user."))
             sys.exit(0)
 
-    # Resolve branches to protect (priority: source default > git HEAD > config > fallback)
-    branches = _resolve_branches(config, source_default_branch=source_default_branch)
+    # Pre-flight security scan (--local workflow, non-dry-run only)
+    if local_path and not args.dry_run:
+        should_continue = run_preflight_scan_local(local_path, config, debug=args.debug)
+        if not should_continue:
+            info(_c(_YELLOW, "\nAborted by user."))
+            sys.exit(0)
+
+    # Detect local repo's default branch (used in branch protection if --local points to a git repo)
+    local_default_branch = None
+    if local_path and os.path.isdir(os.path.join(local_path, ".git")):
+        try:
+            r = subprocess.run(
+                ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=3,
+            )
+            if r.returncode == 0:
+                local_default_branch = r.stdout.strip() or None
+        except Exception:
+            pass
+
+    # Resolve branches to protect (priority: source default > local default > git HEAD > config)
+    branches = _resolve_branches(
+        config,
+        source_default_branch=local_default_branch or source_default_branch,
+    )
 
     # Run each plugin's plan()
     plugins = [
@@ -544,6 +598,21 @@ def main():
             category=ChangeCategory.FILE,
             key="code",
             new=f"Mirror all refs from {owner}/{args.from_repo}",
+        ))
+
+    # Add scan + code push steps to the plan if --local is specified
+    if args.local_path:
+        full_plan.add(Change(
+            type=ChangeType.ADD,
+            category=ChangeCategory.SCAN,
+            key="pre_flight_scan",
+            new=f"Scan {local_path} locally for secrets, emails, large files, TODOs",
+        ))
+        full_plan.add(Change(
+            type=ChangeType.ADD,
+            category=ChangeCategory.FILE,
+            key="code",
+            new=f"Push code from {local_path}",
         ))
 
     # Print the plan
@@ -606,5 +675,14 @@ def main():
             info(_c(_GREEN, f"  Code mirrored successfully."))
         except APIError as e:
             warn(f"Code copy failed: {e}")
+
+    # Push code from local directory (--local workflow)
+    if args.local_path:
+        info(f"\nPushing code from {_BOLD}{local_path}{_RESET}...")
+        try:
+            client.push_local(local_path, owner, repo_name)
+            info(_c(_GREEN, "  Code pushed successfully."))
+        except APIError as e:
+            warn(f"Code push failed: {e}")
 
     print_success(owner, repo_name)

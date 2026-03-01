@@ -1,6 +1,7 @@
 """Tests for github_client.py — all subprocess calls are mocked."""
 
 import json
+import os
 import subprocess
 from unittest.mock import MagicMock, call, patch
 
@@ -190,6 +191,92 @@ class TestCopyRepo:
             mock_run.side_effect = [success, success, push_error]
             with pytest.raises(APIError) as exc_info:
                 client.copy_repo("alice", "private-repo", "public-repo")
+        assert "push" in str(exc_info.value).lower()
+
+
+class TestPushLocal:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            client = GitHubClient()
+            client._token = "ghp_testtoken"
+            return client
+
+    def test_push_local_git_repo_clones_then_pushes(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.push_local("/some/local/repo", "alice", "dest-repo")
+
+        cmds = [call.args[0] for call in mock_run.call_args_list]
+        # clone
+        assert any(c[0] == "git" and "clone" in c and "/some/local/repo" in c for c in cmds)
+        # remote add
+        assert any("remote" in c and "add" in c and "origin" in c for c in cmds)
+        # push --all
+        assert any("push" in c and "--all" in c for c in cmds)
+        # push --tags
+        assert any("push" in c and "--tags" in c for c in cmds)
+
+    def test_push_local_non_git_copies_and_inits(self):
+        client = self._make_client()
+        # isdir: first call (check for .git) returns False
+        with patch("os.path.isdir", return_value=False), \
+             patch("shutil.copytree"), \
+             patch("subprocess.run") as mock_run:
+            # git diff --cached --quiet returns 1 (has staged changes)
+            def side_effect(cmd, **kwargs):
+                if "diff" in cmd and "--cached" in cmd:
+                    return make_completed_process(returncode=1)
+                return make_completed_process()
+            mock_run.side_effect = side_effect
+            client.push_local("/some/plain/dir", "alice", "dest-repo")
+
+        cmds = [call.args[0] for call in mock_run.call_args_list]
+        assert any("init" in c for c in cmds)
+        assert any("add" in c and "-A" in c for c in cmds)
+        assert any("commit" in c for c in cmds)
+        assert any("push" in c and "--all" in c for c in cmds)
+
+    def test_push_local_non_git_empty_dir_skips_push(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=False), \
+             patch("shutil.copytree"), \
+             patch("subprocess.run") as mock_run:
+            # git diff --cached --quiet returns 0 (nothing staged → empty dir)
+            def side_effect(cmd, **kwargs):
+                if "diff" in cmd and "--cached" in cmd:
+                    return make_completed_process(returncode=0)
+                return make_completed_process()
+            mock_run.side_effect = side_effect
+            client.push_local("/empty/dir", "alice", "dest-repo")
+
+        cmds = [call.args[0] for call in mock_run.call_args_list]
+        assert not any("push" in c and "--all" in c for c in cmds)
+
+    def test_push_local_raises_api_error_on_clone_failure(self):
+        client = self._make_client()
+        clone_error = subprocess.CalledProcessError(128, "git", stderr="fatal: not a repo")
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=clone_error):
+            with pytest.raises(APIError) as exc_info:
+                client.push_local("/some/repo", "alice", "dest-repo")
+        assert "clone" in str(exc_info.value).lower()
+
+    def test_push_local_raises_api_error_on_push_failure(self):
+        client = self._make_client()
+        push_error = subprocess.CalledProcessError(1, "git", stderr="error: push rejected")
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run") as mock_run:
+            # clone ok, remote add ok, push --all fails
+            mock_run.side_effect = [
+                make_completed_process(),   # clone
+                make_completed_process(),   # remote add
+                push_error,                 # push --all
+            ]
+            with pytest.raises(APIError) as exc_info:
+                client.push_local("/some/repo", "alice", "dest-repo")
         assert "push" in str(exc_info.value).lower()
 
 

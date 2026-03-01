@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -97,6 +98,28 @@ def print_plan(plan):
                 + value
             )
     print()
+
+
+def format_plan_json(plan):
+    """Serialise a Plan to a JSON string for --json output."""
+    counts = plan.count_by_type()
+    return json.dumps(
+        {
+            "changes": [
+                {
+                    "type": c.type.value,
+                    "category": c.category.value,
+                    "key": c.key,
+                    "old": c.old,
+                    "new": c.new,
+                    "reason": c.reason,
+                }
+                for c in plan.changes
+            ],
+            "summary": {t.value: n for t, n in counts.items()},
+        },
+        indent=2,
+    )
 
 
 def print_success(owner, repo):
@@ -304,6 +327,11 @@ def main():
         metavar="PATH",
         help="Push code from a local directory into the new repo",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the plan as JSON instead of the ANSI table (combine with --dry-run for clean output)",
+    )
 
     args = parser.parse_args()
 
@@ -341,7 +369,10 @@ def main():
         parser.error("--local and --audit are mutually exclusive")
 
     def info(msg):
-        print(msg)
+        if args.json:
+            print(msg, file=sys.stderr)
+        else:
+            print(msg)
 
     def error(msg):
         print(f"{_c(_BOLD + _RED, 'Error:')} {msg}", file=sys.stderr)
@@ -454,7 +485,10 @@ def main():
                 sys.exit(1)
 
         # Print plan
-        print_plan(full_plan)
+        if args.json:
+            print(format_plan_json(full_plan))
+        else:
+            print_plan(full_plan)
 
         counts = full_plan.count_by_type()
         actionable_count = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
@@ -616,7 +650,10 @@ def main():
         ))
 
     # Print the plan
-    print_plan(full_plan)
+    if args.json:
+        print(format_plan_json(full_plan))
+    else:
+        print_plan(full_plan)
 
     counts = full_plan.count_by_type()
     actionable = sum(v for k, v in counts.items() if k != ChangeType.SKIP)

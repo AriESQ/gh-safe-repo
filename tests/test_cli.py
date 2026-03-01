@@ -1,13 +1,15 @@
 """Tests for cli.py helpers — focused on _resolve_branches() and argument validation."""
 
+import json
 import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gh_safe_repo.cli import _resolve_branches, main
+from gh_safe_repo.cli import _resolve_branches, format_plan_json, main
 from gh_safe_repo.config_manager import ConfigManager
+from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
 
 
 def make_config(overrides=None):
@@ -126,3 +128,57 @@ class TestLocalFlagValidation:
                 with pytest.raises(SystemExit) as exc_info:
                     main()
         assert exc_info.value.code == 2
+
+
+class TestFormatPlanJson:
+    def _make_plan(self):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.ADD,    category=ChangeCategory.REPO,     key="private",     new=True))
+        plan.add(Change(type=ChangeType.UPDATE,  category=ChangeCategory.ACTIONS,  key="permissions", old="all", new="none"))
+        plan.add(Change(type=ChangeType.DELETE,  category=ChangeCategory.SECURITY, key="auto_fix",    old=True))
+        plan.add(Change(type=ChangeType.SKIP,    category=ChangeCategory.SECURITY, key="dependabot",  reason="Requires paid plan"))
+        return plan
+
+    def test_output_is_valid_json(self):
+        plan = self._make_plan()
+        result = json.loads(format_plan_json(plan))
+        assert isinstance(result, dict)
+
+    def test_all_four_change_types_present(self):
+        plan = self._make_plan()
+        result = json.loads(format_plan_json(plan))
+        types = {c["type"] for c in result["changes"]}
+        assert types == {"add", "update", "delete", "skip"}
+
+    def test_boolean_values_not_serialised_as_strings(self):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.ADD, category=ChangeCategory.REPO, key="private", new=True))
+        result = json.loads(format_plan_json(plan))
+        assert result["changes"][0]["new"] is True
+
+    def test_none_values_serialise_as_null(self):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.ADD, category=ChangeCategory.REPO, key="private", new=True))
+        result = json.loads(format_plan_json(plan))
+        assert result["changes"][0]["old"] is None
+        assert result["changes"][0]["reason"] is None
+
+    def test_summary_counts_match_count_by_type(self):
+        plan = self._make_plan()
+        result = json.loads(format_plan_json(plan))
+        expected = {t.value: n for t, n in plan.count_by_type().items()}
+        assert result["summary"] == expected
+
+    def test_skip_change_includes_reason(self):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.SKIP, category=ChangeCategory.SECURITY, key="dependabot", reason="Requires paid plan"))
+        result = json.loads(format_plan_json(plan))
+        assert result["changes"][0]["reason"] == "Requires paid plan"
+
+    def test_summary_omits_absent_change_types(self):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.ADD, category=ChangeCategory.REPO, key="private", new=True))
+        result = json.loads(format_plan_json(plan))
+        assert "delete" not in result["summary"]
+        assert "skip" not in result["summary"]
+        assert result["summary"]["add"] == 1

@@ -129,13 +129,18 @@ if [[ "$HISTORY_COUNT" -eq 0 ]]; then
     exit 1
 fi
 
-# ── Check for uncommitted changes to this file ────────────────────────────────
-HAS_DIRTY=false
-if ! git -C "$REPO_ROOT" diff --quiet HEAD -- "$RELATIVE_PATH" 2>/dev/null; then
-    HAS_DIRTY=true
-fi
-if ! git -C "$REPO_ROOT" diff --quiet --cached -- "$RELATIVE_PATH" 2>/dev/null; then
-    HAS_DIRTY=true
+# ── Require clean working tree ────────────────────────────────────────────────
+# git filter-branch refuses to run with uncommitted changes anywhere in the repo.
+# Error early with a clear message rather than letting filter-branch fail cryptically.
+if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || \
+   ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
+    err "Working tree has uncommitted changes."
+    echo "git filter-branch requires a clean working tree."
+    echo "Commit or stash your changes first, then re-run."
+    echo ""
+    echo "To stash:   git stash"
+    echo "To restore: git stash pop  (after this script completes)"
+    exit 1
 fi
 
 # ── Collect remote info ───────────────────────────────────────────────────────
@@ -156,12 +161,6 @@ echo "  File:       $RELATIVE_PATH"
 echo "  Commits:    $HISTORY_COUNT commit(s) contain this file"
 echo "  Operation:  Remove from all history; re-add current content as one commit"
 echo ""
-
-if [[ "$HAS_DIRTY" = true ]]; then
-    warn "The file has uncommitted changes. The working-tree content (including"
-    echo "         those changes) is what will be re-committed after the history rewrite."
-    echo ""
-fi
 
 if [[ -n "$REMOTES" ]]; then
     warn "This repo has remote(s): $(echo "$REMOTES" | tr '\n' ' ')"
@@ -250,7 +249,7 @@ git -C "$REPO_ROOT" gc --prune=now --quiet
 ok "Objects purged from local repository."
 
 # ── Re-add current content ────────────────────────────────────────────────────
-# Ensure parent directory exists (filter-repo may have removed it)
+# Ensure parent directory exists (filter-branch may have removed it)
 mkdir -p "$(dirname "$ABS_PATH")"
 cp "$TMPFILE" "$ABS_PATH"
 

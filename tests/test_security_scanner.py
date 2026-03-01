@@ -1,6 +1,7 @@
 """Tests for security_scanner.py — uses real tempfiles, no filesystem mocking."""
 
 import os
+import shutil
 import subprocess
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -55,6 +56,21 @@ def write_file(dir_path, filename, content):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path
+
+
+def make_git_repo(tmpdir: str) -> None:
+    """Initialise a throwaway git repo with a known identity."""
+    subprocess.run(["git", "init", tmpdir], check=True, capture_output=True)
+    subprocess.run(["git", "-C", tmpdir, "config", "user.email", "test@example.com"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Test"],
+                   check=True, capture_output=True)
+
+
+def git_add_commit(tmpdir: str, message: str) -> None:
+    subprocess.run(["git", "-C", tmpdir, "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", tmpdir, "commit", "-m", message],
+                   check=True, capture_output=True)
 
 
 # --- Test classes ---
@@ -516,6 +532,86 @@ class TestAiContextFileScanning:
         ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
         assert len(ai) == 1
         assert "filter-repo" in ai[0].match
+
+
+class TestAiContextFileHistory:
+    """_check_ai_context_history() detects AI context files deleted from working tree."""
+
+    def test_deleted_claude_md_produces_finding(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "CLAUDE.md", "# Internal notes\n")
+            git_add_commit(tmpdir, "add CLAUDE.md")
+            os.remove(os.path.join(tmpdir, "CLAUDE.md"))
+            git_add_commit(tmpdir, "remove CLAUDE.md")
+            findings = make_scanner().scan(tmpdir)
+        hist = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(hist) == 1
+        assert hist[0].file_path == "CLAUDE.md"
+        assert hist[0].severity == Severity.CRITICAL
+        assert hist[0].rule == "AI context file in git history"
+        assert "filter-repo" in hist[0].match
+
+    def test_present_file_not_duplicated(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "CLAUDE.md", "# Notes\n")
+            git_add_commit(tmpdir, "add CLAUDE.md")
+            findings = make_scanner().scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(ai) == 1
+        assert ai[0].rule == "AI context file"  # working-tree rule, not history
+
+    def test_non_git_directory_no_history_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            findings = make_scanner().scan(tmpdir)
+        assert not any(f.category == FindingCategory.AI_CONTEXT_FILE for f in findings)
+
+    def test_warn_false_skips_history_check(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "CLAUDE.md", "# Notes\n")
+            git_add_commit(tmpdir, "add")
+            os.remove(os.path.join(tmpdir, "CLAUDE.md"))
+            git_add_commit(tmpdir, "remove")
+            findings = make_scanner(
+                {("pre_flight_scan", "warn_ai_context_files"): "false"}
+            ).scan(tmpdir)
+        assert not any(f.category == FindingCategory.AI_CONTEXT_FILE for f in findings)
+
+    def test_deleted_cursor_dir_produces_finding(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            cursor_dir = os.path.join(tmpdir, ".cursor")
+            os.makedirs(cursor_dir)
+            write_file(cursor_dir, "settings.json", '{"theme":"dark"}\n')
+            git_add_commit(tmpdir, "add .cursor")
+            shutil.rmtree(cursor_dir)
+            git_add_commit(tmpdir, "remove .cursor")
+            findings = make_scanner().scan(tmpdir)
+        hist = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(hist) == 1
+        assert hist[0].file_path == ".cursor"
+
+    def test_deleted_github_copilot_instructions_produces_finding(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, ".github/copilot-instructions.md", "# Copilot\n")
+            git_add_commit(tmpdir, "add copilot-instructions.md")
+            os.remove(os.path.join(tmpdir, ".github", "copilot-instructions.md"))
+            git_add_commit(tmpdir, "remove copilot-instructions.md")
+            findings = make_scanner().scan(tmpdir)
+        hist = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert len(hist) == 1
+        assert hist[0].file_path == ".github/copilot-instructions.md"
+
+    def test_never_committed_file_no_history_finding(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "README.md", "# Project\n")
+            git_add_commit(tmpdir, "initial")
+            findings = make_scanner().scan(tmpdir)
+        assert not any(f.category == FindingCategory.AI_CONTEXT_FILE for f in findings)
 
 
 class TestFormatFindings:

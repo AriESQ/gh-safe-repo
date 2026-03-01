@@ -54,6 +54,17 @@ _AI_CONTEXT_REL_PATHS = frozenset(
     if "/" in p
 )
 
+# Candidates for git history check: (display_path, git_log_path)
+# display_path is used in Finding.file_path; git_log_path is passed to `git log --`.
+_AI_CONTEXT_HISTORY_CANDIDATES = (
+    ("CLAUDE.md",                       "CLAUDE.md"),
+    ("AGENTS.md",                       "AGENTS.md"),
+    (".cursorrules",                    ".cursorrules"),
+    ("copilot-instructions.md",         "copilot-instructions.md"),
+    (".github/copilot-instructions.md", ".github/copilot-instructions.md"),
+    (".cursor",                         ".cursor"),
+)
+
 
 # --- Enums ---
 
@@ -131,6 +142,18 @@ def _ai_context_hint(rel_path: str) -> str:
     )
 
 
+def _ai_context_history_hint(rel_path: str) -> str:
+    """Remediation message for an AI context file found only in git history."""
+    return (
+        f"This file was present in git history but has since been deleted.\n"
+        f"Its historical commits may contain sensitive development notes.\n"
+        f"To permanently remove from history (run in your local source repo):\n"
+        f"  git filter-repo --invert-paths --path {rel_path}\n"
+        f"  git push --force\n"
+        f"Then re-run gh-safe-repo. Or continue to mirror as-is."
+    )
+
+
 # --- Scanner class ---
 
 class SecurityScanner:
@@ -174,6 +197,8 @@ class SecurityScanner:
         )
         findings.extend(walk_findings)
         self.skipped_committed_dirs = sorted(skipped)
+
+        findings.extend(self._check_ai_context_history(root_path))
 
         return findings
 
@@ -319,6 +344,46 @@ class SecurityScanner:
                             ))
 
         return findings, skipped_dirs
+
+    def _check_ai_context_history(self, root_path: str) -> List[Finding]:
+        """Check git history for AI context files deleted from the working tree.
+
+        Only runs when root_path contains a .git directory. For each candidate
+        file, skips those still present in the working tree (already caught by
+        _unified_walk). Runs `git log --all --full-history --oneline -- <path>`;
+        any output means the file existed in at least one commit.
+        """
+        if not self._warn_ai_context_files:
+            return []
+        if not os.path.isdir(os.path.join(root_path, ".git")):
+            return []
+
+        findings: List[Finding] = []
+        for display_path, git_path in _AI_CONTEXT_HISTORY_CANDIDATES:
+            full = os.path.join(root_path, display_path.replace("/", os.sep))
+            if os.path.exists(full):
+                continue  # still present — _unified_walk already flagged it
+            try:
+                result = subprocess.run(
+                    ["git", "-C", root_path, "log", "--all", "--full-history",
+                     "--oneline", "--", git_path],
+                    capture_output=True, text=True,
+                )
+            except FileNotFoundError:
+                if self.debug:
+                    print("[debug] git not found; skipping AI context history check",
+                          file=sys.stderr)
+                break
+            if result.stdout.strip():
+                findings.append(Finding(
+                    severity=Severity.CRITICAL,
+                    category=FindingCategory.AI_CONTEXT_FILE,
+                    file_path=display_path,
+                    line_number=0,
+                    rule="AI context file in git history",
+                    match=_ai_context_history_hint(display_path),
+                ))
+        return findings
 
     def _build_trufflehog_config(self, strings: List[str]) -> str:
         """Write a temporary truffleHog YAML config with a custom banned-strings detector.

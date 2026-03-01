@@ -241,8 +241,9 @@ ok "History rewritten — '$RELATIVE_PATH' removed from all commits."
 # filter-branch saves originals under refs/original/; delete them so gc can
 # actually remove the objects from disk.
 echo "Expiring reflog and running gc to purge objects..."
-git -C "$REPO_ROOT" for-each-ref --format="%(refname)" refs/original/ \
-    | xargs -r -n1 git -C "$REPO_ROOT" update-ref -d
+while IFS= read -r ref; do
+    git -C "$REPO_ROOT" update-ref -d "$ref"
+done < <(git -C "$REPO_ROOT" for-each-ref --format="%(refname)" refs/original/)
 git -C "$REPO_ROOT" reflog expire --expire=now --all
 git -C "$REPO_ROOT" gc --prune=now --quiet
 

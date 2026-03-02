@@ -11,6 +11,7 @@ Always runs locally — never in GitHub Actions.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -162,7 +163,16 @@ class SecurityScanner:
         self._scan_secrets = config.getbool("pre_flight_scan", "scan_for_secrets", fallback=True)
         self._scan_emails  = config.getbool("pre_flight_scan", "scan_for_emails", fallback=True)
         self._scan_todos   = config.getbool("pre_flight_scan", "scan_for_todos", fallback=True)
-        self._use_trufflehog = config.getbool("pre_flight_scan", "use_trufflehog", fallback=True)
+        # trufflehog_mode: auto / native / docker / off
+        mode = config.get("pre_flight_scan", "trufflehog_mode", fallback="auto")
+        # Backwards-compat: use_trufflehog = false in old user configs → off
+        if mode == "auto":
+            old_flag = config.get("pre_flight_scan", "use_trufflehog", fallback=None)
+            if old_flag is not None and old_flag.strip().lower() in ("false", "0", "no"):
+                mode = "off"
+        self._trufflehog_mode = mode
+        # Discovery result cache: None = not yet run; dict after first _run_discovery() call
+        self._discovery: Optional[dict] = None
         # float() then int() to allow decimal config values like "0.001" for tests
         self._max_file_size_bytes = int(
             float(config.get("pre_flight_scan", "max_file_size_mb", fallback="100")) * 1024 * 1024
@@ -176,6 +186,132 @@ class SecurityScanner:
         # Populated during scan(); readable by callers afterward to show coverage warnings
         self.skipped_committed_dirs: List[str] = []
 
+    # --- Discovery ---
+
+    def _detect_native(self) -> Optional[str]:
+        """Try to run trufflehog --version. Returns v3 version string, or None.
+
+        Prints a user-visible warning if truffleHog is found but is not v3.
+        Returns None silently if truffleHog is not on PATH at all.
+        """
+        try:
+            result = subprocess.run(
+                ["trufflehog", "--version"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+        output = (result.stdout + result.stderr).strip()
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", output)
+        if not m:
+            print(
+                "\033[33mWarning:\033[0m unrecognised truffleHog version output "
+                "— falling back to container or regex scanner",
+                file=sys.stderr,
+            )
+            return None
+        major = int(m.group(1))
+        if major != 3:
+            print(
+                f"\033[33mWarning:\033[0m truffleHog v{m.group(0)} detected "
+                f"(v3 required) — falling back to container or regex scanner",
+                file=sys.stderr,
+            )
+            return None
+        return m.group(0)   # e.g. "3.93.4"
+
+    def _detect_container_runtime(self) -> Optional[Tuple[str, str]]:
+        """Return (name, full_path) for podman or docker, or None.
+
+        Respects the CONTAINER_RUNTIME env var (same precedence as the shell wrapper).
+        """
+        env_runtime = os.environ.get("CONTAINER_RUNTIME", "").strip()
+        if env_runtime:
+            path = shutil.which(env_runtime)
+            if path:
+                return (env_runtime, path)
+        for name in ("podman", "docker"):
+            path = shutil.which(name)
+            if path:
+                return (name, path)
+        return None
+
+    def _run_discovery(self) -> dict:
+        """Run the truffleHog discovery chain once and cache the result.
+
+        Returns a dict with key "method" (one of "native", "container", "none")
+        plus "version" (native) or "runtime"/"runtime_path" (container).
+        """
+        if self._discovery is not None:
+            return self._discovery
+
+        mode = self._trufflehog_mode
+
+        if mode == "off":
+            self._discovery = {"method": "none"}
+            return self._discovery
+
+        # Step 1: try native truffleHog (auto or native mode)
+        if mode in ("auto", "native"):
+            version = self._detect_native()
+            if version:
+                self._discovery = {"method": "native", "version": version}
+                return self._discovery
+            if mode == "native":
+                print(
+                    "\033[33mWarning:\033[0m truffleHog not found on PATH "
+                    "(trufflehog_mode = native) — falling back to regex scanner",
+                    file=sys.stderr,
+                )
+                self._discovery = {"method": "none"}
+                return self._discovery
+            # mode == "auto": fall through to container detection
+
+        # Step 2: try container runtime (auto or docker mode)
+        if mode in ("auto", "docker"):
+            runtime = self._detect_container_runtime()
+            if runtime:
+                self._discovery = {
+                    "method": "container",
+                    "runtime": runtime[0],
+                    "runtime_path": runtime[1],
+                }
+                return self._discovery
+            if mode == "docker":
+                print(
+                    "\033[33mWarning:\033[0m trufflehog_mode = docker but no container runtime "
+                    "(podman or docker) found — falling back to regex scanner",
+                    file=sys.stderr,
+                )
+                self._discovery = {"method": "none"}
+                return self._discovery
+
+        # Step 3: nothing available (auto mode exhausted all options)
+        print(
+            "\033[33mWarning:\033[0m truffleHog not found and no container runtime available "
+            "— using regex scanner\n"
+            "         (install truffleHog v3 or podman/docker for better secret detection)",
+            file=sys.stderr,
+        )
+        self._discovery = {"method": "none"}
+        return self._discovery
+
+    @property
+    def scanner_description(self) -> str:
+        """Human-readable description of which scanner will run. Triggers discovery (cached)."""
+        disc = self._run_discovery()
+        if disc["method"] == "native":
+            return f"truffleHog v{disc['version']}"
+        if disc["method"] == "container":
+            return f"truffleHog via {disc['runtime']}"
+        if self._trufflehog_mode == "off":
+            return "regex only"
+        return "regex only — see warning above"
+
+    # --- Scanning ---
+
     def scan(self, root_path: str) -> List[Finding]:
         self.skipped_committed_dirs = []
 
@@ -185,7 +321,7 @@ class SecurityScanner:
         # truffleHog handles secrets (including full git history) when available
         secrets_via_trufflehog = False
         findings: List[Finding] = []
-        if self._scan_secrets and self._use_trufflehog:
+        if self._scan_secrets:
             trufflehog_results = self._try_trufflehog(root_path)
             if trufflehog_results is not None:
                 findings.extend(trufflehog_results)
@@ -421,28 +557,52 @@ class SecurityScanner:
         # traversal string rather than the correct relative path.
         root_path = os.path.realpath(root_path)
 
-        # Use `trufflehog git` when scanning a git repo so the full commit
-        # history is scanned — not just the working-tree snapshot.
-        # `trufflehog filesystem` is the fallback for non-git directories
-        # (e.g. the --scan command pointed at an arbitrary directory).
-        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
-        if is_git_repo:
-            cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update"]
-        else:
-            cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+        disc = self._run_discovery()
+        if disc["method"] == "none":
+            return None
 
-        config_path = None
+        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
+
+        # Build optional banned-strings config file
+        config_path: Optional[str] = None
         if self._banned_strings:
             config_path = self._build_trufflehog_config(self._banned_strings)
-            cmd += ["--config", config_path]
 
         try:
+            if disc["method"] == "native":
+                # Native trufflehog on PATH
+                if is_git_repo:
+                    cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update"]
+                else:
+                    cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+                if config_path:
+                    cmd += ["--config", config_path]
+
+            else:
+                # Container mode — mirror the shell wrapper's volume-mount logic
+                image = os.environ.get(
+                    "TRUFFLEHOG_IMAGE", "ghcr.io/trufflesecurity/trufflehog:latest"
+                )
+                runtime = disc["runtime_path"]
+                volume_args = ["--volume", f"{root_path}:{root_path}:ro"]
+                if config_path:
+                    volume_args += ["--volume", f"{config_path}:{config_path}:ro"]
+                if is_git_repo:
+                    th_args = ["git", f"file://{root_path}", "--json", "--no-update"]
+                else:
+                    th_args = ["filesystem", root_path, "--json", "--no-update"]
+                if config_path:
+                    th_args += ["--config", config_path]
+                cmd = [runtime, "run", "--rm"] + volume_args + [image] + th_args
+
             result = subprocess.run(cmd, capture_output=True, text=True)
+
         except FileNotFoundError:
             if self.debug:
-                print("[debug] trufflehog not found, falling back to regex scanner", file=sys.stderr)
-            if config_path:
-                os.unlink(config_path)
+                print(
+                    "[debug] trufflehog invocation failed (binary not found), falling back to regex",
+                    file=sys.stderr,
+                )
             return None
         finally:
             if config_path and os.path.exists(config_path):

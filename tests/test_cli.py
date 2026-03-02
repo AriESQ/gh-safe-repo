@@ -10,6 +10,7 @@ import pytest
 from gh_safe_repo.cli import _resolve_branches, format_plan_json, main
 from gh_safe_repo.config_manager import ConfigManager
 from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
+from gh_safe_repo.security_scanner import SecurityScanner
 
 
 def make_config(overrides=None):
@@ -182,3 +183,49 @@ class TestFormatPlanJson:
         assert "delete" not in result["summary"]
         assert "skip" not in result["summary"]
         assert result["summary"]["add"] == 1
+
+
+class TestScannerDescriptionInPlan:
+    """Scanner description appears in the SCAN change's new field."""
+
+    def _make_mock_client(self):
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "alice"
+        mock_client.get_plan_name.return_value = "free"
+        mock_client.repo_path.return_value = "/repos/alice/my-repo"
+        mock_client.call_api.return_value = (404, {})  # repo doesn't exist
+        return mock_client
+
+    def test_scan_plan_entry_includes_scanner_description(self, capsys):
+        # In --dry-run --from mode, the SCAN plan entry's new field should
+        # include the scanner description in parentheses.
+        with patch("sys.argv", [
+            "gh-safe-repo", "my-public-repo",
+            "--from", "my-private-repo", "--public", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.cli.GitHubClient") as MockClient:
+                mock_client = self._make_mock_client()
+                MockClient.return_value = mock_client
+
+                # Patch plugin plan() calls to return empty plans
+                with patch("gh_safe_repo.cli.RepositoryPlugin") as MockRepo, \
+                     patch("gh_safe_repo.cli.ActionsPlugin") as MockActions, \
+                     patch("gh_safe_repo.cli.BranchProtectionPlugin") as MockBP, \
+                     patch("gh_safe_repo.cli.SecurityPlugin") as MockSec:
+
+                    for MockPlugin in (MockRepo, MockActions, MockBP, MockSec):
+                        instance = MockPlugin.return_value
+                        instance.plan.return_value = Plan()
+
+                    # Force scanner to report "regex only" (no trufflehog, no container)
+                    original_init = SecurityScanner.__init__
+                    def patched_init(self_inner, config, debug=False):
+                        original_init(self_inner, config, debug=debug)
+                        self_inner._discovery = {"method": "none"}
+                    with patch.object(SecurityScanner, "__init__", patched_init):
+                        with pytest.raises(SystemExit):
+                            main()
+
+        captured = capsys.readouterr()
+        # The plan table is printed to stdout; SCAN new field should contain description
+        assert "regex only" in captured.out

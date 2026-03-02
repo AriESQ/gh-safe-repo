@@ -28,7 +28,7 @@ class FakeConfig:
             ("pre_flight_scan", "scan_for_secrets"): "true",
             ("pre_flight_scan", "scan_for_emails"): "true",
             ("pre_flight_scan", "scan_for_todos"): "true",
-            ("pre_flight_scan", "use_trufflehog"): "false",  # Always off for determinism
+            ("pre_flight_scan", "trufflehog_mode"): "off",  # Always off for determinism
             ("pre_flight_scan", "max_file_size_mb"): "100",
         }
         if overrides:
@@ -45,7 +45,7 @@ class FakeConfig:
 
 
 def make_scanner(overrides=None):
-    """Always sets use_trufflehog=false so tests are deterministic."""
+    """Always sets trufflehog_mode=off so tests are deterministic."""
     config = FakeConfig(overrides)
     return SecurityScanner(config)
 
@@ -327,24 +327,26 @@ class TestSkippedCommittedDirs:
 
 
 class TestTruffleHogIntegration:
-    def test_file_not_found_falls_back_to_regex(self):
+    def test_no_trufflehog_no_container_falls_back_to_regex(self):
+        # When neither native trufflehog nor a container runtime is available,
+        # the scanner falls back to regex and still finds secrets.
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "use_trufflehog"): "true",
+                ("pre_flight_scan", "trufflehog_mode"): "auto",
                 ("pre_flight_scan", "scan_for_emails"): "false",
                 ("pre_flight_scan", "scan_for_todos"): "false",
             })
             write_file(tmpdir, "creds.txt", "AKIAIOSFODNN7EXAMPLE\n")
-            with patch("subprocess.run", side_effect=FileNotFoundError("trufflehog not found")):
-                findings = scanner.scan(tmpdir)
-        # Should fall back to regex and find the AWS key
+            with patch.object(scanner, "_detect_native", return_value=None):
+                with patch.object(scanner, "_detect_container_runtime", return_value=None):
+                    findings = scanner.scan(tmpdir)
         secrets = [f for f in findings if f.category == FindingCategory.SECRET]
         assert len(secrets) >= 1
 
     def test_trufflehog_success_still_runs_regex_for_emails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "use_trufflehog"): "true",
+                ("pre_flight_scan", "trufflehog_mode"): "auto",
                 ("pre_flight_scan", "scan_for_todos"): "false",
             })
             write_file(tmpdir, "file.txt", "alice@example.com\n")
@@ -359,7 +361,9 @@ class TestTruffleHogIntegration:
         # use the `git` subcommand so it scans full commit history.
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, ".git"))
-            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+            # Force discovery to report native trufflehog available
+            scanner._discovery = {"method": "native", "version": "3.99.0"}
             completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             with patch("subprocess.run", return_value=completed) as mock_run:
                 scanner._try_trufflehog(tmpdir)
@@ -369,7 +373,8 @@ class TestTruffleHogIntegration:
     def test_uses_filesystem_subcommand_for_non_git_dir(self):
         # Without a .git folder the directory is not a repo; use `filesystem`.
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+            scanner._discovery = {"method": "native", "version": "3.99.0"}
             completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             with patch("subprocess.run", return_value=completed) as mock_run:
                 scanner._try_trufflehog(tmpdir)
@@ -384,7 +389,8 @@ class TestTruffleHogIntegration:
             "DetectorName": "AWSKeyID",
         })
         with tempfile.TemporaryDirectory() as tmpdir:
-            scanner = make_scanner({("pre_flight_scan", "use_trufflehog"): "true"})
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+            scanner._discovery = {"method": "native", "version": "3.99.0"}
             completed = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout=git_line + "\n", stderr=""
             )
@@ -394,6 +400,117 @@ class TestTruffleHogIntegration:
         assert len(findings) == 1
         assert findings[0].category == FindingCategory.SECRET
         assert findings[0].line_number == 7
+
+    def test_version_fallback_warning_emitted_for_v2(self, capsys):
+        # If truffleHog v2 is found, a warning is printed and native returns None.
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        v2_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="trufflehog 2.0.0\n", stderr=""
+        )
+        with patch("subprocess.run", return_value=v2_result):
+            version = scanner._detect_native()
+        assert version is None
+        captured = capsys.readouterr()
+        assert "v2" in captured.err or "v3 required" in captured.err
+
+    def test_unrecognised_version_output_warns(self, capsys):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        bad_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="some unexpected string\n", stderr=""
+        )
+        with patch("subprocess.run", return_value=bad_result):
+            version = scanner._detect_native()
+        assert version is None
+        captured = capsys.readouterr()
+        assert "Warning" in captured.err
+
+    def test_container_runtime_detected_podman(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        with patch("shutil.which", side_effect=lambda name: "/usr/bin/podman" if name == "podman" else None):
+            result = scanner._detect_container_runtime()
+        assert result is not None
+        assert result[0] == "podman"
+        assert result[1] == "/usr/bin/podman"
+
+    def test_container_runtime_detected_docker_fallback(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        with patch("shutil.which", side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None):
+            result = scanner._detect_container_runtime()
+        assert result is not None
+        assert result[0] == "docker"
+
+    def test_container_runtime_env_override(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        with patch.dict(os.environ, {"CONTAINER_RUNTIME": "podman"}):
+            with patch("shutil.which", side_effect=lambda name: f"/usr/bin/{name}" if name == "podman" else None):
+                result = scanner._detect_container_runtime()
+        assert result is not None
+        assert result[0] == "podman"
+
+    def test_no_container_runtime_returns_none(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        with patch("shutil.which", return_value=None):
+            result = scanner._detect_container_runtime()
+        assert result is None
+
+    def test_scanner_description_native(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+        scanner._discovery = {"method": "native", "version": "3.93.4"}
+        assert scanner.scanner_description == "truffleHog v3.93.4"
+
+    def test_scanner_description_container_podman(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        scanner._discovery = {"method": "container", "runtime": "podman", "runtime_path": "/usr/bin/podman"}
+        assert scanner.scanner_description == "truffleHog via podman"
+
+    def test_scanner_description_container_docker(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        scanner._discovery = {"method": "container", "runtime": "docker", "runtime_path": "/usr/bin/docker"}
+        assert scanner.scanner_description == "truffleHog via docker"
+
+    def test_scanner_description_regex_only_mode_off(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "off"})
+        assert scanner.scanner_description == "regex only"
+
+    def test_scanner_description_regex_only_with_warning(self):
+        # auto mode but nothing available → "regex only — see warning above"
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        scanner._discovery = {"method": "none"}
+        assert scanner.scanner_description == "regex only — see warning above"
+
+    def test_scanner_description_cached(self):
+        # _run_discovery() should only be called once even if scanner_description is
+        # accessed multiple times.
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "off"})
+        _ = scanner.scanner_description
+        _ = scanner.scanner_description
+        assert scanner._discovery == {"method": "none"}
+
+    def test_container_mode_uses_volume_mount(self):
+        # In container mode, the run command must include a --volume mount for the scan path.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "docker"})
+            scanner._discovery = {
+                "method": "container",
+                "runtime": "podman",
+                "runtime_path": "/usr/bin/podman",
+            }
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert cmd[0] == "/usr/bin/podman"
+        assert "run" in cmd
+        assert "--volume" in cmd
+
+    def test_backwards_compat_use_trufflehog_false(self):
+        # Old configs with use_trufflehog = false should be treated as trufflehog_mode = off.
+        config = FakeConfig({
+            ("pre_flight_scan", "trufflehog_mode"): "auto",   # default
+            ("pre_flight_scan", "use_trufflehog"): "false",   # old override
+        })
+        scanner = SecurityScanner(config)
+        assert scanner._trufflehog_mode == "off"
 
 
 class TestBannedStringScanning:

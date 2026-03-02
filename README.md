@@ -95,7 +95,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 - Python 3.8+
 - [`gh` CLI](https://cli.github.com/) installed and authenticated (`gh auth login`), **or** `GITHUB_TOKEN` set in your environment
 - [`uv`](https://docs.astral.sh/uv/) for installation from source (recommended)
-- `truffleHog` v3 (optional — used by the pre-flight scanner; falls back to regex if absent)
+- `truffleHog` v3 (optional — used by the pre-flight scanner; auto-detected from PATH, or run via podman/docker; falls back to regex if neither is available)
 
 ---
 
@@ -321,7 +321,7 @@ Exit code is `0` if no critical findings, `1` if criticals are found — so it c
 gh-safe-repo --scan . && git push
 ```
 
-The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb`, `use_trufflehog`, etc.
+The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb`, `trufflehog_mode`, etc.
 
 ### What it detects
 
@@ -336,32 +336,45 @@ The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb
 
 ### Scanner engine
 
-- **truffleHog v3** is used if installed (`trufflehog filesystem … --json`). It detects verifiable credentials with a low false-positive rate. Note that truffleHog requires both halves of a credential pair to be present (e.g. AWS Access Key ID *and* Secret Access Key) before reporting a finding — a lone key ID is not flagged.
-- **Regex fallback** runs automatically if truffleHog is unavailable or returns an unexpected exit code. It also runs in addition to truffleHog for emails and TODOs, and catches lone key-ID patterns that truffleHog deliberately skips.
+`gh-safe-repo` automatically picks the best available scanner using a three-step discovery chain:
+
+1. **truffleHog v3 on PATH** — runs `trufflehog --version`, verifies it is v3, and uses it. A v2 install or an unrecognised version prints a warning and falls through to step 2.
+2. **podman or docker** — if no native truffleHog is found, the scanner runs truffleHog in a container (`ghcr.io/trufflesecurity/trufflehog:latest`) using `podman run` or `docker run`, mounting the scan path read-only at the same absolute path so JSON output paths are identical to a native run.
+3. **Regex fallback** — if neither a native install nor a container runtime is available, a warning is printed and the regex scanner runs instead. It also always runs in addition to truffleHog for emails and TODOs, and catches lone key-ID patterns that truffleHog deliberately skips (truffleHog requires both halves of a credential pair, e.g. AWS Key ID *and* Secret Access Key, before flagging a finding).
+
+The selected scanner is shown in the "Running pre-flight security scan..." header and in the plan table's SCAN entry, e.g.:
+
+```
+Running pre-flight security scan... (truffleHog v3.93.4)
+Running pre-flight security scan... (truffleHog via podman)
+Running pre-flight security scan... (regex only — see warning above)
+```
+
+Environment variables respected by the container path: `CONTAINER_RUNTIME` to override runtime selection (e.g. `CONTAINER_RUNTIME=docker`), and `TRUFFLEHOG_IMAGE` to pin a specific image tag.
 
 ### Running truffleHog via podman or Docker (no local install)
 
-A transparent wrapper script is included at `tools/trufflehog`. It intercepts the `filesystem` subcommand, mounts the scan path into a container at the same absolute path, and forwards all other arguments unchanged — so `security_scanner.py` sees no difference from a native install.
+No manual setup is required. `gh-safe-repo` detects podman or docker automatically (step 2 above) and runs truffleHog in a container with the correct volume mounts.
+
+A transparent shell wrapper at `tools/trufflehog` is also provided, primarily as a **system-wide drop-in** for users who want container-based truffleHog to appear as a native install for _other_ tools. It is no longer needed by `gh-safe-repo` itself, which handles container detection natively, but remains useful if you invoke `trufflehog` directly from the shell.
 
 ```bash
-# Make the wrapper available as "trufflehog" on your PATH
-cp tools/trufflehog ~/.local/bin/trufflehog   # or: ln -s "$PWD/tools/trufflehog" ~/.local/bin/trufflehog
+# Optional: make container-based trufflehog available system-wide as "trufflehog"
+cp tools/trufflehog ~/.local/bin/trufflehog
 chmod +x ~/.local/bin/trufflehog
 ```
 
-On first use, the container runtime pulls `ghcr.io/trufflesecurity/trufflehog:latest` automatically. To pin a specific version or build an offline image:
+On first use the container runtime pulls `ghcr.io/trufflesecurity/trufflehog:latest` automatically. To pin a specific version or use a locally built image:
 
 ```bash
 # Build a local image from tools/Containerfile
 podman build -t trufflehog:local -f tools/Containerfile tools/
 
-# Point the wrapper at your local image
+# Point gh-safe-repo (or the wrapper) at your local image
 export TRUFFLEHOG_IMAGE=trufflehog:local
 ```
 
-The wrapper prefers podman if both are installed. Override with `CONTAINER_RUNTIME=docker`.
-
-When `banned_strings` are configured, the scanner writes a temporary YAML detector config and passes it via `--config`. The wrapper detects this flag and mounts the config file into the container automatically — no extra setup required.
+When `banned_strings` are configured, the scanner writes a temporary YAML detector config and passes it via `--config`. In container mode, the config file is automatically mounted into the container — no extra setup required.
 
 ### Interactive review
 
@@ -393,7 +406,13 @@ scan_for_secrets = true
 scan_for_emails = true
 scan_for_todos = true
 max_file_size_mb = 100
-use_trufflehog = true
+
+# Scanner selection: auto | native | docker | off
+#   auto   — try native truffleHog, fall back to container (podman/docker), then regex (default)
+#   native — native truffleHog only; no container fallback
+#   docker — container only; skip native PATH check
+#   off    — regex scanner only, no truffleHog attempt
+# trufflehog_mode = auto
 
 # Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
 # Their git history may contain more sensitive content than the current version.
@@ -510,8 +529,12 @@ scan_for_todos = true
 # Flag files larger than this threshold
 max_file_size_mb = 100
 
-# Use truffleHog v3 if installed (falls back to regex if not available)
-use_trufflehog = true
+# Scanner selection: auto | native | docker | off
+# auto   = try native truffleHog, fall back to container (podman/docker), then regex
+# native = native PATH only
+# docker = container only
+# off    = regex only
+# trufflehog_mode = auto
 
 # Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
 # warn_ai_context_files = true

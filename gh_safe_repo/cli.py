@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 from .config_manager import ConfigManager
 from .diff import Change, ChangeCategory, ChangeType, Plan
@@ -217,13 +218,14 @@ def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs
     return answer in ("y", "yes") if has_criticals else answer not in ("n", "no")
 
 
-def run_preflight_scan(client, owner, from_repo, config, debug=False):
+def run_preflight_scan(client, owner, from_repo, config, debug=False, scanner=None):
     """
     Clone from_repo, scan locally, display findings, prompt user.
     Returns True to continue, False to abort. Raises APIError on clone failure.
     """
-    scanner = SecurityScanner(config, debug=debug)
-    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
+    if scanner is None:
+        scanner = SecurityScanner(config, debug=debug)
+    print(f"\n{_c(_BOLD, f'Running pre-flight security scan... ({scanner.scanner_description})')}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         scan_dir = os.path.join(tmpdir, "scan")
@@ -234,10 +236,11 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False):
     return _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=True)
 
 
-def run_preflight_scan_local(scan_path, config, debug=False):
+def run_preflight_scan_local(scan_path, config, debug=False, scanner=None):
     """Scan a local path directly (no clone). Returns True to continue, False to abort."""
-    scanner = SecurityScanner(config, debug=debug)
-    print(f"\n{_c(_BOLD, 'Running pre-flight security scan...')}")
+    if scanner is None:
+        scanner = SecurityScanner(config, debug=debug)
+    print(f"\n{_c(_BOLD, f'Running pre-flight security scan... ({scanner.scanner_description})')}")
     findings = scanner.scan(scan_path)
     # skipped_committed_dirs warning intentionally omitted: non-committed dirs are routine
     return _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=False)
@@ -562,11 +565,16 @@ def main():
             error(f"Failed to check source repo: {e}")
             sys.exit(1)
 
+    # Create scanner once (used for scan description in plan table and for actual scanning)
+    scanner: Optional[SecurityScanner] = None
+    if args.from_repo or args.local_path:
+        scanner = SecurityScanner(config, debug=args.debug)
+
     # Pre-flight security scan (--from workflow, non-dry-run only)
     if args.from_repo and not args.dry_run:
         try:
             should_continue = run_preflight_scan(
-                client, owner, args.from_repo, config, debug=args.debug
+                client, owner, args.from_repo, config, debug=args.debug, scanner=scanner
             )
         except APIError as e:
             error(f"Pre-flight scan failed (clone error): {e}")
@@ -577,7 +585,9 @@ def main():
 
     # Pre-flight security scan (--local workflow, non-dry-run only)
     if local_path and not args.dry_run:
-        should_continue = run_preflight_scan_local(local_path, config, debug=args.debug)
+        should_continue = run_preflight_scan_local(
+            local_path, config, debug=args.debug, scanner=scanner
+        )
         if not should_continue:
             info(_c(_YELLOW, "\nAborted by user."))
             sys.exit(0)
@@ -621,11 +631,15 @@ def main():
 
     # Add scan + code mirror steps to the plan if --from is specified
     if args.from_repo:
+        scan_desc = scanner.scanner_description if scanner else ""
         full_plan.add(Change(
             type=ChangeType.ADD,
             category=ChangeCategory.SCAN,
             key="pre_flight_scan",
-            new=f"Scan {owner}/{args.from_repo} locally for secrets, emails, large files, TODOs",
+            new=(
+                f"Scan {owner}/{args.from_repo} locally for secrets, emails, large files, TODOs"
+                f" ({scan_desc})"
+            ),
         ))
         full_plan.add(Change(
             type=ChangeType.ADD,
@@ -636,11 +650,15 @@ def main():
 
     # Add scan + code push steps to the plan if --local is specified
     if args.local_path:
+        scan_desc = scanner.scanner_description if scanner else ""
         full_plan.add(Change(
             type=ChangeType.ADD,
             category=ChangeCategory.SCAN,
             key="pre_flight_scan",
-            new=f"Scan {local_path} locally for secrets, emails, large files, TODOs",
+            new=(
+                f"Scan {local_path} locally for secrets, emails, large files, TODOs"
+                f" ({scan_desc})"
+            ),
         ))
         full_plan.add(Change(
             type=ChangeType.ADD,

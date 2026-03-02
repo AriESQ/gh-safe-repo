@@ -44,12 +44,12 @@ SAFE_DEFAULTS = {
         "enable_dependabot_alerts": "true",
     },
     "pre_flight_scan": {
-        "scan_for_secrets": "true",
-        "scan_for_emails":  "true",
-        "scan_for_todos":   "true",
-        "max_file_size_mb": "100",
-        "use_trufflehog":   "true",
-        "banned_strings":   "",
+        "scan_for_secrets":  "true",
+        "scan_for_emails":   "true",
+        "scan_for_todos":    "true",
+        "max_file_size_mb":  "100",
+        "trufflehog_mode":   "auto",
+        "banned_strings":    "",
     },
 }
 

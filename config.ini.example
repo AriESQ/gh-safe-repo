@@ -72,13 +72,19 @@ allow_deletions = false
 enable_dependabot_alerts = true
 
 [pre_flight_scan]
-# Only runs when using --from --public (making a private repo public).
-# Scans the source repo locally before any code is copied or made public.
+# Runs automatically when using --from --public, --local, or --audit.
+# Scans the source locally before any code is copied or made public.
 scan_for_secrets = true
 scan_for_emails = true
 scan_for_todos = true
 max_file_size_mb = 100
-use_trufflehog = true
+
+# Scanner selection: auto | native | docker | off
+#   auto   — try native truffleHog on PATH, fall back to podman/docker container, then regex (default)
+#   native — native truffleHog only; prints a warning and uses regex if not found
+#   docker — container only (podman or docker); skip native PATH check
+#   off    — regex scanner only; no truffleHog attempt, no warning
+# trufflehog_mode = auto
 
 # Literal strings to flag as critical findings (case-insensitive).
 # Comma-separated, or one per line with continuation indentation.

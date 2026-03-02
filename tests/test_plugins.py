@@ -114,16 +114,39 @@ class TestActionsPlugin:
         assert cap.old is True
         assert cap.new is False
 
+    def test_plan_includes_sha_pinning_update(self):
+        client = make_mock_client()
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        sha = next((c for c in updates if c.key == "sha_pinning_required"), None)
+        assert sha is not None
+        assert sha.old is False
+        assert sha.new is True
+
+    def test_apply_puts_sha_pinning_to_permissions_endpoint(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        plugin.apply(plan)
+        calls = client.call_json.call_args_list
+        perms_calls = [c for c in calls if "actions/permissions" in c.args[1] and "workflow" not in c.args[1]]
+        assert len(perms_calls) == 1
+        body = perms_calls[0].args[2]
+        assert body.get("sha_pinning_required") is True
+        assert body.get("enabled") is True
+
     def test_apply_puts_workflow_permissions(self):
         client = make_mock_client()
         client.call_json.return_value = {}
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         plugin.apply(plan)
-        assert client.call_json.called
-        call = client.call_json.call_args
-        assert call.args[0] == "PUT"
-        body = call.args[2]
+        calls = client.call_json.call_args_list
+        workflow_calls = [c for c in calls if c.args[1].endswith("actions/permissions/workflow")]
+        assert len(workflow_calls) == 1
+        body = workflow_calls[0].args[2]
         assert body.get("default_workflow_permissions") == "read"
         assert body.get("can_approve_pull_request_reviews") is False
 
@@ -132,6 +155,7 @@ class TestActionsPlugin:
         config = make_config({
             ("actions", "default_workflow_permissions"): "write",
             ("actions", "can_approve_pull_request_reviews"): "true",
+            ("actions", "sha_pinning_required"): "false",
         })
         plugin = ActionsPlugin(client, "alice", "my-repo", config)
         plan = plugin.plan()
@@ -556,15 +580,14 @@ class TestRepositoryPluginAudit:
 class TestActionsPluginAudit:
     def test_fetch_current_state_calls_get_json(self):
         client = make_mock_client()
-        client.get_json.return_value = {
-            "default_workflow_permissions": "read",
-            "can_approve_pull_request_reviews": False,
-        }
+        client.get_json.side_effect = [
+            {"sha_pinning_required": True},  # /actions/permissions
+            {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},  # /workflow
+        ]
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         state = plugin.fetch_current_state()
-        client.get_json.assert_called_once_with(
-            "/repos/alice/my-repo/actions/permissions/workflow"
-        )
+        assert client.get_json.call_count == 2
+        assert state["sha_pinning_required"] is True
         assert state["default_workflow_permissions"] == "read"
         assert state["can_approve_pull_request_reviews"] is False
 
@@ -572,25 +595,32 @@ class TestActionsPluginAudit:
         client = make_mock_client()
         # current already matches safe defaults
         current_state = {
+            "sha_pinning_required": True,
             "default_workflow_permissions": "read",
             "can_approve_pull_request_reviews": False,
         }
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        assert any(c.key == "sha_pinning_required" for c in skips)
         assert any(c.key == "default_workflow_permissions" for c in skips)
         assert any(c.key == "can_approve_pull_request_reviews" for c in skips)
 
     def test_plan_audit_emits_update_when_differs(self):
         client = make_mock_client()
-        # current is GitHub default (write), desired is read
+        # current is GitHub defaults, desired is our safe defaults
         current_state = {
+            "sha_pinning_required": False,
             "default_workflow_permissions": "write",
             "can_approve_pull_request_reviews": True,
         }
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        sha = next((c for c in updates if c.key == "sha_pinning_required"), None)
+        assert sha is not None
+        assert sha.old is False
+        assert sha.new is True
         wp = next((c for c in updates if c.key == "default_workflow_permissions"), None)
         assert wp is not None
         assert wp.old == "write"

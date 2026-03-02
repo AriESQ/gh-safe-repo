@@ -73,6 +73,7 @@ Plan for gsr-test-private-01:
   REPO              has_projects                     UPDATE   true      false
   REPO              delete_branch_on_merge           UPDATE   false     true
   REPO              allow_merge_commit               UPDATE   true      false
+  ACTIONS           sha_pinning_required             UPDATE   false     true
   ACTIONS           default_workflow_permissions     UPDATE   write     read
   ACTIONS           can_approve_pull_request_reviews UPDATE   true      false
   BRANCH_PROTECTION protected_branches               ADD                main
@@ -102,7 +103,7 @@ Type `y`.
 - Go to `https://github.com/YOUR_USERNAME/gsr-test-private-01`
 - Settings → General: confirm Wiki disabled, Projects disabled, Squash merge ON, Merge commits OFF
 - Settings → Branches (paid plan): confirm branch protection rule exists on `main`
-- Settings → Actions → General: confirm "Read repository contents and packages" selected
+- Settings → Actions → General: confirm "Read repository contents and packages" selected, and "Require SHA pinning" is checked
 
 ### 1.2 Attempt to create the same repo again
 
@@ -382,6 +383,7 @@ gh-safe-repo gsr-test-audit-target-01 --audit
 - `has_projects`: true → false
 - `delete_branch_on_merge`: false → true
 - `allow_merge_commit`: true → false
+- `sha_pinning_required`: false → true
 - `default_workflow_permissions`: write → read
 - `can_approve_pull_request_reviews`: true → false
 - (Plus branch protection ADD if paid plan)
@@ -605,9 +607,9 @@ gh-safe-repo gsr-test-json-01 --dry-run --json
     ...
   ],
   "summary": {
-    "add": 5,
-    "update": 2,
-    "skip": 2
+    "add": 1,
+    "update": 7,
+    "skip": 3
   }
 }
 ```
@@ -690,6 +692,8 @@ gh-safe-repo gsr-test-config-01 --config /tmp/path-that-does-not-exist/config.in
 ## 10. Plan-Level Gating
 
 These tests verify the tool correctly detects GitHub plan level and gates features.
+
+> **Note:** `sha_pinning_required` is **not** plan-gated or visibility-gated. It appears as an UPDATE in every plan (create, audit, public, private, free, paid).
 
 ### 10.1 Free plan — private repo skips branch protection and security
 

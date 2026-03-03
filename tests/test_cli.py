@@ -229,3 +229,30 @@ class TestScannerDescriptionInPlan:
         captured = capsys.readouterr()
         # The plan table is printed to stdout; SCAN new field should contain description
         assert "regex only" in captured.out
+
+
+class TestScanSkippedDirsWarning:
+    """--scan warns when SKIP_DIRS subdirectories were present but not scanned."""
+
+    def test_skipped_dirs_warning_printed_to_stdout(self, tmp_path, capsys):
+        node_modules = tmp_path / "node_modules"
+        node_modules.mkdir()
+        (node_modules / "index.js").write_text("hello")
+
+        with patch("sys.argv", ["gh-safe-repo", "--scan", str(tmp_path)]):
+            with pytest.raises(SystemExit):
+                main()
+
+        captured = capsys.readouterr()
+        assert "skipped during scan" in captured.out
+        assert "node_modules" in captured.out
+
+    def test_no_warning_when_no_skip_dirs_present(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+
+        with patch("sys.argv", ["gh-safe-repo", "--scan", str(tmp_path)]):
+            with pytest.raises(SystemExit):
+                main()
+
+        captured = capsys.readouterr()
+        assert "skipped during scan" not in captured.out

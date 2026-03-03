@@ -352,6 +352,11 @@ def main():
         scanner = SecurityScanner(config, debug=args.debug)
         print(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
         findings = scanner.scan(scan_path)
+        if scanner.skipped_committed_dirs:
+            print(_c(_YELLOW, "Warning: the following directories were skipped during scan:"))
+            for d in scanner.skipped_committed_dirs:
+                print(_c(_DIM, f"  {d}/"))
+            print()
         has_criticals = _print_findings(findings, config)
         sys.exit(1 if has_criticals else 0)
 

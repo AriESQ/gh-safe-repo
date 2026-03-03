@@ -183,8 +183,24 @@ class SecurityScanner:
         self._warn_ai_context_files = config.getbool(
             "pre_flight_scan", "warn_ai_context_files", fallback=True
         )
+        # scan_exclude_paths: regex patterns — files/dirs matching any are skipped
+        raw_exclude = config.get("pre_flight_scan", "scan_exclude_paths", fallback="")
+        _exclude_strings = [s.strip() for s in re.split(r"[\n,]", raw_exclude) if s.strip()]
+        self._exclude_path_patterns = [re.compile(p) for p in _exclude_strings]
+        self._exclude_path_strings = _exclude_strings   # raw strings for truffleHog temp file
+        # email_ignore_domains: exact domain names to suppress from email findings
+        raw_domains = config.get("pre_flight_scan", "email_ignore_domains", fallback="")
+        self._email_ignore_domains: Set[str] = {
+            d.strip().lower() for d in re.split(r"[\n,]", raw_domains) if d.strip()
+        }
         # Populated during scan(); readable by callers afterward to show coverage warnings
         self.skipped_committed_dirs: List[str] = []
+
+    # --- Helpers ---
+
+    def _is_excluded(self, rel_path: str) -> bool:
+        """Return True if rel_path matches any scan_exclude_paths pattern."""
+        return any(p.search(rel_path) for p in self._exclude_path_patterns)
 
     # --- Discovery ---
 
@@ -366,18 +382,23 @@ class SecurityScanner:
                         full_path = os.path.join(dirpath, d)
                         rel_path = os.path.relpath(full_path, root_path).replace(os.sep, "/")
                         dirs.remove(d)
-                        findings.append(Finding(
-                            severity=Severity.CRITICAL,
-                            category=FindingCategory.AI_CONTEXT_FILE,
-                            file_path=rel_path,
-                            line_number=0,
-                            rule="AI context file",
-                            match=_ai_context_hint(rel_path),
-                        ))
+                        if not self._is_excluded(rel_path):
+                            findings.append(Finding(
+                                severity=Severity.CRITICAL,
+                                category=FindingCategory.AI_CONTEXT_FILE,
+                                file_path=rel_path,
+                                line_number=0,
+                                rule="AI context file",
+                                match=_ai_context_hint(rel_path),
+                            ))
 
             for filename in files:
                 full_path = os.path.join(dirpath, filename)
                 rel_path = os.path.relpath(full_path, root_path).replace(os.sep, "/")
+
+                # Path exclusion check — skip before any other per-file work
+                if self._is_excluded(rel_path):
+                    continue
 
                 # AI context file check (by filename / relative path)
                 if self._warn_ai_context_files:
@@ -447,14 +468,16 @@ class SecurityScanner:
                     if self._scan_emails:
                         m = EMAIL_PATTERN.search(line)
                         if m:
-                            findings.append(Finding(
-                                severity=Severity.WARNING,
-                                category=FindingCategory.EMAIL,
-                                file_path=rel_path,
-                                line_number=line_number,
-                                rule="Email address",
-                                match=m.group(0),
-                            ))
+                            domain = m.group(0).split("@", 1)[1].lower()
+                            if domain not in self._email_ignore_domains:
+                                findings.append(Finding(
+                                    severity=Severity.WARNING,
+                                    category=FindingCategory.EMAIL,
+                                    file_path=rel_path,
+                                    line_number=line_number,
+                                    rule="Email address",
+                                    match=m.group(0),
+                                ))
 
                     if self._scan_todos:
                         if TODO_PATTERN.search(line):
@@ -496,6 +519,8 @@ class SecurityScanner:
 
         findings: List[Finding] = []
         for display_path, git_path in _AI_CONTEXT_HISTORY_CANDIDATES:
+            if self._is_excluded(display_path):
+                continue
             full = os.path.join(root_path, display_path.replace("/", os.sep))
             if os.path.exists(full):
                 continue  # still present — _unified_walk already flagged it
@@ -568,6 +593,15 @@ class SecurityScanner:
         if self._banned_strings:
             config_path = self._build_trufflehog_config(self._banned_strings)
 
+        # Build optional exclude-paths file (newline-separated regexes for truffleHog)
+        exclude_path_file: Optional[str] = None
+        if self._exclude_path_strings:
+            fd, exclude_path_file = tempfile.mkstemp(
+                suffix=".txt", prefix="gh-safe-repo-exclude-"
+            )
+            with os.fdopen(fd, "w") as f:
+                f.write("\n".join(self._exclude_path_strings) + "\n")
+
         try:
             if disc["method"] == "native":
                 # Native trufflehog on PATH
@@ -577,6 +611,8 @@ class SecurityScanner:
                     cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
                 if config_path:
                     cmd += ["--config", config_path]
+                if exclude_path_file:
+                    cmd += ["--exclude-paths", exclude_path_file]
 
             else:
                 # Container mode — mirror the shell wrapper's volume-mount logic
@@ -587,12 +623,16 @@ class SecurityScanner:
                 volume_args = ["--volume", f"{root_path}:{root_path}:ro"]
                 if config_path:
                     volume_args += ["--volume", f"{config_path}:{config_path}:ro"]
+                if exclude_path_file:
+                    volume_args += ["--volume", f"{exclude_path_file}:{exclude_path_file}:ro"]
                 if is_git_repo:
                     th_args = ["git", f"file://{root_path}", "--json", "--no-update"]
                 else:
                     th_args = ["filesystem", root_path, "--json", "--no-update"]
                 if config_path:
                     th_args += ["--config", config_path]
+                if exclude_path_file:
+                    th_args += ["--exclude-paths", exclude_path_file]
                 cmd = [runtime, "run", "--rm"] + volume_args + [image] + th_args
 
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -607,6 +647,8 @@ class SecurityScanner:
         finally:
             if config_path and os.path.exists(config_path):
                 os.unlink(config_path)
+            if exclude_path_file and os.path.exists(exclude_path_file):
+                os.unlink(exclude_path_file)
 
         # truffleHog v3 exit codes (tested against v3.93.4):
         #   0 = scan completed — may have 0 or more unverified findings in JSON

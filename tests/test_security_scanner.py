@@ -731,6 +731,176 @@ class TestAiContextFileHistory:
         assert not any(f.category == FindingCategory.AI_CONTEXT_FILE for f in findings)
 
 
+class TestExcludePaths:
+    def test_excluded_file_suppresses_email(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"docs/",
+            })
+            write_file(tmpdir, "docs/api.json", "contact: alice@example.com\n")
+            findings = scanner.scan(tmpdir)
+        assert findings == []
+
+    def test_excluded_file_suppresses_secrets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"fixtures/",
+            })
+            write_file(tmpdir, "fixtures/creds.txt", "key = AKIAIOSFODNN7EXAMPLE\n")
+            findings = scanner.scan(tmpdir)
+        secrets = [f for f in findings if f.category == FindingCategory.SECRET]
+        assert secrets == []
+
+    def test_excluded_file_suppresses_ai_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"CLAUDE\.md",
+            })
+            write_file(tmpdir, "CLAUDE.md", "# internal notes\n")
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert ai == []
+
+    def test_excluded_cursor_dir_suppressed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"\.cursor",
+            })
+            os.makedirs(os.path.join(tmpdir, ".cursor"))
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert ai == []
+
+    def test_excluded_path_does_not_suppress_other_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"docs/",
+                ("pre_flight_scan", "scan_for_todos"): "false",
+                ("pre_flight_scan", "scan_for_secrets"): "false",
+            })
+            write_file(tmpdir, "docs/api.json", "contact: alice@example.com\n")
+            write_file(tmpdir, "src/main.py", "contact: bob@example.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert len(emails) == 1
+        assert emails[0].file_path == "src/main.py"
+
+    def test_multiple_exclude_patterns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"docs/, tests/",
+            })
+            write_file(tmpdir, "docs/api.json", "alice@example.com\n")
+            write_file(tmpdir, "tests/test_foo.py", "alice@example.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert emails == []
+
+    def test_excluded_path_suppresses_ai_context_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "CLAUDE.md", "# notes\n")
+            git_add_commit(tmpdir, "add")
+            os.remove(os.path.join(tmpdir, "CLAUDE.md"))
+            git_add_commit(tmpdir, "remove")
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): r"CLAUDE\.md",
+            })
+            findings = scanner.scan(tmpdir)
+        ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
+        assert ai == []
+
+    def test_exclude_paths_written_to_trufflehog_temp_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "trufflehog_mode"): "native",
+                ("pre_flight_scan", "scan_exclude_paths"): r"docs/api\.json",
+            })
+            scanner._discovery = {"method": "native", "version": "3.99.0"}
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert "--exclude-paths" in cmd
+        idx = cmd.index("--exclude-paths")
+        exclude_file = cmd[idx + 1]
+        # The temp file is deleted after the call; check the arg was present
+        assert exclude_file.endswith(".txt")
+
+    def test_container_mode_mounts_exclude_paths_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "trufflehog_mode"): "docker",
+                ("pre_flight_scan", "scan_exclude_paths"): r"docs/",
+            })
+            scanner._discovery = {
+                "method": "container",
+                "runtime": "podman",
+                "runtime_path": "/usr/bin/podman",
+            }
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch("subprocess.run", return_value=completed) as mock_run:
+                scanner._try_trufflehog(tmpdir)
+            cmd = mock_run.call_args.args[0]
+        assert "--exclude-paths" in cmd
+        assert cmd.count("--volume") >= 2  # scan path + exclude file
+
+
+class TestEmailIgnoreDomains:
+    def test_ignored_domain_suppressed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+            })
+            write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert emails == []
+
+    def test_non_ignored_domain_still_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+            })
+            write_file(tmpdir, "readme.md", "Contact: alice@real-corp.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert len(emails) == 1
+        assert emails[0].match == "alice@real-corp.com"
+
+    def test_multiple_ignored_domains(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "email_ignore_domains"): "example.com, domain.tld",
+            })
+            write_file(tmpdir, "readme.md",
+                       "alice@example.com\nuser@domain.tld\nbob@real.io\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert len(emails) == 1
+        assert emails[0].match == "bob@real.io"
+
+    def test_domain_match_is_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "email_ignore_domains"): "Example.COM",
+            })
+            write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert emails == []
+
+    def test_domain_ignore_does_not_suppress_other_categories(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+            })
+            write_file(tmpdir, "creds.txt", "key = AKIAIOSFODNN7EXAMPLE\n")
+            findings = scanner.scan(tmpdir)
+        secrets = [f for f in findings if f.category == FindingCategory.SECRET]
+        assert len(secrets) >= 1
+
+
 class TestFormatFindings:
     def test_empty_list_returns_empty_string(self):
         assert format_findings([]) == ""

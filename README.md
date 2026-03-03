@@ -24,6 +24,7 @@ Branch protection, Dependabot, restricted Actions permissions, disabled wiki and
 - [Creating a Repo from a Local Directory (`--local`)](#creating-a-repo-from-a-local-directory---local)
 - [Pre-flight Security Scanner](#pre-flight-security-scanner)
   - [Standalone scan](#standalone-scan)
+  - [Suppressing false positives](#suppressing-false-positives)
 - [Configuration](#configuration)
 - [GitHub Plan Limitations](#github-plan-limitations)
 - [How It Works](#how-it-works)
@@ -398,6 +399,27 @@ Pre-flight scan: my-private-project
 
 Secrets are redacted in the output. Email addresses and TODOs show the matching line.
 
+### Suppressing false positives
+
+Two config keys let you suppress known-safe findings without disabling entire check categories.
+
+**`scan_exclude_paths`** — skip files or directories entirely. Values are newline/comma-separated regex patterns matched against the relative file path. A matching file is excluded from every check: secrets, emails, TODOs, large files, and AI context file detection. The same patterns are also passed to truffleHog via `--exclude-paths`, so coverage is consistent regardless of which scanner engine is active.
+
+```ini
+[pre_flight_scan]
+# Exclude the GitHub API spec (example tokens) and all test fixtures
+scan_exclude_paths = docs/api\.github\.com\.json
+    tests/fixtures/
+```
+
+**`email_ignore_domains`** — suppress email findings for known-safe domains. Values are newline/comma-separated domain names (case-insensitive, exact match). Only email findings are affected; all other checks still run on those files.
+
+```ini
+[pre_flight_scan]
+# Suppress placeholder addresses used in docs and tests
+email_ignore_domains = example.com, domain.tld
+```
+
 ### Scanner configuration
 
 ```ini
@@ -418,13 +440,19 @@ max_file_size_mb = 100
 # Their git history may contain more sensitive content than the current version.
 # warn_ai_context_files = true
 
-# Literal strings to flag as critical findings — useful for usernames,
-# internal hostnames, project codenames, or any known value you don't want public.
+# Literal strings to flag as critical findings (case-insensitive).
 # Comma-separated or one per line (continuation lines must be indented).
-# Matching is case-insensitive.
 # banned_strings = secret
 #     password
 #     credential
+
+# Exclude files/directories from all scan checks (regex patterns, comma/newline separated).
+# The same patterns are passed to truffleHog via --exclude-paths.
+# scan_exclude_paths = docs/api\.github\.com\.json
+#     tests/fixtures/
+
+# Suppress email findings for these domains (case-insensitive exact match).
+# email_ignore_domains = example.com, domain.tld
 ```
 
 When banned strings or AI context files are found the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.
@@ -544,6 +572,14 @@ max_file_size_mb = 100
 # banned_strings = secret
 #     password
 #     credential
+
+# Exclude files/directories from all scan checks (regex patterns, comma/newline separated).
+# Passed to truffleHog via --exclude-paths as well as applied to the regex walk.
+# scan_exclude_paths = docs/api\.github\.com\.json
+#     tests/fixtures/
+
+# Suppress email findings for these domains (case-insensitive exact match).
+# email_ignore_domains = example.com, domain.tld
 ```
 
 ---

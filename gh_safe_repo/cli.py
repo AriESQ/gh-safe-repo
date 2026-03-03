@@ -713,12 +713,6 @@ def main():
     except APIError as e:
         warn(f"Repository created but Actions settings failed: {e}")
 
-    # Apply branch protection (public repos or paid plan private repos)
-    try:
-        bp_plugin.apply(full_plan)
-    except APIError as e:
-        warn(f"Repository created but branch protection failed: {e}")
-
     # Apply security settings
     try:
         security_plugin.apply(full_plan)
@@ -742,5 +736,14 @@ def main():
             info(_c(_GREEN, "  Code pushed successfully."))
         except APIError as e:
             warn(f"Code push failed: {e}")
+
+    # Apply branch protection after code push.
+    # For --local/--from the branch is created by the push above; applying before
+    # would 404 (branch not found) and silently skip. For plain create (auto_init=True)
+    # the branch already exists from GitHub's initial commit, so order doesn't matter.
+    try:
+        bp_plugin.apply(full_plan)
+    except APIError as e:
+        warn(f"Repository created but branch protection failed: {e}")
 
     print_success(owner, repo_name)

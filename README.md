@@ -187,6 +187,7 @@ gh-safe-repo --scan PATH [OPTIONS]
 | `--public` | Create as a public repo (default: private) |
 | `--from REPO` | Mirror code from an existing private repo before making public. Requires `--public`. Mutually exclusive with `--local`. |
 | `--audit` | Audit an existing repo and apply missing safe defaults. Mutually exclusive with `--local`. |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table. All other messages go to stderr. Combine with `--dry-run` for clean machine-readable output. |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
 | `--debug` | Print every API call and response |
 | `--help` | Show help and exit |
@@ -195,7 +196,14 @@ gh-safe-repo --scan PATH [OPTIONS]
 
 ## Dry Run / Plan Output
 
-`--dry-run` shows exactly what `gh-safe-repo` would do, without making any changes or API calls. Use it before running for real.
+`--dry-run` shows exactly what `gh-safe-repo` would do, without making any changes or API calls. Use it before running for real. Combine with `--json` for machine-readable plan output:
+
+```bash
+gh-safe-repo my-project --dry-run --json
+gh-safe-repo my-existing-repo --audit --dry-run --json
+```
+
+When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer) go to stderr, so the output is clean for piping or scripting.
 
 ```
 $ gh-safe-repo my-project --dry-run
@@ -225,6 +233,20 @@ $ gh-safe-repo my-project --dry-run
 | `UPDATE` (yellow) | Existing setting being changed (audit mode) |
 | `DELETE` (red) | Setting being removed |
 | `SKIP` (dim) | Feature unavailable on your plan/visibility combination |
+
+**JSON output** (`--json`):
+
+```json
+{
+  "changes": [
+    { "type": "add",  "category": "repository",         "key": "has_wiki",  "old": null, "new": false, "reason": null },
+    { "type": "skip", "category": "branch_protection",   "key": "branch_protection", "old": null, "new": null, "reason": "Not available for private repos on free plan" }
+  ],
+  "summary": { "add": 5, "skip": 2 }
+}
+```
+
+`summary` only includes types that are present in the plan. Consumers should use `.get("delete", 0)` etc. rather than assuming all four keys are present.
 
 ---
 

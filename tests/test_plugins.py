@@ -92,6 +92,71 @@ class TestRepositoryPlugin:
         with pytest.raises(RepoExistsError):
             plugin.apply(plan)
 
+    def test_plan_includes_description_when_source_description_set(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  source_description="A cool tool")
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        desc = next((c for c in adds if c.key == "description"), None)
+        assert desc is not None
+        assert desc.new == "A cool tool"
+
+    def test_plan_no_description_change_when_source_description_empty(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  source_description="")
+        plan = plugin.plan()
+        assert not any(c.key == "description" for c in plan.changes)
+
+    def test_plan_includes_topics_when_source_topics_set(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  source_topics=["go", "cli"])
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        topics = next((c for c in adds if c.key == "topics"), None)
+        assert topics is not None
+        assert topics.new == "go, cli"
+
+    def test_apply_patches_description(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  source_description="My desc")
+        plan = plugin.plan()
+        plugin.apply(plan)
+        patch_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PATCH"]
+        assert len(patch_calls) == 1
+        assert patch_calls[0].args[2].get("description") == "My desc"
+
+    def test_apply_puts_topics(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  source_topics=["python", "cli"])
+        plan = plugin.plan()
+        plugin.apply(plan)
+        put_calls = [
+            c for c in client.call_json.call_args_list
+            if c.args[0] == "PUT" and "topics" in c.args[1]
+        ]
+        assert len(put_calls) == 1
+        assert put_calls[0].args[2] == {"names": ["python", "cli"]}
+
+    def test_apply_no_topics_call_when_no_topics(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  source_topics=[])
+        plan = plugin.plan()
+        plugin.apply(plan)
+        topics_puts = [
+            c for c in client.call_json.call_args_list
+            if c.args[0] == "PUT" and "topics" in c.args[1]
+        ]
+        assert len(topics_puts) == 0
+
 
 class TestActionsPlugin:
     def test_plan_includes_workflow_permissions_update(self):

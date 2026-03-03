@@ -553,14 +553,23 @@ def main():
             error(f"--local: '{args.local_path}' is not a directory")
             sys.exit(2)
 
-    # Validate source repo exists (--from workflow) and capture its default branch
+    # Validate source repo exists (--from workflow) and capture its default branch + metadata
     source_default_branch = None
+    source_description = ""
+    source_topics: list = []
     if args.from_repo and not args.dry_run:
         try:
             if not check_repo_exists(client, owner, args.from_repo):
                 error(f"Source repo '{owner}/{args.from_repo}' does not exist.")
                 sys.exit(1)
             source_default_branch = client.get_default_branch(owner, args.from_repo)
+            source_data = client.get_repo_data(owner, args.from_repo)  # already cached
+            source_description = source_data.get("description") or ""
+            try:
+                topics_resp = client.get_json(f"/repos/{owner}/{args.from_repo}/topics")
+                source_topics = topics_resp.get("names", [])
+            except APIError:
+                source_topics = []
         except APIError as e:
             error(f"Failed to check source repo: {e}")
             sys.exit(1)
@@ -616,7 +625,8 @@ def main():
     # empty; suppress GitHub's auto-initialised commit so our push doesn't conflict.
     repo_auto_init = None if (not local_path and not args.from_repo) else False
     plugins = [
-        RepositoryPlugin(client, owner, repo_name, config, auto_init=repo_auto_init),
+        RepositoryPlugin(client, owner, repo_name, config, auto_init=repo_auto_init,
+                         source_description=source_description, source_topics=source_topics),
         ActionsPlugin(client, owner, repo_name, config),
         BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),

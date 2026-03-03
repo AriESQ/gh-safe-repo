@@ -24,6 +24,7 @@ CREATE_FIELDS = {"private", "auto_init"}
 
 # Fields that go in PATCH /repos/{owner}/{repo} (can be set after creation too)
 PATCH_FIELDS = {
+    "description",
     "has_wiki",
     "has_issues",
     "has_projects",
@@ -41,9 +42,12 @@ def _parse_bool(value):
 
 
 class RepositoryPlugin(BasePlugin):
-    def __init__(self, client, owner, repo, config, auto_init: bool = None):
+    def __init__(self, client, owner, repo, config, auto_init: bool = None,
+                 source_description="", source_topics=None):
         super().__init__(client, owner, repo, config)
         self._auto_init_override = auto_init
+        self._source_description = source_description or ""
+        self._source_topics = source_topics or []
 
     def fetch_current_state(self) -> dict:
         data = self.client.get_repo_data(self.owner, self.repo)
@@ -101,6 +105,26 @@ class RepositoryPlugin(BasePlugin):
                     )
                 )
 
+        if not is_audit and self._source_description:
+            plan.add(
+                Change(
+                    type=ChangeType.ADD,
+                    category=ChangeCategory.REPO,
+                    key="description",
+                    new=self._source_description,
+                )
+            )
+
+        if not is_audit and self._source_topics:
+            plan.add(
+                Change(
+                    type=ChangeType.ADD,
+                    category=ChangeCategory.REPO,
+                    key="topics",
+                    new=", ".join(self._source_topics),
+                )
+            )
+
         return plan
 
     def apply(self, plan: Plan) -> None:
@@ -141,3 +165,12 @@ class RepositoryPlugin(BasePlugin):
         if patch_body:
             path = self.client.repo_path(self.owner, self.repo)
             self.client.call_json("PATCH", path, patch_body)
+
+        topics_change = next(
+            (c for c in plan.actionable_changes
+             if c.category == ChangeCategory.REPO and c.key == "topics"),
+            None,
+        )
+        if topics_change:
+            path = self.client.repo_path(self.owner, self.repo)
+            self.client.call_json("PUT", f"{path}/topics", {"names": self._source_topics})

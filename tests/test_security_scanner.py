@@ -954,3 +954,62 @@ class TestFormatFindings:
         )]
         output = format_findings(findings)
         assert "alice@example.com" in output
+
+
+class TestSkipDirsGitAware:
+    """SKIP_DIRS that contain tracked git files should be scanned, not skipped."""
+
+    def test_committed_skip_dir_is_scanned(self):
+        """node_modules/ committed to git → scanner finds banned string inside it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            scanner = make_scanner({
+                ("pre_flight_scan", "banned_strings"): "SUPERSECRET_IN_MODULES",
+                ("pre_flight_scan", "scan_for_emails"): "false",
+                ("pre_flight_scan", "scan_for_todos"): "false",
+                ("pre_flight_scan", "scan_for_secrets"): "false",
+            })
+            write_file(tmpdir, "node_modules/lib.js", "var x = 'SUPERSECRET_IN_MODULES';\n")
+            git_add_commit(tmpdir, "add node_modules")
+            findings = scanner.scan(tmpdir)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 1
+        assert "node_modules" in banned[0].file_path
+        assert scanner.skipped_committed_dirs == []
+
+    def test_uncommitted_skip_dir_in_git_repo_is_skipped(self):
+        """node_modules/ present in working tree but not committed → still skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            # Initial commit so it's a valid repo
+            write_file(tmpdir, "README.md", "hello\n")
+            git_add_commit(tmpdir, "initial")
+            scanner = make_scanner({
+                ("pre_flight_scan", "banned_strings"): "SUPERSECRET_IN_MODULES",
+                ("pre_flight_scan", "scan_for_emails"): "false",
+                ("pre_flight_scan", "scan_for_todos"): "false",
+                ("pre_flight_scan", "scan_for_secrets"): "false",
+            })
+            # Create node_modules in working tree WITHOUT committing
+            write_file(tmpdir, "node_modules/lib.js", "var x = 'SUPERSECRET_IN_MODULES';\n")
+            findings = scanner.scan(tmpdir)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert banned == []
+        assert any("node_modules" in d for d in scanner.skipped_committed_dirs)
+
+    def test_committed_skip_dir_is_scanned_nested(self):
+        """src/dist/ committed to git → scanner finds content inside it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            scanner = make_scanner({
+                ("pre_flight_scan", "banned_strings"): "BUILT_ARTIFACT_SECRET",
+                ("pre_flight_scan", "scan_for_emails"): "false",
+                ("pre_flight_scan", "scan_for_todos"): "false",
+                ("pre_flight_scan", "scan_for_secrets"): "false",
+            })
+            write_file(tmpdir, "src/dist/bundle.js", "// BUILT_ARTIFACT_SECRET\n")
+            git_add_commit(tmpdir, "add dist")
+            findings = scanner.scan(tmpdir)
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert len(banned) == 1
+        assert "dist" in banned[0].file_path

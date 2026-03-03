@@ -383,6 +383,14 @@ Pre-flight scan: my-private-project
 
 Secrets are redacted in the output. Email addresses and TODOs show the matching line.
 
+### Scan coverage
+
+Build-artifact directories (`node_modules`, `__pycache__`, `.venv`, `venv`, `dist`, `build`) are skipped by default to keep scans fast. In git repos, this skip is conditional: before pruning a directory, the scanner runs `git ls-files -- <dir>` to check whether any files inside are tracked. If they are, the directory is scanned normally.
+
+This means committed `node_modules` or `dist` trees — unusual, but they happen — are not silently missed. Uncommitted directories (the normal case) continue to be skipped as before.
+
+A warning is still printed when SKIP_DIRS subdirectories are found in a cloned source repo, since their presence may indicate that more content than expected is committed.
+
 ### Suppressing false positives
 
 Two config keys let you suppress known-safe findings without disabling entire check categories.

@@ -199,6 +199,17 @@ class SecurityScanner:
         """Return True if rel_path matches any scan_exclude_paths pattern."""
         return any(p.search(rel_path) for p in self._exclude_path_patterns)
 
+    def _is_committed(self, root_path: str, rel_dir: str) -> bool:
+        """Return True if any files under rel_dir are tracked in the git index."""
+        try:
+            result = subprocess.run(
+                ["git", "-C", root_path, "ls-files", "--", rel_dir],
+                capture_output=True, text=True,
+            )
+            return bool(result.stdout.strip())
+        except FileNotFoundError:
+            return False
+
     # --- Discovery ---
 
     def _detect_native(self) -> Optional[str]:
@@ -331,6 +342,8 @@ class SecurityScanner:
         if self.debug:
             print(f"[debug] SKIP_DIRS: {sorted(SKIP_DIRS)}", file=sys.stderr)
 
+        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
+
         # truffleHog handles secrets (including full git history) when available
         secrets_via_trufflehog = False
         findings: List[Finding] = []
@@ -342,35 +355,46 @@ class SecurityScanner:
 
         # Single walk: large files, AI context files, text content (secrets if no truffleHog)
         walk_findings, skipped = self._unified_walk(
-            root_path, scan_secrets=not secrets_via_trufflehog
+            root_path, scan_secrets=not secrets_via_trufflehog, is_git_repo=is_git_repo
         )
         findings.extend(walk_findings)
         self.skipped_committed_dirs = sorted(skipped)
 
-        findings.extend(self._check_ai_context_history(root_path))
+        findings.extend(self._check_ai_context_history(root_path, is_git_repo=is_git_repo))
 
         return findings
 
     def _unified_walk(
-        self, root_path: str, scan_secrets: bool = True
+        self, root_path: str, scan_secrets: bool = True, is_git_repo: bool = False
     ) -> Tuple[List[Finding], Set[str]]:
         """Single os.walk() pass covering large files, AI context files, and text content.
 
         Returns (findings, skipped_dirs) where skipped_dirs is the set of SKIP_DIRS
         subdirectory paths (relative to root_path) actually encountered during the walk.
         .git is excluded from skipped_dirs — its presence is always expected.
+
+        When is_git_repo is True, SKIP_DIRS that contain tracked files are scanned
+        instead of skipped.
         """
         findings: List[Finding] = []
         skipped_dirs: Set[str] = set()
 
         for dirpath, dirs, files in os.walk(root_path, followlinks=False):
-            # Track and prune SKIP_DIRS; record all except .git (always present)
+            # Track and prune SKIP_DIRS; in git repos, scan dirs with tracked files
+            skip_set: Set[str] = set()
             for d in list(dirs):
-                if d in SKIP_DIRS:
-                    if d != ".git":
-                        rel = os.path.relpath(os.path.join(dirpath, d), root_path)
-                        skipped_dirs.add(rel)
-            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+                if d not in SKIP_DIRS:
+                    continue
+                if d == ".git":
+                    skip_set.add(d)
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, d), root_path)
+                if is_git_repo and self._is_committed(root_path, rel):
+                    pass  # committed — scan it, don't add to skipped_dirs
+                else:
+                    skip_set.add(d)
+                    skipped_dirs.add(rel)
+            dirs[:] = [d for d in dirs if d not in skip_set]
 
             # AI context directory check (.cursor)
             if self._warn_ai_context_files:
@@ -501,17 +525,17 @@ class SecurityScanner:
 
         return findings, skipped_dirs
 
-    def _check_ai_context_history(self, root_path: str) -> List[Finding]:
+    def _check_ai_context_history(self, root_path: str, is_git_repo: bool = False) -> List[Finding]:
         """Check git history for AI context files deleted from the working tree.
 
-        Only runs when root_path contains a .git directory. For each candidate
-        file, skips those still present in the working tree (already caught by
-        _unified_walk). Runs `git log --all --full-history --oneline -- <path>`;
-        any output means the file existed in at least one commit.
+        Only runs when is_git_repo is True. For each candidate file, skips those
+        still present in the working tree (already caught by _unified_walk). Runs
+        `git log --all --full-history --oneline -- <path>`; any output means the
+        file existed in at least one commit.
         """
         if not self._warn_ai_context_files:
             return []
-        if not os.path.isdir(os.path.join(root_path, ".git")):
+        if not is_git_repo:
             return []
 
         findings: List[Finding] = []

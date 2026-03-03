@@ -683,44 +683,20 @@ uv tool install .
 
 ```
 gh-safe-repo/
-├── gh-safe-repo                  # Thin launcher (entry point for direct use)
-├── gh_safe_repo/
-│   ├── cli.py                    # main() + plan/apply orchestration
-│   ├── github_client.py          # gh api subprocess wrapper
-│   ├── config_manager.py         # INI config with safe defaults
-│   ├── diff.py                   # Change/Plan model
-│   ├── errors.py                 # Custom exception hierarchy
-│   ├── security_scanner.py       # Pre-flight scanner
-│   ├── plugins/
-│   │   ├── base.py               # Abstract BasePlugin
-│   │   ├── repository.py         # Repo creation + settings
-│   │   ├── actions.py            # Actions permissions
-│   │   ├── branch_protection.py  # Classic + Rulesets API
-│   │   └── security.py           # Dependabot + secret scanning
-│   └── templates/                # (currently empty)
-├── pyproject.toml                # Build config, entry points
-├── config.ini.example            # Fully annotated example config
+├── gh-safe-repo          # Thin launcher (entry point for direct use)
+├── gh_safe_repo/         # Package — see gh_safe_repo/README.md for internals
+├── pyproject.toml        # Build config, entry points
+├── config.ini.example    # Fully annotated example config
 └── tests/
-    ├── test_config_manager.py
-    ├── test_diff.py
-    ├── test_github_client.py
-    ├── test_plugins.py
-    └── test_security_scanner.py
 ```
+
+See [`gh_safe_repo/README.md`](gh_safe_repo/README.md) for the module map, plugin architecture, and a guide to adding new settings.
 
 ### Dependency policy
 
 There are **no runtime dependencies**. Everything uses the Python standard library (`argparse`, `configparser`, `subprocess`, `json`, `re`). Do not add third-party packages without discussion.
 
 `pytest` is the only dev dependency, declared as a UV-native `[dependency-groups]` entry in `pyproject.toml`.
-
-### Adding a new setting
-
-1. Identify the GitHub API endpoint
-2. Add the key and safe default to `ConfigManager.SAFE_DEFAULTS`
-3. Add the corresponding entry to `config.ini.example`
-4. Update the appropriate plugin's `plan()` and `apply()` methods
-5. Add tests in `tests/test_plugins.py` (mock all `subprocess` calls)
 
 ---
 

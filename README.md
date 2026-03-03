@@ -293,6 +293,7 @@ gh-safe-repo my-project --local ~/projects/myapp --public
    - If `PATH` is a git repo: the full history is cloned locally and pushed with `push --all --tags` (all branches and tags)
    - If `PATH` is a plain directory: files are staged in a fresh repo and pushed as an initial commit
    - If `PATH` is an empty directory: nothing is pushed (silently skipped)
+6. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
 Unlike `--from`, `--local` works for both private and public repos. It is mutually exclusive with `--from` and `--audit`.
 

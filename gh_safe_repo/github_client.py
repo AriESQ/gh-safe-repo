@@ -260,10 +260,18 @@ class GitHubClient:
                 print(f"[debug] git push --all --tags -> {dest_display}", file=sys.stderr)
 
             try:
-                subprocess.run(
-                    ["git", "-C", work_path, "remote", "add", "origin", dest_url],
-                    check=True, capture_output=True,
-                )
+                # git clone sets up origin pointing to local_path; update it.
+                # For fresh git init there is no origin yet; add it.
+                if is_git_repo:
+                    subprocess.run(
+                        ["git", "-C", work_path, "remote", "set-url", "origin", dest_url],
+                        check=True, capture_output=True,
+                    )
+                else:
+                    subprocess.run(
+                        ["git", "-C", work_path, "remote", "add", "origin", dest_url],
+                        check=True, capture_output=True,
+                    )
                 subprocess.run(
                     ["git", "-C", work_path, "push", "origin", "--all"],
                     check=True, capture_output=not self.debug, text=True,
@@ -276,6 +284,28 @@ class GitHubClient:
                 raise APIError(
                     f"git push failed to {dest_display}: {(e.stderr or '').strip()}"
                 )
+
+        # Wire up the original local repo to the newly created remote so
+        # future `git push` / `git pull` work without extra configuration.
+        if is_git_repo:
+            try:
+                subprocess.run(
+                    ["git", "-C", local_path, "remote", "add", "origin", dest_display],
+                    check=True, capture_output=True,
+                )
+                result = subprocess.run(
+                    ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
+                    capture_output=True, text=True,
+                )
+                if result.returncode == 0:
+                    branch = result.stdout.strip()
+                    subprocess.run(
+                        ["git", "-C", local_path, "branch", "--set-upstream-to",
+                         f"origin/{branch}", branch],
+                        capture_output=True,
+                    )
+            except subprocess.CalledProcessError:
+                pass  # non-fatal: remote wiring is a convenience
 
     def clone_for_scan(self, owner: str, repo: str, dest_path: str) -> None:
         """Full-clone repo into dest_path for pre-flight scanning.

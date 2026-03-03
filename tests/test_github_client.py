@@ -206,18 +206,25 @@ class TestPushLocal:
         client = self._make_client()
         with patch("os.path.isdir", return_value=True), \
              patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_completed_process()
+            mock_run.return_value = make_completed_process(stdout="master\n")
             client.push_local("/some/local/repo", "alice", "dest-repo")
 
         cmds = [call.args[0] for call in mock_run.call_args_list]
         # clone
         assert any(c[0] == "git" and "clone" in c and "/some/local/repo" in c for c in cmds)
-        # remote add
-        assert any("remote" in c and "add" in c and "origin" in c for c in cmds)
+        # remote set-url in temp clone (clone already created origin pointing at local_path)
+        assert any("remote" in c and "set-url" in c and "origin" in c for c in cmds)
         # push --all
         assert any("push" in c and "--all" in c for c in cmds)
         # push --tags
         assert any("push" in c and "--tags" in c for c in cmds)
+        # remote add on original local repo
+        assert any(
+            "remote" in c and "add" in c and "origin" in c and "/some/local/repo" in c
+            for c in cmds
+        )
+        # tracking branch set on original local repo
+        assert any("branch" in c and "--set-upstream-to" in c for c in cmds)
 
     def test_push_local_non_git_copies_and_inits(self):
         client = self._make_client()

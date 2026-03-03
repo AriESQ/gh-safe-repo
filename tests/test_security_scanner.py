@@ -641,14 +641,14 @@ class TestAiContextFileScanning:
         assert len(ai) == 1
         assert ai[0].severity == Severity.CRITICAL
 
-    def test_ai_context_finding_message_includes_filter_repo_hint(self):
+    def test_ai_context_finding_message_includes_scrub_script_hint(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             write_file(tmpdir, "CLAUDE.md", "# Claude instructions\n")
             findings = scanner.scan(tmpdir)
         ai = [f for f in findings if f.category == FindingCategory.AI_CONTEXT_FILE]
         assert len(ai) == 1
-        assert "filter-repo" in ai[0].match
+        assert "scrub-ai-context.sh" in ai[0].match
 
 
 class TestAiContextFileHistory:
@@ -667,7 +667,7 @@ class TestAiContextFileHistory:
         assert hist[0].file_path == "CLAUDE.md"
         assert hist[0].severity == Severity.CRITICAL
         assert hist[0].rule == "AI context file in git history"
-        assert "filter-repo" in hist[0].match
+        assert "scrub-ai-context.sh" in hist[0].match
 
     def test_present_file_not_duplicated(self):
         with tempfile.TemporaryDirectory() as tmpdir:

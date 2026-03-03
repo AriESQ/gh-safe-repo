@@ -130,15 +130,12 @@ TODO_PATTERN = re.compile(r"(?i)#\s*(?:TODO|FIXME|HACK|XXX)\b")
 
 def _ai_context_hint(rel_path: str) -> str:
     """Build the remediation message for an AI context file finding."""
-    filename = rel_path.split("/")[-1]
     return (
         f"This file may contain internal development notes. Its git history may hold\n"
         f"more sensitive content than the current version.\n"
         f"To strip history and re-add as a clean file (run in your local source repo):\n"
-        f"  cp {rel_path} /tmp/{filename}.bak\n"
-        f"  git filter-repo --invert-paths --path {rel_path}\n"
-        f"  cp /tmp/{filename}.bak {rel_path} && git add {rel_path}\n"
-        f'  git commit -m "Add {rel_path}" && git push --force\n'
+        f"  scrub-ai-context.sh {rel_path}          # from gh-safe-repo tools/\n"
+        f"  git push --force-with-lease --all\n"
         f"Then re-run gh-safe-repo. Or continue to mirror as-is."
     )
 
@@ -149,8 +146,8 @@ def _ai_context_history_hint(rel_path: str) -> str:
         f"This file was present in git history but has since been deleted.\n"
         f"Its historical commits may contain sensitive development notes.\n"
         f"To permanently remove from history (run in your local source repo):\n"
-        f"  git filter-repo --invert-paths --path {rel_path}\n"
-        f"  git push --force\n"
+        f"  scrub-ai-context.sh {rel_path}          # from gh-safe-repo tools/\n"
+        f"  git push --force-with-lease --all\n"
         f"Then re-run gh-safe-repo. Or continue to mirror as-is."
     )
 

@@ -37,6 +37,9 @@ default_workflow_permissions = read
 # Prevent Actions from approving pull requests
 can_approve_pull_request_reviews = false
 
+# Require workflows to pin actions to a specific commit SHA instead of a mutable tag
+sha_pinning_required = true
+
 [branch_protection]
 # Only applied to public repos (free plan) or any repo on a paid plan.
 # Branch(es) to protect — comma-separated. The tool auto-detects your default

@@ -69,6 +69,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Allowed actions | All | **Selected** (GitHub + verified creators) |
 | Default workflow permissions | Read/write | **Read-only** |
 | Actions can approve PRs | Yes | **No** |
+| Require SHA pinning | No | **Yes** (workflows must pin actions to a commit SHA, not a mutable tag) |
 
 ### Branch protection (public repos, or any repo on a paid plan)
 
@@ -510,6 +511,9 @@ default_workflow_permissions = read
 
 # Prevent Actions from self-approving pull requests
 can_approve_pull_request_reviews = false
+
+# Require workflows to pin actions to a specific commit SHA instead of a mutable tag
+sha_pinning_required = true
 
 
 [branch_protection]

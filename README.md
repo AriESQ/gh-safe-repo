@@ -357,27 +357,9 @@ Environment variables respected by the container path: `CONTAINER_RUNTIME` to ov
 
 ### Running truffleHog via podman or Docker (no local install)
 
-No manual setup is required. `gh-safe-repo` detects podman or docker automatically (step 2 above) and runs truffleHog in a container with the correct volume mounts.
+No manual setup is required. `gh-safe-repo` detects podman or docker automatically (step 2 above) and runs truffleHog in a container with the correct volume mounts. `CONTAINER_RUNTIME` and `TRUFFLEHOG_IMAGE` environment variables are respected.
 
-A transparent shell wrapper at `tools/trufflehog` is also provided, primarily as a **system-wide drop-in** for users who want container-based truffleHog to appear as a native install for _other_ tools. It is no longer needed by `gh-safe-repo` itself, which handles container detection natively, but remains useful if you invoke `trufflehog` directly from the shell.
-
-```bash
-# Optional: make container-based trufflehog available system-wide as "trufflehog"
-cp tools/trufflehog ~/.local/bin/trufflehog
-chmod +x ~/.local/bin/trufflehog
-```
-
-On first use the container runtime pulls `ghcr.io/trufflesecurity/trufflehog:latest` automatically. To pin a specific version or use a locally built image:
-
-```bash
-# Build a local image from tools/Containerfile
-podman build -t trufflehog:local -f tools/Containerfile tools/
-
-# Point gh-safe-repo (or the wrapper) at your local image
-export TRUFFLEHOG_IMAGE=trufflehog:local
-```
-
-When `banned_strings` are configured, the scanner writes a temporary YAML detector config and passes it via `--config`. In container mode, the config file is automatically mounted into the container — no extra setup required.
+A shell wrapper (`tools/trufflehog`) and a `Containerfile` for building a pinned local image are provided in [`tools/`](tools/README.md) for users who want container-based truffleHog available system-wide, or who need an air-gapped image.
 
 ### Interactive review
 

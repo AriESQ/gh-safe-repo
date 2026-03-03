@@ -669,15 +669,14 @@ uv sync                          # creates .venv, installs pytest
 # Run tests
 uv run pytest tests/ -v
 
-# Run a specific test file
-uv run pytest tests/test_plugins.py -v
-
 # Run the tool directly (without installing)
 ./gh-safe-repo my-project --dry-run
 
 # Install globally (picks up the current source)
 uv tool install .
 ```
+
+See [`tests/README.md`](tests/README.md) for test file descriptions, mocking conventions, and how to add new tests.
 
 ### Project structure
 

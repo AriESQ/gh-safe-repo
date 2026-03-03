@@ -287,7 +287,7 @@ def main():
         prog="gh-safe-repo",
         description="Create GitHub repositories with safe defaults applied.",
     )
-    parser.add_argument("repo", nargs="?", help="Name of the repository to create or audit")
+    parser.add_argument("repo", nargs="?", help="Repository name only (e.g. my-repo, not owner/my-repo). Owner is derived from your authenticated GitHub account.")
     parser.add_argument(
         "--from",
         dest="from_repo",

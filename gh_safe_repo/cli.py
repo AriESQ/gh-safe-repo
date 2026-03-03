@@ -612,8 +612,11 @@ def main():
     )
 
     # Run each plugin's plan()
+    # When code is pushed immediately (--local / --from), the remote must start
+    # empty; suppress GitHub's auto-initialised commit so our push doesn't conflict.
+    repo_auto_init = None if (not local_path and not args.from_repo) else False
     plugins = [
-        RepositoryPlugin(client, owner, repo_name, config),
+        RepositoryPlugin(client, owner, repo_name, config, auto_init=repo_auto_init),
         ActionsPlugin(client, owner, repo_name, config),
         BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),

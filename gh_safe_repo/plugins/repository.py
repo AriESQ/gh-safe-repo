@@ -41,6 +41,10 @@ def _parse_bool(value):
 
 
 class RepositoryPlugin(BasePlugin):
+    def __init__(self, client, owner, repo, config, auto_init: bool = None):
+        super().__init__(client, owner, repo, config)
+        self._auto_init_override = auto_init
+
     def fetch_current_state(self) -> dict:
         data = self.client.get_repo_data(self.owner, self.repo)
         return {
@@ -115,6 +119,8 @@ class RepositoryPlugin(BasePlugin):
             for key in CREATE_FIELDS:
                 if key in settings:
                     create_body[key] = _parse_bool(settings[key])
+            if self._auto_init_override is not None:
+                create_body["auto_init"] = self._auto_init_override
 
             try:
                 response = self.client.call_json("POST", "/user/repos", create_body)

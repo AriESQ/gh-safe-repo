@@ -713,7 +713,7 @@ There are **no runtime dependencies**. Everything uses the Python standard libra
 
 ## Prior Art
 
-These projects were studied during design and influenced the architecture of `gh-safe-repo`. They are distinct tools with different scope and user models — see [CLAUDE.md](CLAUDE.md#why-not-use-or-extend-an-existing-tool) for why none of them could serve this use case directly.
+These projects were studied during design and influenced the architecture of `gh-safe-repo`. They are distinct tools with different scope and user models — see [docs/LEARNINGS.md](docs/LEARNINGS.md) for detailed technical notes on how patterns were adapted.
 
 - **[github/safe-settings](https://github.com/github/safe-settings)** — Org-level GitHub App (Node.js/Probot) that enforces repository settings from a central config. Source of the plugin architecture pattern (one class per setting category, fetch → diff → apply) and the `mergeDeep` comparison approach.
 

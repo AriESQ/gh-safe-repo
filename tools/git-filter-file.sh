@@ -79,26 +79,14 @@ if [[ -z "$TARGET" ]]; then
     usage 1
 fi
 
-# ── Git repo check ────────────────────────────────────────────────────────────
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-    err "Not inside a git repository."
-    exit 1
-}
-
-# ── Worktree guard ────────────────────────────────────────────────────────────
-# filter-branch rewrites the shared object store — running inside a worktree
-# would rewrite the main repo's history from an unexpected working directory.
-if [[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]]; then
-    err "Running inside a git worktree is not supported."
-    echo "Switch to the main working tree and run this script from there."
-    exit 1
-fi
-
 # ── Resolve file path ─────────────────────────────────────────────────────────
+# Resolve the target file from cwd first, then derive the repo from the file's
+# location. This ensures the script operates on the correct repository even when
+# invoked from a different directory.
 if [[ "$TARGET" = /* ]]; then
     ABS_PATH="$TARGET"
 else
-    ABS_PATH="$REPO_ROOT/$TARGET"
+    ABS_PATH="$PWD/$TARGET"
 fi
 
 # Resolve symlinks / .. / ./
@@ -109,6 +97,22 @@ ABS_PATH="$(realpath "$ABS_PATH" 2>/dev/null)" || {
 
 if [[ ! -f "$ABS_PATH" ]]; then
     err "File does not exist: $ABS_PATH"
+    exit 1
+fi
+
+# ── Git repo check ────────────────────────────────────────────────────────────
+# Derive repo root from the file's location, not from cwd.
+REPO_ROOT="$(git -C "$(dirname "$ABS_PATH")" rev-parse --show-toplevel 2>/dev/null)" || {
+    err "File is not inside a git repository: $TARGET"
+    exit 1
+}
+
+# ── Worktree guard ────────────────────────────────────────────────────────────
+# filter-branch rewrites the shared object store — running inside a worktree
+# would rewrite the main repo's history from an unexpected working directory.
+if [[ "$(git -C "$REPO_ROOT" rev-parse --git-dir)" != "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)" ]]; then
+    err "Running inside a git worktree is not supported."
+    echo "Switch to the main working tree and run this script from there."
     exit 1
 fi
 
@@ -146,11 +150,31 @@ fi
 # ── Collect remote info ───────────────────────────────────────────────────────
 REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 
-# Unpushed commits (suppress if no upstream is configured)
+# ── Require branch is up to date with remote ────────────────────────────────
+# After filter-branch rewrites history, local and remote will diverge. If the
+# branch was already behind or diverged before the rewrite, the resulting state
+# is very hard to reason about. Fetch first, then check.
+if [[ -n "$REMOTES" ]]; then
+    git -C "$REPO_ROOT" fetch --quiet 2>/dev/null || true
+
+    BEHIND="$(git -C "$REPO_ROOT" rev-list 'HEAD..@{u}' --count 2>/dev/null || echo 0)"
+    AHEAD="$(git -C "$REPO_ROOT" rev-list '@{u}..HEAD' --count 2>/dev/null || echo 0)"
+
+    if [[ "$BEHIND" -gt 0 && "$AHEAD" -gt 0 ]]; then
+        err "Local branch has diverged from remote ($AHEAD ahead, $BEHIND behind)."
+        echo "Resolve with 'git pull --rebase' or 'git merge' before rewriting history."
+        exit 1
+    elif [[ "$BEHIND" -gt 0 ]]; then
+        err "Local branch is $BEHIND commit(s) behind remote."
+        echo "Run 'git pull' to incorporate remote changes before rewriting history."
+        exit 1
+    fi
+fi
+
+# Unpushed commits (uses the already-fetched state)
 UNPUSHED=0
-UNPUSHED_OUTPUT="$(git -C "$REPO_ROOT" log '@{u}..' --oneline 2>/dev/null || true)"
-if [[ -n "$UNPUSHED_OUTPUT" ]]; then
-    UNPUSHED="$(echo "$UNPUSHED_OUTPUT" | wc -l | tr -d ' ')"
+if [[ -n "$REMOTES" ]]; then
+    UNPUSHED="$AHEAD"
 fi
 
 # ── Summary banner ────────────────────────────────────────────────────────────

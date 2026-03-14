@@ -88,7 +88,11 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Feature | Behaviour |
 |---|---|
 | Dependabot alerts | Enabled (public repos / paid plans) |
+| Dependabot security updates | Enabled (auto-opens PRs for vulnerable deps) |
 | Secret scanning | Automatic on public repos; enabled on private paid plans |
+| Push protection | Enabled (blocks commits containing supported secrets) |
+| Private vulnerability reporting | Enabled (lets security researchers report privately) |
+| Dependency graph | Automatic on public repos; no REST API for private (UI only) |
 
 ---
 
@@ -565,6 +569,20 @@ allow_deletions = false
 # Enable Dependabot vulnerability alerts
 enable_dependabot_alerts = true
 
+# Auto-open PRs to fix vulnerable dependencies
+enable_dependabot_security_updates = true
+
+# Let security researchers report vulnerabilities privately
+enable_private_vulnerability_reporting = true
+
+# Block commits that contain supported secrets
+enable_secret_scanning_push_protection = true
+
+# Note: The following features have no REST API and must be configured via UI or dependabot.yml:
+#   - Grouped security updates: use dependabot.yml groups with applies-to: security-updates
+#   - Automatic dependency submission: enable via repository settings UI
+#   - Dependency graph: automatic for public repos; enable via UI for private repos
+
 
 [pre_flight_scan]
 scan_for_secrets = true
@@ -609,7 +627,11 @@ Some features are only available depending on repo visibility and your GitHub pl
 |---|:---:|:---:|:---:|
 | Branch protection / Rulesets | Yes | No | Yes |
 | Dependabot alerts | Yes | No | Yes |
+| Dependabot security updates | Yes | No | Yes |
 | Secret scanning | Auto | No | Yes |
+| Push protection | Yes | No | Yes |
+| Private vulnerability reporting | Yes | Yes | Yes |
+| Dependency graph | Auto | No | Yes |
 
 `gh-safe-repo` detects your plan level and repo visibility at runtime. Unavailable features appear as `SKIP` in the plan output with a clear reason — the tool never fails silently.
 
@@ -629,7 +651,7 @@ gh-safe-repo my-project
       │   ├─ RepositoryPlugin  → repo creation + basic settings
       │   ├─ ActionsPlugin     → workflow permissions
       │   ├─ BranchProtectionPlugin → classic or Rulesets API
-      │   └─ SecurityPlugin    → Dependabot + secret scanning
+      │   └─ SecurityPlugin    → Dependabot, secret scanning, push protection, private vuln reporting
       │
       ├─ Print plan table
       │
@@ -640,6 +662,9 @@ gh-safe-repo my-project
           ├─ PUT  /repos/{owner}/{repo}/branches/main/protection
           │   or POST /repos/{owner}/{repo}/rulesets (if use_rulesets = true)
           ├─ PUT  /repos/{owner}/{repo}/vulnerability-alerts
+          ├─ PUT  /repos/{owner}/{repo}/automated-security-fixes
+          ├─ PUT  /repos/{owner}/{repo}/private-vulnerability-reporting
+          ├─ PATCH /repos/{owner}/{repo}  (security_and_analysis: push protection)
           ├─ git clone --mirror + git push --mirror (if --from)
           └─ git clone <local> + git push --all --tags (if --local, git repo)
               or git init + add -A + commit + push (if --local, plain dir)

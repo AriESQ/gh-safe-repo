@@ -146,6 +146,22 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`bp_plugin.apply()` must run after `push_local()` / `copy_repo()`, not before.** Classic branch protection requires the branch to exist. For `--local` and `--from`, `auto_init=False` means the repo is empty at creation time. Moved `bp_plugin.apply()` to the end of the apply sequence in `cli.py`.
 
+## Security Plugin Expansion
+
+**Toggle endpoint status checks must use `200 <= status < 300`, not `status == 204`.** `GET /repos/{owner}/{repo}/vulnerability-alerts` returns 204 when enabled, but `GET /repos/{owner}/{repo}/private-vulnerability-reporting` returns 200. Meanwhile, `gh api` sometimes infers status 200 from exit code 0 when stderr has no explicit `HTTP` line. The original `status == 204` check was silently wrong for some endpoints. Fixed by checking the 2xx range.
+
+**Private vulnerability reporting uses a dedicated `PUT` endpoint, not `security_and_analysis`.** Despite appearing in the GitHub UI alongside `security_and_analysis` settings, the REST API spec has `PUT /repos/{owner}/{repo}/private-vulnerability-reporting` as a standalone toggle (204 on success). It is *not* a field in the `PATCH /repos` `security_and_analysis` body.
+
+**Push protection is the only new setting that goes into `security_and_analysis`.** `secret_scanning_push_protection` is a valid field in the `PATCH /repos` `security_and_analysis` body. It is batched with `secret_scanning` in a single PATCH call in `apply()`.
+
+**Dependabot security updates use `PUT /repos/{owner}/{repo}/automated-security-fixes`.** Same pattern as `vulnerability-alerts` — PUT to enable, DELETE to disable, GET to check status. Returns 200 (not 204) when checking status.
+
+**Grouped security updates has no REST API.** The GitHub API spec (`api.github.com.json`) has no per-repo endpoint for this setting. It exists only as a field in org-level code-security configurations (`/orgs/{org}/code-security/configurations`) and in the UI. For per-repo control, use `dependabot.yml` groups with `applies-to: security-updates`.
+
+**Automatic dependency submission and dependency graph have no writable per-repo REST API.** Both exist as fields in org-level code-security configurations but not as per-repo endpoints. `dependency_graph_autosubmit_action` appeared to succeed when sent via `PATCH /repos security_and_analysis` but was silently ignored — the setting did not change. Dependency graph is auto-enabled for public repos.
+
+**The `api.github.com.json` spec file is the authoritative source for endpoint validation.** Browser UI traces show the correct setting names but may use internal endpoints (`/_api/` or CSRF-protected forms) that differ from the public REST API. Always verify against the spec before implementing.
+
 ## `--from` Description and Topics Copy
 
 **`description` goes into `PATCH_FIELDS`; topics needs a separate `PUT /topics`.** Topics is a different API surface and must be dispatched separately after the PATCH call.

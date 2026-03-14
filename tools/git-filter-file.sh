@@ -154,6 +154,7 @@ REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 # After filter-branch rewrites history, local and remote will diverge. If the
 # branch was already behind or diverged before the rewrite, the resulting state
 # is very hard to reason about. Fetch first, then check.
+UNPUSHED=0
 if [[ -n "$REMOTES" ]]; then
     git -C "$REPO_ROOT" fetch --quiet 2>/dev/null || true
 
@@ -169,11 +170,6 @@ if [[ -n "$REMOTES" ]]; then
         echo "Run 'git pull' to incorporate remote changes before rewriting history."
         exit 1
     fi
-fi
-
-# Unpushed commits (uses the already-fetched state)
-UNPUSHED=0
-if [[ -n "$REMOTES" ]]; then
     UNPUSHED="$AHEAD"
 fi
 

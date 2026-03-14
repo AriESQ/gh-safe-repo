@@ -439,8 +439,12 @@ class TestSecurityPlugin:
         client = make_mock_client()
         plugin = SecurityPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
-        assert len(plan.changes) == 2
         assert all(c.type == ChangeType.SKIP for c in plan.changes)
+        # Should have skips for all security features
+        skip_keys = {c.key for c in plan.changes}
+        assert "dependabot_alerts" in skip_keys
+        assert "secret_scanning" in skip_keys
+        assert "dependabot_security_updates" in skip_keys
 
     def test_apply_private_repo_does_nothing(self):
         client = make_mock_client()
@@ -470,6 +474,28 @@ class TestSecurityPlugin:
         assert ss is not None
         assert "automatic" in ss.reason.lower()
 
+    def test_plan_public_repo_dependency_graph_is_skip(self):
+        # Dependency graph is automatic for public repos
+        client = make_mock_client()
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        dg = next((c for c in skips if c.key == "enable_dependency_graph"), None)
+        assert dg is not None
+        assert "automatic" in dg.reason.lower()
+
+    def test_plan_private_paid_repo_dependency_graph_is_skip_no_api(self):
+        # Dependency graph has no writable REST API for private repos
+        client = make_mock_client()
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        plan = plugin.plan()
+        skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        dg = next((c for c in skips if c.key == "enable_dependency_graph"), None)
+        assert dg is not None
+        assert "no rest api" in dg.reason.lower()
+
     def test_apply_public_repo_enables_dependabot(self):
         client = make_mock_client()
         client.call_json.return_value = {}
@@ -477,9 +503,9 @@ class TestSecurityPlugin:
         plan = plugin.plan()
         plugin.apply(plan)
         assert client.call_json.called
-        call = client.call_json.call_args
-        assert call.args[0] == "PUT"
-        assert "vulnerability-alerts" in call.args[1]
+        put_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PUT"]
+        vuln_calls = [c for c in put_calls if "vulnerability-alerts" in c.args[1]]
+        assert len(vuln_calls) == 1
 
     def test_plan_public_repo_no_dependabot_when_disabled(self):
         client = make_mock_client()
@@ -488,6 +514,66 @@ class TestSecurityPlugin:
         plan = plugin.plan()
         adds = [c for c in plan.changes if c.type == ChangeType.ADD]
         assert not any(c.key == "dependabot_alerts" for c in adds)
+
+    # --- New security features: public repo ---
+
+    def test_plan_public_repo_has_security_updates_add(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        dep_sec = next((c for c in adds if c.key == "dependabot_security_updates"), None)
+        assert dep_sec is not None
+        assert dep_sec.new is True
+
+    def test_plan_public_repo_has_private_vuln_reporting_add(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        pvr = next((c for c in adds if c.key == "private_vulnerability_reporting"), None)
+        assert pvr is not None
+        assert pvr.new is True
+
+    def test_plan_public_repo_has_push_protection_add(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        pp = next((c for c in adds if c.key == "enable_secret_scanning_push_protection"), None)
+        assert pp is not None
+        assert pp.new is True
+
+    def test_apply_public_repo_enables_all_features(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+
+        put_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PUT"]
+        patch_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PATCH"]
+
+        # PUT calls: vulnerability-alerts, automated-security-fixes, private-vulnerability-reporting
+        vuln = [c for c in put_calls if "vulnerability-alerts" in c.args[1]]
+        auto_fix = [c for c in put_calls if "automated-security-fixes" in c.args[1]]
+        pvr = [c for c in put_calls if "private-vulnerability-reporting" in c.args[1]]
+        assert len(vuln) == 1
+        assert len(auto_fix) == 1
+        assert len(pvr) == 1
+
+        # PATCH call: batched security_and_analysis (push protection only)
+        assert len(patch_calls) == 1
+        sa_body = patch_calls[0].args[2]["security_and_analysis"]
+        assert "secret_scanning_push_protection" in sa_body
+
+    def test_plan_public_repo_no_security_updates_when_disabled(self):
+        client = make_mock_client()
+        config = make_config({("security", "enable_dependabot_security_updates"): "false"})
+        plugin = SecurityPlugin(client, "alice", "my-repo", config, is_public=True)
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        assert not any(c.key == "dependabot_security_updates" for c in adds)
 
     # --- Private paid plan repo ---
 
@@ -513,7 +599,22 @@ class TestSecurityPlugin:
         assert ss is not None
         assert ss.new is True
 
-    def test_apply_private_paid_repo_enables_secret_scanning(self):
+    def test_plan_private_paid_repo_has_all_new_features(self):
+        client = make_mock_client()
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        add_keys = {c.key for c in adds}
+        assert "dependabot_security_updates" in add_keys
+        assert "private_vulnerability_reporting" in add_keys
+        assert "enable_secret_scanning_push_protection" in add_keys
+        # dependency_graph should be SKIP (no REST API)
+        skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        assert any(c.key == "enable_dependency_graph" for c in skips)
+
+    def test_apply_private_paid_repo_batches_security_analysis(self):
         client = make_mock_client()
         client.call_json.return_value = {}
         plugin = SecurityPlugin(
@@ -521,13 +622,20 @@ class TestSecurityPlugin:
         )
         plan = plugin.plan()
         plugin.apply(plan)
-        # Find the PATCH call for secret scanning
+        # PATCH call: secret_scanning + push_protection batched
         patch_calls = [
             c for c in client.call_json.call_args_list if c.args[0] == "PATCH"
         ]
         assert len(patch_calls) == 1
-        body = patch_calls[0].args[2]
-        assert body == {"security_and_analysis": {"secret_scanning": {"status": "enabled"}}}
+        sa_body = patch_calls[0].args[2]["security_and_analysis"]
+        assert sa_body["secret_scanning"] == {"status": "enabled"}
+        assert sa_body["secret_scanning_push_protection"] == {"status": "enabled"}
+
+        # PUT calls: dependabot alerts, security updates, private vuln reporting
+        put_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PUT"]
+        assert any("vulnerability-alerts" in c.args[1] for c in put_calls)
+        assert any("automated-security-fixes" in c.args[1] for c in put_calls)
+        assert any("private-vulnerability-reporting" in c.args[1] for c in put_calls)
 
 
 # ── Audit mode: fetch_current_state() and plan(current_state=...) ─────────────
@@ -789,20 +897,42 @@ class TestBranchProtectionPluginAudit:
 
 
 class TestSecurityPluginAudit:
+    def _full_current_state(self, **overrides):
+        """Build a current_state dict with all keys defaulting to True."""
+        state = {
+            "dependabot_alerts": True,
+            "secret_scanning": True,
+            "dependabot_security_updates": True,
+            "private_vulnerability_reporting": True,
+            "enable_dependency_graph": True,
+            "enable_secret_scanning_push_protection": True,
+        }
+        state.update(overrides)
+        return state
+
     def test_fetch_current_state_dependabot_enabled(self):
         client = make_mock_client()
-        # 204 = Dependabot enabled; public repo so secret scanning always true
-        client.call_api.return_value = (204, "")
+        # call_api: vulnerability-alerts (204), automated-security-fixes (200),
+        # private-vulnerability-reporting (204)
+        client.call_api.side_effect = [(204, ""), (200, ""), (204, "")]
+        client.get_repo_data.return_value = {
+            "security_and_analysis": {
+                "secret_scanning_push_protection": {"status": "enabled"},
+            }
+        }
         plugin = SecurityPlugin(
             client, "alice", "my-repo", make_config(), is_public=True
         )
         state = plugin.fetch_current_state()
         assert state["dependabot_alerts"] is True
         assert state["secret_scanning"] is True
+        assert state["dependabot_security_updates"] is True
+        assert state["private_vulnerability_reporting"] is True
 
     def test_fetch_current_state_dependabot_disabled(self):
         client = make_mock_client()
-        client.call_api.return_value = (404, "")
+        client.call_api.side_effect = [(404, ""), (404, ""), (404, "")]
+        client.get_repo_data.return_value = {"security_and_analysis": {}}
         plugin = SecurityPlugin(
             client, "alice", "my-repo", make_config(), is_public=True
         )
@@ -811,9 +941,14 @@ class TestSecurityPluginAudit:
 
     def test_fetch_current_state_private_secret_scanning(self):
         client = make_mock_client()
-        client.call_api.return_value = (204, "")
+        # vulnerability-alerts (204), automated-security-fixes (200),
+        # private-vulnerability-reporting (404)
+        client.call_api.side_effect = [(204, ""), (200, ""), (404, "")]
         client.get_repo_data.return_value = {
-            "security_and_analysis": {"secret_scanning": {"status": "enabled"}}
+            "security_and_analysis": {
+                "secret_scanning": {"status": "enabled"},
+                "secret_scanning_push_protection": {"status": "enabled"},
+            }
         }
         plugin = SecurityPlugin(
             client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
@@ -821,10 +956,12 @@ class TestSecurityPluginAudit:
         state = plugin.fetch_current_state()
         assert state["dependabot_alerts"] is True
         assert state["secret_scanning"] is True
+        assert state["enable_secret_scanning_push_protection"] is True
+        assert state["private_vulnerability_reporting"] is False
 
     def test_plan_audit_emits_skip_when_already_enabled(self):
         client = make_mock_client()
-        current_state = {"dependabot_alerts": True, "secret_scanning": True}
+        current_state = self._full_current_state()
         plugin = SecurityPlugin(
             client, "alice", "my-repo", make_config(), is_public=True
         )
@@ -833,10 +970,11 @@ class TestSecurityPluginAudit:
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
         assert any(c.key == "dependabot_alerts" for c in skips)
         assert any(c.key == "secret_scanning" for c in skips)
+        assert any(c.key == "dependabot_security_updates" for c in skips)
 
     def test_plan_audit_emits_update_when_dependabot_disabled(self):
         client = make_mock_client()
-        current_state = {"dependabot_alerts": False, "secret_scanning": True}
+        current_state = self._full_current_state(dependabot_alerts=False)
         plugin = SecurityPlugin(
             client, "alice", "my-repo", make_config(), is_public=True
         )
@@ -849,7 +987,7 @@ class TestSecurityPluginAudit:
 
     def test_plan_audit_private_paid_secret_scanning_update(self):
         client = make_mock_client()
-        current_state = {"dependabot_alerts": True, "secret_scanning": False}
+        current_state = self._full_current_state(secret_scanning=False)
         plugin = SecurityPlugin(
             client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
         )
@@ -859,3 +997,18 @@ class TestSecurityPluginAudit:
         assert ss is not None
         assert ss.old is False
         assert ss.new is True
+
+    def test_plan_audit_emits_update_for_push_protection(self):
+        client = make_mock_client()
+        current_state = self._full_current_state(
+            enable_secret_scanning_push_protection=False
+        )
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True
+        )
+        plan = plugin.plan(current_state=current_state)
+        updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        pp = next((c for c in updates if c.key == "enable_secret_scanning_push_protection"), None)
+        assert pp is not None
+        assert pp.old is False
+        assert pp.new is True

@@ -74,6 +74,20 @@ allow_deletions = false
 # Enable Dependabot vulnerability alerts (public repos only on free plan)
 enable_dependabot_alerts = true
 
+# Auto-open PRs to fix vulnerable dependencies
+enable_dependabot_security_updates = true
+
+# Let security researchers report vulnerabilities privately
+enable_private_vulnerability_reporting = true
+
+# Block commits that contain supported secrets
+enable_secret_scanning_push_protection = true
+
+# Note: The following features have no REST API and must be configured via UI or dependabot.yml:
+#   - Grouped security updates: use dependabot.yml groups with applies-to: security-updates
+#   - Automatic dependency submission: enable via repository settings UI
+#   - Dependency graph: automatic for public repos; enable via UI for private repos
+
 [pre_flight_scan]
 # Runs automatically when using --from --public, --local, or --audit.
 # Scans the source locally before any code is copied or made public.

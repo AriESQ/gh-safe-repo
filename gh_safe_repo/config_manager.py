@@ -42,6 +42,9 @@ SAFE_DEFAULTS = {
     },
     "security": {
         "enable_dependabot_alerts": "true",
+        "enable_dependabot_security_updates": "true",
+        "enable_private_vulnerability_reporting": "true",
+        "enable_secret_scanning_push_protection": "true",
     },
     "pre_flight_scan": {
         "scan_for_secrets":  "true",

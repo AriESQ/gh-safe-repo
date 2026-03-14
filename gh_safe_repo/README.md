@@ -30,7 +30,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `plugins/repository.py` | Repo creation (`POST /user/repos`) and basic repo settings (`PATCH`) |
 | `plugins/actions.py` | GitHub Actions permissions (allowed actions, workflow perms, SHA pinning) |
 | `plugins/branch_protection.py` | Classic branch protection + Rulesets API |
-| `plugins/security.py` | Dependabot alerts + secret scanning |
+| `plugins/security.py` | Dependabot alerts/security updates, secret scanning/push protection, private vuln reporting |
 | `templates/` | File templates (currently empty) |
 
 ## Plugin architecture

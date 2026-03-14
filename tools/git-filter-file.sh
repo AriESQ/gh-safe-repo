@@ -154,9 +154,12 @@ REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 # After filter-branch rewrites history, local and remote will diverge. If the
 # branch was already behind or diverged before the rewrite, the resulting state
 # is very hard to reason about. Fetch first, then check.
+UNPUSHED=0
 if [[ -n "$REMOTES" ]]; then
     git -C "$REPO_ROOT" fetch --quiet 2>/dev/null || true
 
+    LOCAL_REF="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+    REMOTE_REF="$(git -C "$REPO_ROOT" rev-parse --short '@{u}' 2>/dev/null || echo "unknown")"
     BEHIND="$(git -C "$REPO_ROOT" rev-list 'HEAD..@{u}' --count 2>/dev/null || echo 0)"
     AHEAD="$(git -C "$REPO_ROOT" rev-list '@{u}..HEAD' --count 2>/dev/null || echo 0)"
 
@@ -169,11 +172,6 @@ if [[ -n "$REMOTES" ]]; then
         echo "Run 'git pull' to incorporate remote changes before rewriting history."
         exit 1
     fi
-fi
-
-# Unpushed commits (uses the already-fetched state)
-UNPUSHED=0
-if [[ -n "$REMOTES" ]]; then
     UNPUSHED="$AHEAD"
 fi
 
@@ -184,6 +182,16 @@ echo ""
 echo "  File:       $RELATIVE_PATH"
 echo "  Commits:    $HISTORY_COUNT commit(s) contain this file"
 echo "  Operation:  Remove from all history; re-add current content as one commit"
+
+if [[ -n "$REMOTES" && -n "$LOCAL_REF" && -n "$REMOTE_REF" ]]; then
+    if [[ "$UNPUSHED" -eq 0 ]]; then
+        echo -e "  Remote:     ${GREEN}verified in sync${RESET} — local ${LOCAL_REF} & remote ${REMOTE_REF} match"
+    else
+        echo -e "  Remote:     ${YELLOW}local ${LOCAL_REF} is ${UNPUSHED} ahead of remote ${REMOTE_REF}${RESET}"
+    fi
+elif [[ -z "$REMOTES" ]]; then
+    echo -e "  Remote:     ${DIM}none (local-only repo)${RESET}"
+fi
 echo ""
 
 if [[ -n "$REMOTES" ]]; then

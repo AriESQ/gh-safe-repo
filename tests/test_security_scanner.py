@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -71,6 +71,19 @@ def git_add_commit(tmpdir: str, message: str) -> None:
     subprocess.run(["git", "-C", tmpdir, "add", "-A"], check=True, capture_output=True)
     subprocess.run(["git", "-C", tmpdir, "commit", "-m", message],
                    check=True, capture_output=True)
+
+
+def mock_popen(stdout="", returncode=0):
+    """Create a mock Popen context for _try_trufflehog tests.
+
+    Returns (patcher, mock_cls) where mock_cls.call_args gives the
+    command that was passed, matching the old subprocess.run test pattern.
+    """
+    mock_proc = MagicMock()
+    mock_proc.communicate.return_value = (stdout, "")
+    mock_proc.returncode = returncode
+    mock_cls = MagicMock(return_value=mock_proc)
+    return patch("subprocess.Popen", mock_cls)
 
 
 # --- Test classes ---
@@ -364,10 +377,9 @@ class TestTruffleHogIntegration:
             scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
             # Force discovery to report native trufflehog available
             scanner._discovery = {"method": "native", "version": "3.99.0"}
-            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-            with patch("subprocess.run", return_value=completed) as mock_run:
+            with mock_popen() as mock_cls:
                 scanner._try_trufflehog(tmpdir)
-            cmd = mock_run.call_args.args[0]
+            cmd = mock_cls.call_args.args[0]
         assert cmd[1] == "git"
 
     def test_uses_filesystem_subcommand_for_non_git_dir(self):
@@ -375,10 +387,9 @@ class TestTruffleHogIntegration:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
             scanner._discovery = {"method": "native", "version": "3.99.0"}
-            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-            with patch("subprocess.run", return_value=completed) as mock_run:
+            with mock_popen() as mock_cls:
                 scanner._try_trufflehog(tmpdir)
-            cmd = mock_run.call_args.args[0]
+            cmd = mock_cls.call_args.args[0]
         assert cmd[1] == "filesystem"
 
     def test_parses_git_source_metadata(self):
@@ -391,15 +402,29 @@ class TestTruffleHogIntegration:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
             scanner._discovery = {"method": "native", "version": "3.99.0"}
-            completed = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout=git_line + "\n", stderr=""
-            )
-            with patch("subprocess.run", return_value=completed):
+            with mock_popen(stdout=git_line + "\n"):
                 findings = scanner._try_trufflehog(tmpdir)
         assert findings is not None
         assert len(findings) == 1
         assert findings[0].category == FindingCategory.SECRET
         assert findings[0].line_number == 7
+
+    def test_relative_file_path_from_git_mode(self):
+        # trufflehog git mode may emit relative paths (no leading /);
+        # these must be used as-is, not mangled by os.path.relpath().
+        import json as _json
+        git_line = _json.dumps({
+            "SourceMetadata": {"Data": {"Git": {"file": "secrets.txt", "line": 3}}},
+            "DetectorName": "Generic",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+            scanner._discovery = {"method": "native", "version": "3.99.0"}
+            with mock_popen(stdout=git_line + "\n"):
+                findings = scanner._try_trufflehog(tmpdir)
+        assert findings is not None
+        assert len(findings) == 1
+        assert findings[0].file_path == "secrets.txt"
 
     def test_version_fallback_warning_emitted_for_v2(self, capsys):
         # If truffleHog v2 is found, a warning is printed and native returns None.
@@ -495,10 +520,9 @@ class TestTruffleHogIntegration:
                 "runtime": "podman",
                 "runtime_path": "/usr/bin/podman",
             }
-            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-            with patch("subprocess.run", return_value=completed) as mock_run:
+            with mock_popen() as mock_cls:
                 scanner._try_trufflehog(tmpdir)
-            cmd = mock_run.call_args.args[0]
+            cmd = mock_cls.call_args.args[0]
         assert cmd[0] == "/usr/bin/podman"
         assert "run" in cmd
         assert "--volume" in cmd
@@ -817,10 +841,9 @@ class TestExcludePaths:
                 ("pre_flight_scan", "scan_exclude_paths"): r"docs/api\.json",
             })
             scanner._discovery = {"method": "native", "version": "3.99.0"}
-            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-            with patch("subprocess.run", return_value=completed) as mock_run:
+            with mock_popen() as mock_cls:
                 scanner._try_trufflehog(tmpdir)
-            cmd = mock_run.call_args.args[0]
+            cmd = mock_cls.call_args.args[0]
         assert "--exclude-paths" in cmd
         idx = cmd.index("--exclude-paths")
         exclude_file = cmd[idx + 1]
@@ -838,10 +861,9 @@ class TestExcludePaths:
                 "runtime": "podman",
                 "runtime_path": "/usr/bin/podman",
             }
-            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-            with patch("subprocess.run", return_value=completed) as mock_run:
+            with mock_popen() as mock_cls:
                 scanner._try_trufflehog(tmpdir)
-            cmd = mock_run.call_args.args[0]
+            cmd = mock_cls.call_args.args[0]
         assert "--exclude-paths" in cmd
         assert cmd.count("--volume") >= 2  # scan path + exclude file
 

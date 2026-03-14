@@ -94,6 +94,8 @@ class Finding:
     line_number: int    # 0 = file-level (large file, etc.)
     rule: str           # human-readable rule name
     match: str          # "[redacted]" for secrets, literal for emails/todos
+    commit: str = ""    # short commit hash (trufflehog git mode only)
+    timestamp: str = "" # commit timestamp (trufflehog git mode only)
 
 
 # --- Compiled regex patterns ---
@@ -656,7 +658,17 @@ class SecurityScanner:
                     th_args += ["--exclude-paths", exclude_path_file]
                 cmd = [runtime, "run", "--rm"] + volume_args + [image] + th_args
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Stream stderr to the terminal in real-time so the user can
+            # see trufflehog progress (especially useful for slow container
+            # runs).  stdout is still captured for JSON parsing.
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=None, text=True,
+            )
+            stdout, _ = proc.communicate()
+            result = subprocess.CompletedProcess(
+                args=cmd, returncode=proc.returncode,
+                stdout=stdout, stderr="",
+            )
 
         except FileNotFoundError:
             if self.debug:
@@ -703,8 +715,14 @@ class SecurityScanner:
                 )
                 if not src:
                     continue
-                file_path = os.path.relpath(src.get("file", ""), root_path)
+                raw_file = src.get("file", "")
+                if os.path.isabs(raw_file):
+                    file_path = os.path.relpath(raw_file, root_path)
+                else:
+                    file_path = raw_file
                 line_number = int(src.get("line", 0))
+                commit = src.get("commit", "")[:8]
+                timestamp = src.get("timestamp", "")
                 detector = data.get("DetectorName", "unknown detector")
                 if detector == "banned-strings":
                     findings.append(Finding(
@@ -714,6 +732,8 @@ class SecurityScanner:
                         line_number=line_number,
                         rule="Banned string found",
                         match="[redacted]",
+                        commit=commit,
+                        timestamp=timestamp,
                     ))
                 else:
                     findings.append(Finding(
@@ -723,6 +743,8 @@ class SecurityScanner:
                         line_number=line_number,
                         rule=f"Secret detected by truffleHog ({detector})",
                         match="[redacted]",
+                        commit=commit,
+                        timestamp=timestamp,
                     ))
             except (KeyError, TypeError, ValueError):
                 continue
@@ -742,6 +764,11 @@ def format_findings(findings: List[Finding]) -> str:
     lines = []
     for f in findings:
         loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
+        if f.commit:
+            loc += f" (commit {f.commit}"
+            if f.timestamp:
+                loc += f", {f.timestamp}"
+            loc += ")"
         lines.append(f"[{f.severity.value}] {f.rule} in {loc}")
         if f.match and f.match != "[redacted]":
             lines.append(f"  {f.match[:80]}")

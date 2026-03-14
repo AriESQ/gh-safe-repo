@@ -84,16 +84,33 @@ See `scrub-ai-context-TESTING.md` for a manual test suite using throwaway repos.
 
 ## git-filter-file.sh
 
-A more general history-scrubbing tool: removes any single tracked file from all
-git history, then re-adds its current content as a fresh commit.
+A general history-scrubbing tool: removes a file from all git history and the
+working tree. With `--keep`, re-adds the current on-disk content as a fresh
+commit instead of deleting it.
 
 ```bash
-# Remove a file from all history (with confirmation prompt)
-git-filter-file.sh secret.txt
+# Remove a file from all history and disk (repo-relative path)
+git-filter-file.sh . secrets/api_key.txt
+
+# Find and remove a file by name (anywhere in history)
+git-filter-file.sh . api_key.txt
+
+# Target a repo from anywhere
+git-filter-file.sh ~/projects/my-app credentials.json
 
 # Preview without making changes
-git-filter-file.sh --dry-run secret.txt
+git-filter-file.sh --dry-run . secret.txt
+
+# Scrub history but keep the current file on disk
+git-filter-file.sh --keep . config.json
 ```
+
+The first positional argument is the repo path (`.` for cwd). The second is the
+file to scrub — if it contains a `/`, it is matched as an exact repo-relative
+path; a bare filename searches all of history (errors on ambiguity).
+
+**Exit codes:** `0` success, `1` runtime failure (file not found, dirty tree),
+`2` usage error (bad arguments, not a git repo).
 
 Use `scrub-ai-context.sh` when you specifically need to scrub AI context files
 (it handles multiple targets and directories in one pass). Use `git-filter-file.sh`

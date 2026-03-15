@@ -811,6 +811,21 @@ rm -rf /tmp/gsr-*
 
 ---
 
+## 14. Tool Scripts (`tools/`)
+
+The shell scripts in `tools/` have their own manual test suites and must be
+tested separately against throwaway repos in `/tmp`. These scripts have **not
+yet been manually tested** after recent rewrites.
+
+| Script | Test doc | Status |
+|---|---|---|
+| `git-filter-file.sh` | `tools/git-filter-file-TESTING.md` | Untested after `--yes` flag addition |
+| `scrub-ai-context.sh` | `tools/scrub-ai-context-TESTING.md` | Untested — rewritten as wrapper around git-filter-file |
+
+Run each test doc's full suite before considering these scripts production-ready.
+
+---
+
 ## Test Matrix Summary
 
 | Test | Create | From | Local | Audit | Scan | JSON | Free plan | Paid plan |

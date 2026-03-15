@@ -512,8 +512,8 @@ allow_squash_merge = true
 allow_merge_commit = false
 allow_rebase_merge = true
 
-# Initialize with a README so the repo is non-empty
-auto_init = true
+# Do not initialize with a README — keeps the remote empty so pushing is seamless
+auto_init = false
 
 
 [actions]

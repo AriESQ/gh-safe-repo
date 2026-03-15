@@ -66,12 +66,14 @@ scrub-ai-context.sh --push
 
 **What it does:**
 
+Thin wrapper around `git-filter-file.sh`. For each target it calls
+`git-filter-file.sh --keep --force --yes . <target>`, handling confirmation
+once upfront.
+
 1. Auto-detects known AI context files with history (if no paths given)
-2. Backs up current file content to `.git/filter-file-backups/`
-3. Runs `git filter-branch` to remove targets from all commits in one pass
-4. Expires the reflog and runs `git gc --prune=now` to purge objects
-5. Re-adds any files that were present at HEAD as a single fresh commit
-6. Optionally force-pushes with `--push`
+2. Confirms once, then calls `git-filter-file.sh` for each target
+3. Each pass: backs up, rewrites history, purges objects, re-adds the file
+4. Optionally force-pushes with `--push`
 
 > **After running without `--push`** you must force-push all branches and tags
 > to every remote, and alert collaborators to re-clone:
@@ -113,7 +115,7 @@ path; a bare filename searches all of history (errors on ambiguity).
 `2` usage error (bad arguments, not a git repo).
 
 Use `scrub-ai-context.sh` when you specifically need to scrub AI context files
-(it handles multiple targets and directories in one pass). Use `git-filter-file.sh`
-for a single arbitrary file.
+(it auto-detects targets and handles `--push`). Use `git-filter-file.sh`
+directly for arbitrary files.
 
 See `git-filter-file-TESTING.md` for a manual test suite.

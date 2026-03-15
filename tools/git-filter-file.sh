@@ -32,7 +32,7 @@ bold() { echo -e "${BOLD}$*${RESET}"; }
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
     cat <<EOF
-Usage: git-filter-file [--dry-run] [--force] [--keep] <repo> <file>
+Usage: git-filter-file [--dry-run] [--force] [--keep] [--yes] <repo> <file>
 
 Scrub <file> from all git history in <repo>. By default the file is also
 removed from the working tree. This is a destructive, irreversible operation
@@ -43,6 +43,7 @@ Options:
   --force     Skip the remote-divergence check (see below)
   --keep      Re-add the file's current on-disk content as a fresh commit
               instead of deleting it (requires the file to exist on disk)
+  --yes       Skip the interactive confirmation prompt
   -h, --help  Show this help
 
 Arguments:
@@ -83,6 +84,7 @@ EOF
 DRY_RUN=false
 FORCE=false
 KEEP=false
+YES=false
 POSITIONALS=()
 
 for arg in "$@"; do
@@ -90,6 +92,7 @@ for arg in "$@"; do
         --dry-run) DRY_RUN=true ;;
         --force)   FORCE=true ;;
         --keep)    KEEP=true ;;
+        --yes)     YES=true ;;
         -h|--help) usage 0 ;;
         -*) err "Unknown option: $arg"; usage 2 ;;
         *)  POSITIONALS+=("$arg") ;;
@@ -307,15 +310,17 @@ if [[ "$DRY_RUN" = true ]]; then
 fi
 
 # ── Final confirmation ────────────────────────────────────────────────────────
-echo -e "${BOLD}${RED}This will permanently rewrite git history.${RESET}"
-if [[ "$KEEP" = true ]]; then
-    echo "A backup of the current file content will be saved to .git/filter-file-backups/ before proceeding."
-fi
-echo ""
-read -r -p "Proceed? [y/N] " CONFIRM
-if [[ "${CONFIRM,,}" != "y" && "${CONFIRM,,}" != "yes" ]]; then
-    echo "Aborted."
-    exit 0
+if [[ "$YES" = false ]]; then
+    echo -e "${BOLD}${RED}This will permanently rewrite git history.${RESET}"
+    if [[ "$KEEP" = true ]]; then
+        echo "A backup of the current file content will be saved to .git/filter-file-backups/ before proceeding."
+    fi
+    echo ""
+    read -r -p "Proceed? [y/N] " CONFIRM
+    if [[ "${CONFIRM,,}" != "y" && "${CONFIRM,,}" != "yes" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
 fi
 
 # ── Backup ────────────────────────────────────────────────────────────────────

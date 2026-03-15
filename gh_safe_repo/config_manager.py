@@ -20,7 +20,7 @@ SAFE_DEFAULTS = {
         "allow_squash_merge": "true",
         "allow_merge_commit": "false",
         "allow_rebase_merge": "true",
-        "auto_init": "true",
+        "auto_init": "false",
     },
     "actions": {
         "enabled": "true",

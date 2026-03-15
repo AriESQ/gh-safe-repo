@@ -291,6 +291,19 @@ def main():
     parser = argparse.ArgumentParser(
         prog="gh-safe-repo",
         description="Create GitHub repositories with safe defaults applied.",
+        epilog="""\
+examples:
+  gh-safe-repo my-project                        Create a private repo on GitHub
+  gh-safe-repo my-project --public               Create a public repo on GitHub
+  gh-safe-repo my-project --local ./src           Push local code to a new private GitHub repo
+  gh-safe-repo my-project --local ./src --public  Push local code to a new public GitHub repo
+  gh-safe-repo my-project --from old-repo --public
+                                                  Mirror a private GitHub repo to a new public one
+  gh-safe-repo my-project --audit                 Audit and fix settings on an existing GitHub repo
+  gh-safe-repo my-project --dry-run               Preview what would be configured (no API calls)
+  gh-safe-repo --scan ./src                       Scan a local directory for secrets
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("repo", nargs="?", help="Repository name only (e.g. my-repo, not owner/my-repo). Owner is derived from your authenticated GitHub account.")
     parser.add_argument(

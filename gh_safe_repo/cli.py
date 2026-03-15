@@ -125,7 +125,12 @@ def format_plan_json(plan):
 
 def print_success(owner, repo):
     url = f"https://github.com/{owner}/{repo}"
-    inner = f"  Repository created successfully!  \n  {url}  "
+    remote_cmd = f"git remote add origin {url}.git"
+    inner = (
+        f"  Repository created successfully!  \n"
+        f"  {url}  \n"
+        f"  {remote_cmd}  "
+    )
     width = max(len(line) for line in inner.splitlines()) + 2
     top    = "╭─ Done " + "─" * (width - 7) + "╮"
     bottom = "╰" + "─" * (width + 1) + "╯"

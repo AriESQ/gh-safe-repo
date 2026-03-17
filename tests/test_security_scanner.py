@@ -868,21 +868,32 @@ class TestExcludePaths:
         assert cmd.count("--volume") >= 2  # scan path + exclude file
 
 
-class TestEmailIgnoreDomains:
-    def test_ignored_domain_suppressed(self):
+class TestExcludeEmails:
+    def test_domain_exclusion_suppressed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
             write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
-    def test_non_ignored_domain_still_reported(self):
+    def test_exact_address_exclusion(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+                ("pre_flight_scan", "exclude_emails"): "action@github.com",
+            })
+            write_file(tmpdir, "readme.md", "action@github.com\nother@github.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert len(emails) == 1
+        assert emails[0].match == "other@github.com"
+
+    def test_non_excluded_domain_still_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
             write_file(tmpdir, "readme.md", "Contact: alice@real-corp.com\n")
             findings = scanner.scan(tmpdir)
@@ -890,37 +901,173 @@ class TestEmailIgnoreDomains:
         assert len(emails) == 1
         assert emails[0].match == "alice@real-corp.com"
 
-    def test_multiple_ignored_domains(self):
+    def test_mixed_domain_and_address_exclusion(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com, domain.tld",
+                ("pre_flight_scan", "exclude_emails"): "action@github.com, @example.com, @domain.tld",
             })
             write_file(tmpdir, "readme.md",
-                       "alice@example.com\nuser@domain.tld\nbob@real.io\n")
+                       "action@github.com\nalice@example.com\nuser@domain.tld\nbob@real.io\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) == 1
         assert emails[0].match == "bob@real.io"
 
-    def test_domain_match_is_case_insensitive(self):
+    def test_case_insensitive(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "Example.COM",
+                ("pre_flight_scan", "exclude_emails"): "@Example.COM, Action@GitHub.com",
             })
-            write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
+            write_file(tmpdir, "readme.md", "alice@example.com\naction@github.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
-    def test_domain_ignore_does_not_suppress_other_categories(self):
+    def test_exclusion_does_not_suppress_other_categories(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
             write_file(tmpdir, "creds.txt", "key = AKIAIOSFODNN7EXAMPLE\n")
             findings = scanner.scan(tmpdir)
         secrets = [f for f in findings if f.category == FindingCategory.SECRET]
         assert len(secrets) >= 1
+
+
+class TestEmailHistoryScanning:
+    """Tests for _check_email_history() using real git repos."""
+
+    def test_email_in_history_produces_finding(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "Contact: dev@corp.com\n")
+            git_add_commit(tmpdir, "add readme")
+            scanner = make_scanner()
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert len(history) >= 1
+        assert history[0].match == "dev@corp.com"
+        assert history[0].commit  # non-empty short hash
+        assert history[0].timestamp  # non-empty ISO timestamp
+
+    def test_deleted_email_still_found_in_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "secret.txt", "leak@corp.com\n")
+            git_add_commit(tmpdir, "add secret")
+            write_file(tmpdir, "secret.txt", "cleaned\n")
+            git_add_commit(tmpdir, "clean up")
+            scanner = make_scanner()
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert any(f.match == "leak@corp.com" for f in history)
+
+    def test_exclude_emails_domain_applies_to_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "user@example.com\n")
+            git_add_commit(tmpdir, "add readme")
+            scanner = make_scanner({
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
+            })
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert history == []
+
+    def test_exclude_emails_exact_applies_to_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "action@github.com\nreal@github.com\n")
+            git_add_commit(tmpdir, "add readme")
+            scanner = make_scanner({
+                ("pre_flight_scan", "exclude_emails"): "action@github.com",
+            })
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        emails = [f.match for f in history]
+        assert "action@github.com" not in emails
+        assert "real@github.com" in emails
+
+    def test_scan_exclude_paths_applies_to_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "vendor/lib.txt", "dev@corp.com\n")
+            git_add_commit(tmpdir, "add vendor")
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_exclude_paths"): "vendor/",
+            })
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert history == []
+
+    def test_deduplication_same_email_same_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            git_add_commit(tmpdir, "commit 1")
+            write_file(tmpdir, "readme.md", "updated dev@corp.com\n")
+            git_add_commit(tmpdir, "commit 2")
+            scanner = make_scanner()
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        matches = [f for f in history if f.match == "dev@corp.com" and f.file_path == "readme.md"]
+        assert len(matches) == 1
+
+    def test_same_email_different_files_separate_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "a.txt", "dev@corp.com\n")
+            write_file(tmpdir, "b.txt", "dev@corp.com\n")
+            git_add_commit(tmpdir, "add both")
+            scanner = make_scanner()
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings
+                   if f.rule == "Email address in git history" and f.match == "dev@corp.com"]
+        files = {f.file_path for f in history}
+        assert "a.txt" in files
+        assert "b.txt" in files
+
+    def test_non_git_repo_no_history_findings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            scanner = make_scanner()
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert history == []
+
+    def test_scan_for_emails_false_skips_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            git_add_commit(tmpdir, "add")
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_for_emails"): "false",
+            })
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert history == []
+
+    def test_scan_email_history_false_skips_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            git_add_commit(tmpdir, "add")
+            scanner = make_scanner({
+                ("pre_flight_scan", "scan_email_history"): "false",
+            })
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert history == []
+
+    def test_finding_has_warning_severity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            git_add_commit(tmpdir, "add")
+            scanner = make_scanner()
+            findings = scanner.scan(tmpdir)
+        history = [f for f in findings if f.rule == "Email address in git history"]
+        assert all(f.severity == Severity.WARNING for f in history)
 
 
 class TestFormatFindings:

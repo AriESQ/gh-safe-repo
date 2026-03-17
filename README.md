@@ -66,7 +66,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 
 | Setting | GitHub default | Safe default |
 |---|---|---|
-| Allowed actions | All | **Selected** (GitHub + verified creators) |
+| Allowed actions | All | **Selected** (GitHub-owned + verified creators; customisable) |
 | Default workflow permissions | Read/write | **Read-only** |
 | Actions can approve PRs | Yes | **No** |
 | Require SHA pinning | No | **Yes** (workflows must pin actions to a commit SHA, not a mutable tag) |
@@ -521,9 +521,13 @@ auto_init = false
 
 
 [actions]
-# Restrict action sources: all | local_only | selected
-# "selected" = GitHub-authored + verified marketplace creators
+# Which actions are allowed to run: all | local_only | selected
 allowed_actions = selected
+
+# When allowed_actions = selected, control which external actions are permitted:
+github_owned_allowed = true       # actions maintained by GitHub (e.g. actions/checkout)
+verified_allowed = true           # actions from Marketplace verified creators
+# patterns_allowed = myorg/*      # comma-separated allowlist (wildcards OK)
 
 # Principle of least privilege: read-only by default
 # Options: read | write
@@ -657,7 +661,7 @@ gh-safe-repo my-project
       │
       ├─ Build plan (each plugin compares desired vs. current state)
       │   ├─ RepositoryPlugin  → repo creation + basic settings
-      │   ├─ ActionsPlugin     → workflow permissions
+      │   ├─ ActionsPlugin     → allowed actions, workflow permissions, SHA pinning
       │   ├─ BranchProtectionPlugin → classic or Rulesets API
       │   └─ SecurityPlugin    → Dependabot, secret scanning, push protection, private vuln reporting
       │

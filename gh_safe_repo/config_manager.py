@@ -25,6 +25,9 @@ SAFE_DEFAULTS = {
     "actions": {
         "enabled": "true",
         "allowed_actions": "selected",
+        "github_owned_allowed": "true",
+        "verified_allowed": "true",
+        "patterns_allowed": "",
         "sha_pinning_required": "true",
         "default_workflow_permissions": "read",
         "can_approve_pull_request_reviews": "false",

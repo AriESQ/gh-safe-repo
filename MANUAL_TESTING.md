@@ -73,6 +73,8 @@ Plan for gsr-test-private-01:
   REPO              has_projects                     UPDATE   true      false
   REPO              delete_branch_on_merge           UPDATE   false     true
   REPO              allow_merge_commit               UPDATE   true      false
+  ACTIONS           allowed_actions                  UPDATE   all       selected
+  ACTIONS           verified_allowed                 UPDATE   false     true
   ACTIONS           sha_pinning_required             UPDATE   false     true
   ACTIONS           default_workflow_permissions     UPDATE   write     read
   ACTIONS           can_approve_pull_request_reviews UPDATE   true      false
@@ -85,7 +87,7 @@ Plan for gsr-test-private-01:
 > **Note on BRANCH_PROTECTION:** On a free plan, private repos show SKIP for branch protection. On a paid plan, ADD rows appear.
 
 ```
-Apply 5 changes? [y/N]:
+Apply 7 changes? [y/N]:
 ```
 
 Type `y`.
@@ -103,7 +105,7 @@ Type `y`.
 - Go to `https://github.com/YOUR_USERNAME/gsr-test-private-01`
 - Settings → General: confirm Wiki disabled, Projects disabled, Squash merge ON, Merge commits OFF
 - Settings → Branches (paid plan): confirm branch protection rule exists on `main`
-- Settings → Actions → General: confirm "Read repository contents and packages" selected, and "Require SHA pinning" is checked
+- Settings → Actions → General: confirm "Allow select actions and reusable workflows" is selected with "Allow actions created by GitHub" and "Allow actions by Marketplace verified creators" checked, "Read repository contents and packages" selected, and "Require SHA pinning" is checked
 
 ### 1.2 Attempt to create the same repo again
 

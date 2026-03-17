@@ -26,9 +26,18 @@ allow_rebase_merge = true
 auto_init = false
 
 [actions]
-# Restrict to actions from GitHub and verified creators
+# Which actions are allowed to run.
 # Options: all, local_only, selected
 allowed_actions = selected
+
+# When allowed_actions = selected, these control which external actions are permitted:
+# Allow actions maintained by GitHub (e.g. actions/checkout)
+github_owned_allowed = true
+# Allow actions from Marketplace verified creators
+verified_allowed = true
+# Comma-separated allowlist of specific actions/workflows (supports wildcards).
+# Example: myorg/*, actions/setup-node@*
+# patterns_allowed =
 
 # Principle of least privilege: read-only by default
 # Options: read, write

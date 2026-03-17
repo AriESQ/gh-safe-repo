@@ -196,7 +196,7 @@ class TestActionsPlugin:
         plan = plugin.plan()
         plugin.apply(plan)
         calls = client.call_json.call_args_list
-        perms_calls = [c for c in calls if "actions/permissions" in c.args[1] and "workflow" not in c.args[1]]
+        perms_calls = [c for c in calls if c.args[1].endswith("actions/permissions")]
         assert len(perms_calls) == 1
         body = perms_calls[0].args[2]
         assert body.get("sha_pinning_required") is True
@@ -218,6 +218,7 @@ class TestActionsPlugin:
     def test_no_apply_when_using_github_defaults(self):
         client = make_mock_client()
         config = make_config({
+            ("actions", "allowed_actions"): "all",
             ("actions", "default_workflow_permissions"): "write",
             ("actions", "can_approve_pull_request_reviews"): "true",
             ("actions", "sha_pinning_required"): "false",
@@ -227,6 +228,73 @@ class TestActionsPlugin:
         plugin.apply(plan)
         # No API calls since desired == GitHub default
         assert not client.call_json.called
+
+    def test_plan_includes_allowed_actions_update(self):
+        client = make_mock_client()
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        aa = next((c for c in updates if c.key == "allowed_actions"), None)
+        assert aa is not None
+        assert aa.old == "all"
+        assert aa.new == "selected"
+
+    def test_plan_selected_includes_sub_settings(self):
+        client = make_mock_client()
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        keys = {c.key for c in updates}
+        assert "github_owned_allowed" not in keys  # default true == desired true
+        assert "verified_allowed" in keys  # default false -> desired true
+
+    def test_plan_no_sub_settings_when_allowed_all(self):
+        """When allowed_actions is 'all', selected-actions sub-settings are not planned."""
+        client = make_mock_client()
+        config = make_config({("actions", "allowed_actions"): "all"})
+        plugin = ActionsPlugin(client, "alice", "my-repo", config)
+        plan = plugin.plan()
+        keys = {c.key for c in plan.changes}
+        assert "github_owned_allowed" not in keys
+        assert "verified_allowed" not in keys
+        assert "patterns_allowed" not in keys
+
+    def test_apply_puts_allowed_actions_to_permissions_endpoint(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        plugin.apply(plan)
+        calls = client.call_json.call_args_list
+        perms_calls = [c for c in calls if c.args[1].endswith("actions/permissions")]
+        assert len(perms_calls) == 1
+        body = perms_calls[0].args[2]
+        assert body.get("allowed_actions") == "selected"
+
+    def test_apply_puts_selected_actions_to_selected_endpoint(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        plugin.apply(plan)
+        calls = client.call_json.call_args_list
+        selected_calls = [c for c in calls if c.args[1].endswith("selected-actions")]
+        assert len(selected_calls) == 1
+        body = selected_calls[0].args[2]
+        assert body.get("verified_allowed") is True
+
+    def test_apply_patterns_allowed(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        config = make_config({("actions", "patterns_allowed"): "myorg/*, actions/setup-node@*"})
+        plugin = ActionsPlugin(client, "alice", "my-repo", config)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        calls = client.call_json.call_args_list
+        selected_calls = [c for c in calls if c.args[1].endswith("selected-actions")]
+        assert len(selected_calls) == 1
+        body = selected_calls[0].args[2]
+        assert body.get("patterns_allowed") == ["actions/setup-node@*", "myorg/*"]
 
 
 class TestBranchProtectionPlugin:
@@ -754,20 +822,40 @@ class TestActionsPluginAudit:
     def test_fetch_current_state_calls_get_json(self):
         client = make_mock_client()
         client.get_json.side_effect = [
-            {"sha_pinning_required": True},  # /actions/permissions
+            {"sha_pinning_required": True, "allowed_actions": "all"},  # /actions/permissions
             {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},  # /workflow
         ]
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         state = plugin.fetch_current_state()
         assert client.get_json.call_count == 2
         assert state["sha_pinning_required"] is True
+        assert state["allowed_actions"] == "all"
         assert state["default_workflow_permissions"] == "read"
         assert state["can_approve_pull_request_reviews"] is False
+
+    def test_fetch_current_state_selected_fetches_sub_settings(self):
+        client = make_mock_client()
+        client.get_json.side_effect = [
+            {"sha_pinning_required": True, "allowed_actions": "selected"},
+            {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},
+            {"github_owned_allowed": True, "verified_allowed": True, "patterns_allowed": ["myorg/*"]},
+        ]
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        state = plugin.fetch_current_state()
+        assert client.get_json.call_count == 3
+        assert state["allowed_actions"] == "selected"
+        assert state["github_owned_allowed"] is True
+        assert state["verified_allowed"] is True
+        assert state["patterns_allowed"] == ["myorg/*"]
 
     def test_plan_audit_emits_skip_when_already_desired(self):
         client = make_mock_client()
         # current already matches safe defaults
         current_state = {
+            "allowed_actions": "selected",
+            "github_owned_allowed": True,
+            "verified_allowed": True,
+            "patterns_allowed": [],
             "sha_pinning_required": True,
             "default_workflow_permissions": "read",
             "can_approve_pull_request_reviews": False,
@@ -775,14 +863,19 @@ class TestActionsPluginAudit:
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        assert any(c.key == "allowed_actions" for c in skips)
         assert any(c.key == "sha_pinning_required" for c in skips)
         assert any(c.key == "default_workflow_permissions" for c in skips)
         assert any(c.key == "can_approve_pull_request_reviews" for c in skips)
+        assert any(c.key == "github_owned_allowed" for c in skips)
+        assert any(c.key == "verified_allowed" for c in skips)
+        assert any(c.key == "patterns_allowed" for c in skips)
 
     def test_plan_audit_emits_update_when_differs(self):
         client = make_mock_client()
         # current is GitHub defaults, desired is our safe defaults
         current_state = {
+            "allowed_actions": "all",
             "sha_pinning_required": False,
             "default_workflow_permissions": "write",
             "can_approve_pull_request_reviews": True,
@@ -790,6 +883,10 @@ class TestActionsPluginAudit:
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        aa = next((c for c in updates if c.key == "allowed_actions"), None)
+        assert aa is not None
+        assert aa.old == "all"
+        assert aa.new == "selected"
         sha = next((c for c in updates if c.key == "sha_pinning_required"), None)
         assert sha is not None
         assert sha.old is False

@@ -94,6 +94,9 @@ enable_secret_scanning_push_protection = true
 scan_for_secrets = true
 scan_for_emails = true
 scan_for_todos = true
+
+# Scan git history for email addresses (requires scan_for_emails = true)
+# scan_email_history = true
 max_file_size_mb = 100
 
 # Scanner selection: auto | native | docker | off

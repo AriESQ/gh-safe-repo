@@ -192,6 +192,7 @@ class SecurityScanner:
         entries = [e.strip().lower() for e in re.split(r"[\n,]", raw_exclude_emails) if e.strip()]
         self._exclude_emails_domains: Set[str] = {e.lstrip("@") for e in entries if e.startswith("@")}
         self._exclude_emails_addresses: Set[str] = {e for e in entries if not e.startswith("@")}
+        self._scan_email_history = config.getbool("pre_flight_scan", "scan_email_history", fallback=True)
         # Populated during scan(); readable by callers afterward to show coverage warnings
         self.skipped_committed_dirs: List[str] = []
 
@@ -371,6 +372,7 @@ class SecurityScanner:
         self.skipped_committed_dirs = sorted(skipped)
 
         findings.extend(self._check_ai_context_history(root_path, is_git_repo=is_git_repo))
+        findings.extend(self._check_email_history(root_path, is_git_repo=is_git_repo))
 
         return findings
 
@@ -574,6 +576,88 @@ class SecurityScanner:
                     match=_ai_context_history_hint(display_path),
                 ))
         return findings
+
+    def _check_email_history(self, root_path: str, is_git_repo: bool = False) -> List[Finding]:
+        """Check git history for email addresses using git log -G.
+
+        Deduplicates by (email_lowercase, file_path), keeping the earliest commit.
+        Gated on scan_for_emails and scan_email_history config bools.
+        """
+        if not self._scan_emails or not self._scan_email_history:
+            return []
+        if not is_git_repo:
+            return []
+
+        try:
+            result = subprocess.run(
+                ["git", "-C", root_path, "log", "--all",
+                 "-G", EMAIL_PATTERN.pattern,
+                 "--format=%H%x00%h%x00%aI",
+                 "-p", "--diff-filter=ACMR"],
+                capture_output=True, text=True, timeout=60,
+            )
+        except FileNotFoundError:
+            if self.debug:
+                print("[debug] git not found; skipping email history check",
+                      file=sys.stderr)
+            return []
+        except subprocess.TimeoutExpired:
+            if self.debug:
+                print("[debug] git log timed out; skipping email history check",
+                      file=sys.stderr)
+            return []
+
+        if result.returncode != 0:
+            if self.debug:
+                print(f"[debug] git log exited {result.returncode}; skipping email history check",
+                      file=sys.stderr)
+            return []
+
+        # Parse output: format lines give commit info, diff lines give file+email
+        current_hash = ""
+        current_short = ""
+        current_ts = ""
+        current_file = ""
+        # (email_lower, file_path) → Finding — keep last seen (= earliest commit in reverse-chron)
+        seen: dict = {}
+
+        for line in result.stdout.splitlines():
+            # Format line: full_hash\x00short_hash\x00timestamp
+            if "\x00" in line:
+                parts = line.split("\x00", 2)
+                if len(parts) == 3:
+                    current_hash, current_short, current_ts = parts
+                continue
+
+            # diff --git a/path b/path
+            if line.startswith("diff --git "):
+                m = re.match(r"diff --git a/(.*) b/(.*)", line)
+                if m:
+                    current_file = m.group(2)
+                continue
+
+            # Added lines (not the +++ header)
+            if line.startswith("+") and not line.startswith("+++"):
+                for m in EMAIL_PATTERN.finditer(line):
+                    email = m.group(0)
+                    if self._is_email_excluded(email):
+                        continue
+                    if self._is_excluded(current_file):
+                        continue
+                    key = (email.lower(), current_file)
+                    # Overwrite: git log is reverse-chron, so last write = earliest commit
+                    seen[key] = Finding(
+                        severity=Severity.WARNING,
+                        category=FindingCategory.EMAIL,
+                        file_path=current_file,
+                        line_number=0,
+                        rule="Email address in git history",
+                        match=email,
+                        commit=current_short,
+                        timestamp=current_ts,
+                    )
+
+        return list(seen.values())
 
     def _build_trufflehog_config(self, strings: List[str]) -> str:
         """Write a temporary truffleHog YAML config with a custom banned-strings detector.

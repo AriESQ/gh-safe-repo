@@ -868,21 +868,32 @@ class TestExcludePaths:
         assert cmd.count("--volume") >= 2  # scan path + exclude file
 
 
-class TestEmailIgnoreDomains:
-    def test_ignored_domain_suppressed(self):
+class TestExcludeEmails:
+    def test_domain_exclusion_suppressed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
             write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
-    def test_non_ignored_domain_still_reported(self):
+    def test_exact_address_exclusion(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+                ("pre_flight_scan", "exclude_emails"): "action@github.com",
+            })
+            write_file(tmpdir, "readme.md", "action@github.com\nother@github.com\n")
+            findings = scanner.scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert len(emails) == 1
+        assert emails[0].match == "other@github.com"
+
+    def test_non_excluded_domain_still_reported(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
             write_file(tmpdir, "readme.md", "Contact: alice@real-corp.com\n")
             findings = scanner.scan(tmpdir)
@@ -890,32 +901,32 @@ class TestEmailIgnoreDomains:
         assert len(emails) == 1
         assert emails[0].match == "alice@real-corp.com"
 
-    def test_multiple_ignored_domains(self):
+    def test_mixed_domain_and_address_exclusion(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com, domain.tld",
+                ("pre_flight_scan", "exclude_emails"): "action@github.com, @example.com, @domain.tld",
             })
             write_file(tmpdir, "readme.md",
-                       "alice@example.com\nuser@domain.tld\nbob@real.io\n")
+                       "action@github.com\nalice@example.com\nuser@domain.tld\nbob@real.io\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) == 1
         assert emails[0].match == "bob@real.io"
 
-    def test_domain_match_is_case_insensitive(self):
+    def test_case_insensitive(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "Example.COM",
+                ("pre_flight_scan", "exclude_emails"): "@Example.COM, Action@GitHub.com",
             })
-            write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
+            write_file(tmpdir, "readme.md", "alice@example.com\naction@github.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
 
-    def test_domain_ignore_does_not_suppress_other_categories(self):
+    def test_exclusion_does_not_suppress_other_categories(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner({
-                ("pre_flight_scan", "email_ignore_domains"): "example.com",
+                ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
             write_file(tmpdir, "creds.txt", "key = AKIAIOSFODNN7EXAMPLE\n")
             findings = scanner.scan(tmpdir)

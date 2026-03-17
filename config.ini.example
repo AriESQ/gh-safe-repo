@@ -109,6 +109,11 @@ max_file_size_mb = 100
 #     password
 #     credential
 
+# Suppress email findings for specific addresses or entire domains.
+# Entries starting with @ match all emails at that domain; otherwise exact address match.
+# Case-insensitive, comma/newline separated.
+# exclude_emails = action@github.com, noreply@github.com, @example.com
+
 # Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
 # Their git history may contain more sensitive content than the current version.
 # warn_ai_context_files = true

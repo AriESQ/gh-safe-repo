@@ -187,15 +187,23 @@ class SecurityScanner:
         _exclude_strings = [s.strip() for s in re.split(r"[\n,]", raw_exclude) if s.strip()]
         self._exclude_path_patterns = [re.compile(p) for p in _exclude_strings]
         self._exclude_path_strings = _exclude_strings   # raw strings for truffleHog temp file
-        # email_ignore_domains: exact domain names to suppress from email findings
-        raw_domains = config.get("pre_flight_scan", "email_ignore_domains", fallback="")
-        self._email_ignore_domains: Set[str] = {
-            d.strip().lower() for d in re.split(r"[\n,]", raw_domains) if d.strip()
-        }
+        # exclude_emails: unified exclusion — "@domain" for domain, else exact address
+        raw_exclude_emails = config.get("pre_flight_scan", "exclude_emails", fallback="")
+        entries = [e.strip().lower() for e in re.split(r"[\n,]", raw_exclude_emails) if e.strip()]
+        self._exclude_emails_domains: Set[str] = {e.lstrip("@") for e in entries if e.startswith("@")}
+        self._exclude_emails_addresses: Set[str] = {e for e in entries if not e.startswith("@")}
         # Populated during scan(); readable by callers afterward to show coverage warnings
         self.skipped_committed_dirs: List[str] = []
 
     # --- Helpers ---
+
+    def _is_email_excluded(self, email: str) -> bool:
+        """Return True if email matches any exclude_emails entry."""
+        email_lower = email.lower()
+        if email_lower in self._exclude_emails_addresses:
+            return True
+        domain = email_lower.split("@", 1)[1] if "@" in email_lower else ""
+        return domain in self._exclude_emails_domains
 
     def _is_excluded(self, rel_path: str) -> bool:
         """Return True if rel_path matches any scan_exclude_paths pattern."""
@@ -490,17 +498,15 @@ class SecurityScanner:
 
                     if self._scan_emails:
                         m = EMAIL_PATTERN.search(line)
-                        if m:
-                            domain = m.group(0).split("@", 1)[1].lower()
-                            if domain not in self._email_ignore_domains:
-                                findings.append(Finding(
-                                    severity=Severity.WARNING,
-                                    category=FindingCategory.EMAIL,
-                                    file_path=rel_path,
-                                    line_number=line_number,
-                                    rule="Email address",
-                                    match=m.group(0),
-                                ))
+                        if m and not self._is_email_excluded(m.group(0)):
+                            findings.append(Finding(
+                                severity=Severity.WARNING,
+                                category=FindingCategory.EMAIL,
+                                file_path=rel_path,
+                                line_number=line_number,
+                                rule="Email address",
+                                match=m.group(0),
+                            ))
 
                     if self._scan_todos:
                         if TODO_PATTERN.search(line):

@@ -179,6 +179,11 @@ def _print_findings(findings, config):
         loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
         print(f"  {_c(_YELLOW, '[WARNING]')} {f.rule}")
         print(_c(_DIM, f"             in {loc}"))
+        if f.commit:
+            detail = f"             commit {f.commit}"
+            if f.timestamp:
+                detail += f"  {f.timestamp}"
+            print(_c(_DIM, detail))
         if f.match and f.match != "[redacted]":
             print(_c(_DIM, f"             {f.match[:80]}"))
     for f in infos:

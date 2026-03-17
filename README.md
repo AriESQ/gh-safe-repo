@@ -359,7 +359,7 @@ The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb
 | Hardcoded secrets | Critical | AWS keys (`AKIA…`), GitHub tokens (`ghp_…`, `github_pat_…`), private keys, database URLs |
 | Banned strings | Critical | Any literal strings you configure (usernames, internal hostnames, codenames) |
 | AI context files | Critical | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.cursor/` — may contain internal dev notes; git history may be more sensitive than the current version |
-| Email addresses | Warning | Any `user@domain.tld` pattern |
+| Email addresses | Warning | Any `user@domain.tld` pattern in working tree and git history |
 | Large files | Warning | Files over the configured size threshold (default: 100 MB) |
 | TODO/FIXME comments | Info | `# TODO`, `# FIXME`, `# HACK`, `# XXX` |
 
@@ -430,12 +430,12 @@ scan_exclude_paths = docs/api\.github\.com\.json
     tests/fixtures/
 ```
 
-**`email_ignore_domains`** — suppress email findings for known-safe domains. Values are newline/comma-separated domain names (case-insensitive, exact match). Only email findings are affected; all other checks still run on those files.
+**`exclude_emails`** — suppress email findings for specific addresses or entire domains. Values are newline/comma-separated, case-insensitive. Entries starting with `@` match all emails at that domain; otherwise the entry must match the full address exactly. Applies to both working-tree and git history findings.
 
 ```ini
 [pre_flight_scan]
-# Suppress placeholder addresses used in docs and tests
-email_ignore_domains = example.com, domain.tld
+# Suppress bot addresses and placeholder domains
+exclude_emails = action@github.com, noreply@github.com, @example.com
 ```
 
 ### Scanner configuration
@@ -446,6 +446,9 @@ scan_for_secrets = true
 scan_for_emails = true
 scan_for_todos = true
 max_file_size_mb = 100
+
+# Scan git history for email addresses (requires scan_for_emails = true)
+# scan_email_history = true
 
 # Scanner selection: auto | native | docker | off
 #   auto   — try native truffleHog, fall back to container (podman/docker), then regex (default)
@@ -469,8 +472,9 @@ max_file_size_mb = 100
 # scan_exclude_paths = docs/api\.github\.com\.json
 #     tests/fixtures/
 
-# Suppress email findings for these domains (case-insensitive exact match).
-# email_ignore_domains = example.com, domain.tld
+# Suppress email findings for specific addresses or entire domains (case-insensitive).
+# Entries starting with @ match all emails at that domain; otherwise exact address match.
+# exclude_emails = action@github.com, noreply@github.com, @example.com
 ```
 
 When banned strings or AI context files are found the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.
@@ -592,6 +596,9 @@ scan_for_todos = true
 # Flag files larger than this threshold
 max_file_size_mb = 100
 
+# Scan git history for email addresses (requires scan_for_emails = true)
+# scan_email_history = true
+
 # Scanner selection: auto | native | docker | off
 # auto   = try native truffleHog, fall back to container (podman/docker), then regex
 # native = native PATH only
@@ -613,8 +620,9 @@ max_file_size_mb = 100
 # scan_exclude_paths = docs/api\.github\.com\.json
 #     tests/fixtures/
 
-# Suppress email findings for these domains (case-insensitive exact match).
-# email_ignore_domains = example.com, domain.tld
+# Suppress email findings for specific addresses or entire domains (case-insensitive).
+# Entries starting with @ match all emails at that domain; otherwise exact address match.
+# exclude_emails = action@github.com, noreply@github.com, @example.com
 ```
 
 ---

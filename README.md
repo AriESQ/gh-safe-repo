@@ -70,6 +70,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Default workflow permissions | Read/write | **Read-only** |
 | Actions can approve PRs | Yes | **No** |
 | Require SHA pinning | No | **Yes** (workflows must pin actions to a commit SHA, not a mutable tag) |
+| Fork PR approval policy | First-time contributors new to GitHub | **All external contributors** (require approval before running workflows on fork PRs) |
 
 ### Branch protection (public repos, or any repo on a paid plan)
 

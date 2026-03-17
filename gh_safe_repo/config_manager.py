@@ -31,6 +31,7 @@ SAFE_DEFAULTS = {
         "sha_pinning_required": "true",
         "default_workflow_permissions": "read",
         "can_approve_pull_request_reviews": "false",
+        "fork_pr_approval_policy": "all_external_contributors",
     },
     "branch_protection": {
         "protected_branch": "master, main",

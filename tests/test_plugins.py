@@ -215,6 +215,28 @@ class TestActionsPlugin:
         assert body.get("default_workflow_permissions") == "read"
         assert body.get("can_approve_pull_request_reviews") is False
 
+    def test_plan_includes_fork_pr_approval_update(self):
+        client = make_mock_client()
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        fp = next((c for c in updates if c.key == "fork_pr_approval_policy"), None)
+        assert fp is not None
+        assert fp.old == "first_time_contributors_new_to_github"
+        assert fp.new == "all_external_contributors"
+
+    def test_apply_puts_fork_pr_approval_policy(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        plugin.apply(plan)
+        calls = client.call_json.call_args_list
+        fork_calls = [c for c in calls if c.args[1].endswith("fork-pr-contributor-approval")]
+        assert len(fork_calls) == 1
+        body = fork_calls[0].args[2]
+        assert body == {"approval_policy": "all_external_contributors"}
+
     def test_no_apply_when_using_github_defaults(self):
         client = make_mock_client()
         config = make_config({
@@ -222,6 +244,7 @@ class TestActionsPlugin:
             ("actions", "default_workflow_permissions"): "write",
             ("actions", "can_approve_pull_request_reviews"): "true",
             ("actions", "sha_pinning_required"): "false",
+            ("actions", "fork_pr_approval_policy"): "first_time_contributors_new_to_github",
         })
         plugin = ActionsPlugin(client, "alice", "my-repo", config)
         plan = plugin.plan()
@@ -824,14 +847,16 @@ class TestActionsPluginAudit:
         client.get_json.side_effect = [
             {"sha_pinning_required": True, "allowed_actions": "all"},  # /actions/permissions
             {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},  # /workflow
+            {"approval_policy": "all_external_contributors"},  # /fork-pr-contributor-approval
         ]
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         state = plugin.fetch_current_state()
-        assert client.get_json.call_count == 2
+        assert client.get_json.call_count == 3
         assert state["sha_pinning_required"] is True
         assert state["allowed_actions"] == "all"
         assert state["default_workflow_permissions"] == "read"
         assert state["can_approve_pull_request_reviews"] is False
+        assert state["fork_pr_approval_policy"] == "all_external_contributors"
 
     def test_fetch_current_state_selected_fetches_sub_settings(self):
         client = make_mock_client()
@@ -839,14 +864,16 @@ class TestActionsPluginAudit:
             {"sha_pinning_required": True, "allowed_actions": "selected"},
             {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},
             {"github_owned_allowed": True, "verified_allowed": True, "patterns_allowed": ["myorg/*"]},
+            {"approval_policy": "first_time_contributors"},
         ]
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         state = plugin.fetch_current_state()
-        assert client.get_json.call_count == 3
+        assert client.get_json.call_count == 4
         assert state["allowed_actions"] == "selected"
         assert state["github_owned_allowed"] is True
         assert state["verified_allowed"] is True
         assert state["patterns_allowed"] == ["myorg/*"]
+        assert state["fork_pr_approval_policy"] == "first_time_contributors"
 
     def test_plan_audit_emits_skip_when_already_desired(self):
         client = make_mock_client()
@@ -859,6 +886,7 @@ class TestActionsPluginAudit:
             "sha_pinning_required": True,
             "default_workflow_permissions": "read",
             "can_approve_pull_request_reviews": False,
+            "fork_pr_approval_policy": "all_external_contributors",
         }
         plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
@@ -870,6 +898,7 @@ class TestActionsPluginAudit:
         assert any(c.key == "github_owned_allowed" for c in skips)
         assert any(c.key == "verified_allowed" for c in skips)
         assert any(c.key == "patterns_allowed" for c in skips)
+        assert any(c.key == "fork_pr_approval_policy" for c in skips)
 
     def test_plan_audit_emits_update_when_differs(self):
         client = make_mock_client()

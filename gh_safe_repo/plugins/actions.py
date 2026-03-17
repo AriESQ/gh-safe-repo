@@ -1,10 +1,11 @@
 """
 Actions plugin: GitHub Actions permissions and workflow permissions.
 
-Three API calls:
+Four API calls:
   PUT actions/permissions           — enabled, allowed_actions, sha_pinning_required
   PUT actions/permissions/selected-actions — github_owned_allowed, verified_allowed, patterns_allowed
   PUT actions/permissions/workflow   — default_workflow_permissions, can_approve_pull_request_reviews
+  PUT actions/permissions/fork-pr-contributor-approval — approval_policy
 """
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
@@ -21,9 +22,16 @@ GITHUB_DEFAULTS = {
     "github_owned_allowed": True,
     "verified_allowed": False,
     "patterns_allowed": "",
+    # fork PR contributor approval
+    "fork_pr_approval_policy": "first_time_contributors_new_to_github",
 }
 
 VALID_ALLOWED_ACTIONS = {"all", "local_only", "selected"}
+VALID_FORK_PR_POLICIES = {
+    "first_time_contributors_new_to_github",
+    "first_time_contributors",
+    "all_external_contributors",
+}
 
 
 def _parse_bool(value):
@@ -72,6 +80,16 @@ class ActionsPlugin(BasePlugin):
             state["patterns_allowed"] = _parse_patterns(
                 selected.get("patterns_allowed", [])
             )
+
+        # Fetch fork PR contributor approval policy
+        fork_path = self.client.repo_path(
+            self.owner, self.repo, "actions/permissions/fork-pr-contributor-approval"
+        )
+        fork_data = self.client.get_json(fork_path)
+        state["fork_pr_approval_policy"] = fork_data.get(
+            "approval_policy",
+            GITHUB_DEFAULTS["fork_pr_approval_policy"],
+        )
 
         return state
 
@@ -211,6 +229,36 @@ class ActionsPlugin(BasePlugin):
                 )
             )
 
+        # --- fork_pr_approval_policy ---
+        desired_fork_policy = settings.get(
+            "fork_pr_approval_policy",
+            GITHUB_DEFAULTS["fork_pr_approval_policy"],
+        )
+        current_fork_policy = baseline.get(
+            "fork_pr_approval_policy",
+            GITHUB_DEFAULTS["fork_pr_approval_policy"],
+        )
+
+        if desired_fork_policy != current_fork_policy:
+            plan.add(
+                Change(
+                    type=ChangeType.UPDATE,
+                    category=ChangeCategory.ACTIONS,
+                    key="fork_pr_approval_policy",
+                    old=current_fork_policy,
+                    new=desired_fork_policy,
+                )
+            )
+        elif is_audit:
+            plan.add(
+                Change(
+                    type=ChangeType.SKIP,
+                    category=ChangeCategory.ACTIONS,
+                    key="fork_pr_approval_policy",
+                    reason="Already at desired value",
+                )
+            )
+
         return plan
 
     def _plan_selected_actions(self, plan, settings, baseline, is_audit):
@@ -315,6 +363,7 @@ class ActionsPlugin(BasePlugin):
         perms_body = {}
         workflow_body = {}
         selected_body = {}
+        fork_policy = None
         for change in plan.actionable_changes:
             if change.category != ChangeCategory.ACTIONS:
                 continue
@@ -332,6 +381,8 @@ class ActionsPlugin(BasePlugin):
                 selected_body["verified_allowed"] = change.new
             elif change.key == "patterns_allowed":
                 selected_body["patterns_allowed"] = change.new
+            elif change.key == "fork_pr_approval_policy":
+                fork_policy = change.new
 
         if perms_body:
             # enabled is required in the body for this endpoint
@@ -350,3 +401,9 @@ class ActionsPlugin(BasePlugin):
                 self.owner, self.repo, "actions/permissions/workflow"
             )
             self.client.call_json("PUT", path, workflow_body)
+
+        if fork_policy is not None:
+            path = self.client.repo_path(
+                self.owner, self.repo, "actions/permissions/fork-pr-contributor-approval"
+            )
+            self.client.call_json("PUT", path, {"approval_policy": fork_policy})

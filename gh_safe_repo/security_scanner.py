@@ -636,9 +636,11 @@ class SecurityScanner:
                     current_file = m.group(2)
                 continue
 
-            # Added lines (not the +++ header)
+            # Added lines (not the +++ header) — strip leading '+' so it
+            # doesn't get captured by EMAIL_PATTERN's [._%+\-] class.
             if line.startswith("+") and not line.startswith("+++"):
-                for m in EMAIL_PATTERN.finditer(line):
+                content = line[1:]
+                for m in EMAIL_PATTERN.finditer(content):
                     email = m.group(0)
                     if self._is_email_excluded(email):
                         continue

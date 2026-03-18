@@ -45,7 +45,7 @@ SAFE_DEFAULTS = {
         "use_rulesets": "false",
     },
     "tag_protection": {
-        "protected_tags": "v*",
+        "protected_tags": "*",
         "prevent_tag_deletion": "true",
         "prevent_tag_update": "true",
     },

@@ -88,7 +88,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 
 | Rule | Value |
 |---|---|
-| Protected tag patterns | `v*` (configurable) |
+| Protected tag patterns | `*` (all tags; configurable) |
 | Prevent tag deletion | Yes |
 | Prevent tag update (rewriting) | Yes |
 | Admin bypass | Yes (consistent with branch protection) |
@@ -588,7 +588,7 @@ allow_deletions = false
 [tag_protection]
 # Immutable tags via Rulesets API (same plan restrictions as branch protection).
 # Glob pattern(s) for tags to protect — comma-separated.
-protected_tags = v*
+protected_tags = *
 
 # Prevent deletion of matching tags (git tag -d / git push --delete)
 prevent_tag_deletion = true

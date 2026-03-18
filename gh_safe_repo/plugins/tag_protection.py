@@ -85,7 +85,7 @@ class TagProtectionPlugin(BasePlugin):
         baseline = current_state if is_audit else GITHUB_DEFAULTS
 
         if not is_audit:
-            patterns = self.config.get("tag_protection", "protected_tags", fallback="v*")
+            patterns = self.config.get("tag_protection", "protected_tags", fallback="*")
             plan.add(Change(
                 type=ChangeType.ADD,
                 category=ChangeCategory.TAG_PROTECTION,
@@ -135,7 +135,7 @@ class TagProtectionPlugin(BasePlugin):
         if desired["prevent_tag_update"]:
             rules.append({"type": "update"})
 
-        patterns = self.config.get("tag_protection", "protected_tags", fallback="v*")
+        patterns = self.config.get("tag_protection", "protected_tags", fallback="*")
         tag_patterns = [p.strip() for p in patterns.split(",") if p.strip()]
 
         # Allow repo admins to bypass (consistent with branch protection default)

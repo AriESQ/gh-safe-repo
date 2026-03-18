@@ -110,7 +110,9 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`sha_pinning_required` is not plan-gated or visibility-gated.** The API spec confirms `githubCloudOnly: false` with no free/paid distinction.
 
-**`fetch_current_state()` now makes two GET calls.** Audit mode reads `sha_pinning_required` from `GET /actions/permissions` and the workflow fields from `GET /actions/permissions/workflow`.
+**`fetch_current_state()` makes two or three GET calls.** Audit mode reads `allowed_actions` and `sha_pinning_required` from `GET /actions/permissions`, the workflow fields from `GET /actions/permissions/workflow`, and — when `allowed_actions` is `"selected"` — the sub-settings (`github_owned_allowed`, `verified_allowed`, `patterns_allowed`) from `GET /actions/permissions/selected-actions`.
+
+**`allowed_actions` and selected-actions sub-settings use the same `/actions/permissions` PUT.** `allowed_actions` is sent alongside `sha_pinning_required` and `enabled: true` to `PUT /actions/permissions`. The sub-settings (`github_owned_allowed`, `verified_allowed`, `patterns_allowed`) go to a separate `PUT /actions/permissions/selected-actions` endpoint. The `selected-actions` endpoint only works when `allowed_actions` is already `"selected"` — apply order matters (permissions first, then selected-actions).
 
 ## truffleHog UX Improvements
 

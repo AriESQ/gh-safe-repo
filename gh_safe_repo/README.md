@@ -31,6 +31,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `plugins/actions.py` | GitHub Actions permissions (allowed actions, workflow perms, SHA pinning) |
 | `plugins/branch_protection.py` | Classic branch protection + Rulesets API |
 | `plugins/security.py` | Dependabot alerts/security updates, secret scanning/push protection, private vuln reporting |
+| `plugins/tag_protection.py` | Immutable tags via Rulesets API (prevent deletion/rewriting of release tags) |
 | `templates/` | File templates (currently empty) |
 
 ## Plugin architecture

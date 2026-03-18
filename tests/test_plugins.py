@@ -11,6 +11,7 @@ from gh_safe_repo.plugins.actions import ActionsPlugin
 from gh_safe_repo.plugins.branch_protection import BranchProtectionPlugin
 from gh_safe_repo.plugins.repository import RepositoryPlugin
 from gh_safe_repo.plugins.security import SecurityPlugin
+from gh_safe_repo.plugins.tag_protection import TagProtectionPlugin
 
 
 def make_mock_client():
@@ -1138,3 +1139,187 @@ class TestSecurityPluginAudit:
         assert pp is not None
         assert pp.old is False
         assert pp.new is True
+
+
+# ── TagProtectionPlugin ──────────────────────────────────────────────────────
+
+
+class TestTagProtectionPlugin:
+    def test_plan_private_free_repo_emits_skip(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(),
+            is_public=False, is_paid_plan=False,
+        )
+        plan = plugin.plan()
+        assert all(c.type == ChangeType.SKIP for c in plan.changes)
+        assert any("paid" in (c.reason or "").lower() or "public" in (c.reason or "").lower()
+                    for c in plan.changes)
+
+    def test_plan_public_repo_emits_add_changes(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        assert len(adds) > 0
+        assert any(c.key == "protected_tags" for c in adds)
+        assert any(c.key == "prevent_tag_deletion" for c in adds)
+        assert any(c.key == "prevent_tag_update" for c in adds)
+
+    def test_plan_paid_private_repo_emits_add_changes(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(),
+            is_public=False, is_paid_plan=True,
+        )
+        plan = plugin.plan()
+        adds = [c for c in plan.changes if c.type == ChangeType.ADD]
+        assert len(adds) > 0
+
+    def test_apply_posts_tag_ruleset(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        plan = plugin.plan()
+        plugin.apply(plan)
+        assert client.call_json.called
+        call = client.call_json.call_args
+        assert call.args[0] == "POST"
+        assert call.args[1].endswith("/rulesets")
+        body = call.args[2]
+        assert body["target"] == "tag"
+        assert body["name"] == "gh-safe-repo tag defaults"
+
+    def test_ruleset_body_includes_deletion_and_update_rules(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        desired = plugin._desired()
+        body = plugin._build_tag_ruleset_body(desired)
+        rule_types = [r["type"] for r in body["rules"]]
+        assert "deletion" in rule_types
+        assert "update" in rule_types
+
+    def test_ruleset_body_tag_pattern_from_config(self):
+        client = make_mock_client()
+        config = make_config({("tag_protection", "protected_tags"): "v*, release-*"})
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", config, is_public=True,
+        )
+        desired = plugin._desired()
+        body = plugin._build_tag_ruleset_body(desired)
+        includes = body["conditions"]["ref_name"]["include"]
+        assert "refs/tags/v*" in includes
+        assert "refs/tags/release-*" in includes
+
+    def test_ruleset_body_admin_bypass(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        desired = plugin._desired()
+        body = plugin._build_tag_ruleset_body(desired)
+        assert len(body["bypass_actors"]) == 1
+        assert body["bypass_actors"][0]["actor_id"] == 5
+
+    def test_apply_noop_when_no_actionable_changes(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(),
+            is_public=False, is_paid_plan=False,
+        )
+        plan = plugin.plan()  # All SKIP
+        plugin.apply(plan)
+        assert not client.call_json.called
+
+    def test_config_disable_deletion_protection(self):
+        client = make_mock_client()
+        config = make_config({("tag_protection", "prevent_tag_deletion"): "false"})
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", config, is_public=True,
+        )
+        desired = plugin._desired()
+        body = plugin._build_tag_ruleset_body(desired)
+        rule_types = [r["type"] for r in body["rules"]]
+        assert "deletion" not in rule_types
+        assert "update" in rule_types
+
+    def test_category_is_tag_protection(self):
+        client = make_mock_client()
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        plan = plugin.plan()
+        assert all(c.category == ChangeCategory.TAG_PROTECTION for c in plan.changes)
+
+
+class TestTagProtectionPluginAudit:
+    def test_fetch_current_state_no_rulesets(self):
+        client = make_mock_client()
+        client.call_api.return_value = (200, "[]")
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        state = plugin.fetch_current_state()
+        assert state["prevent_tag_deletion"] is False
+        assert state["prevent_tag_update"] is False
+
+    def test_fetch_current_state_404(self):
+        client = make_mock_client()
+        client.call_api.return_value = (404, "")
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        state = plugin.fetch_current_state()
+        assert state["prevent_tag_deletion"] is False
+
+    def test_fetch_current_state_with_existing_ruleset(self):
+        client = make_mock_client()
+        # First call: list rulesets
+        list_response = json.dumps([
+            {"id": 42, "name": "gh-safe-repo tag defaults", "target": "tag"},
+        ])
+        # Second call: ruleset detail
+        detail_response = json.dumps({
+            "id": 42,
+            "name": "gh-safe-repo tag defaults",
+            "target": "tag",
+            "rules": [{"type": "deletion"}, {"type": "update"}],
+        })
+        client.call_api.side_effect = [
+            (200, list_response),
+            (200, detail_response),
+        ]
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        state = plugin.fetch_current_state()
+        assert state["prevent_tag_deletion"] is True
+        assert state["prevent_tag_update"] is True
+
+    def test_plan_audit_emits_skip_when_already_protected(self):
+        client = make_mock_client()
+        current_state = {"prevent_tag_deletion": True, "prevent_tag_update": True}
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        plan = plugin.plan(current_state=current_state)
+        skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
+        assert len(skips) == 2
+
+    def test_plan_audit_emits_update_when_not_protected(self):
+        client = make_mock_client()
+        current_state = {"prevent_tag_deletion": False, "prevent_tag_update": False}
+        plugin = TagProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+        )
+        plan = plugin.plan(current_state=current_state)
+        updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
+        assert len(updates) == 2
+        assert any(c.key == "prevent_tag_deletion" for c in updates)
+        assert any(c.key == "prevent_tag_update" for c in updates)

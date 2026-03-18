@@ -44,6 +44,11 @@ SAFE_DEFAULTS = {
         "allow_deletions": "false",
         "use_rulesets": "false",
     },
+    "tag_protection": {
+        "protected_tags": "v*",
+        "prevent_tag_deletion": "true",
+        "prevent_tag_update": "true",
+    },
     "security": {
         "enable_dependabot_alerts": "true",
         "enable_dependabot_security_updates": "true",

@@ -83,6 +83,17 @@ allow_deletions = false
 # Use the Rulesets API instead of classic branch protection (same rules, adds bypass actors)
 # use_rulesets = false
 
+[tag_protection]
+# Immutable tags via Rulesets API (same plan restrictions as branch protection).
+# Glob pattern(s) for tags to protect — comma-separated.
+protected_tags = v*
+
+# Prevent deletion of matching tags (git tag -d / git push --delete)
+prevent_tag_deletion = true
+
+# Prevent rewriting matching tags (git tag -f / force-push)
+prevent_tag_update = true
+
 [security]
 # Enable Dependabot vulnerability alerts (public repos only on free plan)
 enable_dependabot_alerts = true

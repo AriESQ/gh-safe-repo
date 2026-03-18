@@ -6,7 +6,7 @@ Create GitHub repositories with safe defaults applied automatically. Replaces th
 gh-safe-repo my-project
 ```
 
-Branch protection, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
+Branch protection, immutable tags, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
 
 ---
 
@@ -83,6 +83,17 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Allow force pushes | No |
 | Allow branch deletion | No |
 | Enforce on admins | No (allows owner tooling to push) |
+
+### Tag protection (public repos, or any repo on a paid plan)
+
+| Rule | Value |
+|---|---|
+| Protected tag patterns | `v*` (configurable) |
+| Prevent tag deletion | Yes |
+| Prevent tag update (rewriting) | Yes |
+| Admin bypass | Yes (consistent with branch protection) |
+
+Tag protection uses the Rulesets API exclusively — there is no "classic" tag protection equivalent. This means it has the same plan-level restrictions as branch protection rulesets.
 
 ### Security
 
@@ -574,6 +585,18 @@ allow_deletions = false
 # use_rulesets = false
 
 
+[tag_protection]
+# Immutable tags via Rulesets API (same plan restrictions as branch protection).
+# Glob pattern(s) for tags to protect — comma-separated.
+protected_tags = v*
+
+# Prevent deletion of matching tags (git tag -d / git push --delete)
+prevent_tag_deletion = true
+
+# Prevent rewriting matching tags (git tag -f / force-push)
+prevent_tag_update = true
+
+
 [security]
 # Enable Dependabot vulnerability alerts
 enable_dependabot_alerts = true
@@ -639,6 +662,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 | Feature | Free + Public | Free + Private | Pro/Team + Private |
 |---|:---:|:---:|:---:|
 | Branch protection / Rulesets | Yes | No | Yes |
+| Tag protection (Rulesets) | Yes | No | Yes |
 | Dependabot alerts | Yes | No | Yes |
 | Dependabot security updates | Yes | No | Yes |
 | Secret scanning | Auto | No | Yes |
@@ -664,7 +688,8 @@ gh-safe-repo my-project
       │   ├─ RepositoryPlugin  → repo creation + basic settings
       │   ├─ ActionsPlugin     → allowed actions, workflow permissions, SHA pinning
       │   ├─ BranchProtectionPlugin → classic or Rulesets API
-      │   └─ SecurityPlugin    → Dependabot, secret scanning, push protection, private vuln reporting
+      │   ├─ SecurityPlugin    → Dependabot, secret scanning, push protection, private vuln reporting
+      │   └─ TagProtectionPlugin → immutable tags via Rulesets API
       │
       ├─ Print plan table
       │
@@ -678,6 +703,7 @@ gh-safe-repo my-project
           ├─ PUT  /repos/{owner}/{repo}/automated-security-fixes
           ├─ PUT  /repos/{owner}/{repo}/private-vulnerability-reporting
           ├─ PATCH /repos/{owner}/{repo}  (security_and_analysis: push protection)
+          ├─ POST /repos/{owner}/{repo}/rulesets  (tag protection ruleset)
           ├─ git clone --mirror + git push --mirror (if --from)
           └─ git clone <local> + git push --all --tags (if --local, git repo)
               or git init + add -A + commit + push (if --local, plain dir)

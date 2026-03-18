@@ -29,6 +29,7 @@ from .plugins.actions import ActionsPlugin
 from .plugins.branch_protection import BranchProtectionPlugin
 from .plugins.repository import RepositoryPlugin
 from .plugins.security import SecurityPlugin
+from .plugins.tag_protection import TagProtectionPlugin
 from .security_scanner import FindingCategory, SecurityScanner, Severity
 
 # ANSI escape codes
@@ -508,6 +509,10 @@ examples:
                 client, owner, repo_name, config,
                 is_public=is_public, is_paid_plan=is_paid_plan,
             ),
+            TagProtectionPlugin(
+                client, owner, repo_name, config,
+                is_public=is_public, is_paid_plan=is_paid_plan,
+            ),
         ]
 
         full_plan = Plan()
@@ -663,6 +668,7 @@ examples:
         ActionsPlugin(client, owner, repo_name, config),
         BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
+        TagProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
     ]
 
     full_plan = Plan()
@@ -734,6 +740,7 @@ examples:
     actions_plugin   = plugins[1]  # ActionsPlugin
     bp_plugin        = plugins[2]  # BranchProtectionPlugin
     security_plugin  = plugins[3]  # SecurityPlugin
+    tag_plugin       = plugins[4]  # TagProtectionPlugin
 
     # Apply repo creation + settings
     try:
@@ -788,5 +795,11 @@ examples:
         bp_plugin.apply(full_plan)
     except APIError as e:
         warn(f"Repository created but branch protection failed: {e}")
+
+    # Apply tag protection (rulesets don't require tags to exist yet)
+    try:
+        tag_plugin.apply(full_plan)
+    except APIError as e:
+        warn(f"Tag protection failed: {e}")
 
     print_success(owner, repo_name)

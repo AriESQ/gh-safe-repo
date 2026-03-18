@@ -20,6 +20,7 @@ class ChangeCategory(Enum):
     ACTIONS = "actions"
     BRANCH_PROTECTION = "branch_protection"
     SECURITY = "security"
+    TAG_PROTECTION = "tag_protection"
     FILE = "file"
     SCAN = "scan"
 

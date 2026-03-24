@@ -20,7 +20,7 @@ Branch protection, immutable tags, Dependabot, restricted Actions permissions, d
 - [CLI Reference](#cli-reference)
 - [Dry Run / Plan Output](#dry-run--plan-output)
 - [Fix Mode (Audit Existing Repos)](#fix-mode-audit-existing-repos)
-- [Public Repos from Private (`--from`)](#public-repos-from-private---from)
+- [Mirroring Repos (`--from`)](#mirroring-repos---from)
 - [Creating a Repo from a Local Directory (`--local`)](#creating-a-repo-from-a-local-directory---local)
 - [Pre-flight Security Scanner](#pre-flight-security-scanner)
   - [Standalone scan](#standalone-scan)
@@ -158,6 +158,9 @@ gh-safe-repo create myuser/my-project --dry-run
 # Create a public repo (branch protection + security scanning applied)
 gh-safe-repo create myuser/my-public-project --public
 
+# Mirror an existing repo into a new private repo (with pre-flight scan)
+gh-safe-repo create myuser/my-project --from myuser/upstream-project
+
 # Mirror a private repo to a new public repo (with pre-flight scan)
 gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --public
 
@@ -199,7 +202,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 |---|---|
 | `--public` | Create as a public repo (default: private) |
 | `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
-| `--from OWNER/REPO` | Mirror code from an existing private repo before making public. Requires `--public`. Mutually exclusive with `--local`. |
+| `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
@@ -309,11 +312,15 @@ Settings that are already correct are silently skipped. Only real changes are sh
 
 ---
 
-## Public Repos from Private (`--from`)
+## Mirroring Repos (`--from`)
 
-Making a private repo public is the riskiest thing you can do on GitHub. The `--from` workflow is designed to make it safe:
+`--from` mirrors an existing repo into a new one with safe defaults. It works for both private and public destinations:
 
 ```bash
+# Mirror into a new private repo (default)
+gh-safe-repo create myuser/my-project --from myuser/upstream-project
+
+# Mirror a private repo to a new public repo (riskiest operation — scanned thoroughly)
 gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --public
 ```
 
@@ -322,14 +329,14 @@ gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --
 1. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
 3. You review findings and confirm (or abort)
-4. A new repo is created as **public**
-5. Branch protection is applied **before any code is pushed**
+4. A new repo is created (private by default, or public with `--public`)
+5. Safe defaults are applied (branch protection, security scanning, etc.)
 6. The full history is mirrored: `git clone --mirror` + `git push --mirror`
 7. Dependabot and secret scanning are configured
 
-Branch protection is applied before the push intentionally. If the scan reveals a problem and you abort, no code is ever copied to GitHub.
+If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
-> **Note:** `--from` requires `--public` and uses `owner/repo` format. Mirroring to a private repo with no branch protection is not supported.
+> **Note:** `--from` uses `owner/repo` format for both the source and destination.
 
 ---
 
@@ -354,7 +361,7 @@ gh-safe-repo create myuser/my-project --local ~/projects/myapp --public
    - If `PATH` is an empty directory: nothing is pushed (silently skipped)
 6. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
-Unlike `--from`, `--local` works for both private and public repos. It is mutually exclusive with `--from`.
+Both `--local` and `--from` work for private and public repos. They are mutually exclusive.
 
 When `PATH` is a git repo, the local default branch (via `git symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
 
@@ -364,7 +371,7 @@ When `PATH` is a git repo, the local default branch (via `git symbolic-ref HEAD`
 
 ## Pre-flight Security Scanner
 
-The scanner runs locally and never sends code to GitHub. Use it standalone before any push, or it runs automatically as part of the `--from --public` workflow.
+The scanner runs locally and never sends code to GitHub. Use it standalone before any push, or it runs automatically as part of the `--from` and `--local` workflows.
 
 ### Standalone scan
 

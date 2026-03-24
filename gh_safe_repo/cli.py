@@ -22,6 +22,7 @@ examples:
   gh-safe-repo create <owner/repo>                    Create a private repo
   gh-safe-repo create <owner/repo> --public           Create a public repo
   gh-safe-repo create <owner/repo> --local ./src      Push local code to a new repo
+  gh-safe-repo create <owner/repo> --from <owner/src>  Mirror code from an existing repo
   gh-safe-repo create <owner/pub> --from <owner/priv> --public
                                                       Mirror a private repo to a new public one
   gh-safe-repo fix <owner/repo>                       Audit and fix settings on an existing repo

@@ -1,8 +1,8 @@
 """
-Pre-flight security scanner for the --from --public workflow.
+Pre-flight security scanner for the --from and --local workflows.
 
 Detects hardcoded secrets, emails, large files, and TODOs before
-a private repo is mirrored to a public repository.
+code is mirrored or pushed to a GitHub repository.
 
 truffleHog is used if installed; regex fallback otherwise.
 Always runs locally — never in GitHub Actions.

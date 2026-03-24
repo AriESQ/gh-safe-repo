@@ -181,9 +181,9 @@ Type `y` at the prompt.
 
 ---
 
-## 3. create --from --public Workflow (Mirror Private → Public)
+## 3. create --from Workflow (Mirror Repo)
 
-This creates a source private repo, puts a test file in it, then mirrors it to a new public repo.
+This creates a source repo, puts a test file in it, then mirrors it to a new repo.
 
 ### 3.1 Create a source private repo with content
 
@@ -204,7 +204,7 @@ git push
 cd /tmp && rm -rf gsr-test-source-01
 ```
 
-### 3.2 Mirror private to new public repo
+### 3.2 Mirror to new public repo
 
 ```bash
 gh-safe-repo create YOUR_USERNAME/gsr-test-public-from-01 --from YOUR_USERNAME/gsr-test-source-01 --public
@@ -226,19 +226,17 @@ Then the plan table, then prompt. Type `y`.
 - README.md is present (code was mirrored)
 - Branch protection enabled on `main`
 
-### 3.3 --from without --public is rejected
+### 3.3 Mirror to new private repo (default)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from YOUR_USERNAME/gsr-test-source-01
+gh-safe-repo create YOUR_USERNAME/gsr-test-private-from-01 --from YOUR_USERNAME/gsr-test-source-01
 ```
 
-**Expected:**
+**Expected — scan output first, then plan table, then prompt. Type `y`.**
 
-```
-Error: --from requires --public (code copying is only for public repos)
-```
-
-Process exits immediately (no API calls made).
+**Verify on GitHub:**
+- `gsr-test-private-from-01` is private
+- README.md is present (code was mirrored)
 
 ### 3.4 --from with non-existent source
 
@@ -834,8 +832,8 @@ Run each test doc's full suite before considering these scripts production-ready
 | 1.1 Basic private create | Y | | | | | | | Y | Y |
 | 1.2 Duplicate repo error | Y | | | | | | | Y | Y |
 | 2.1 Basic public create | Y | | | | | | | Y | Y |
-| 3.2 Mirror private→public | Y | Y | | | Y | | | Y | Y |
-| 3.3 --from without --public | Y | Y | | | | | | Y | Y |
+| 3.2 Mirror to public | Y | Y | | | Y | | | Y | Y |
+| 3.3 Mirror to private repo | Y | Y | | | | | | Y | Y |
 | 3.4 --from bad source | Y | Y | | | | | | Y | Y |
 | 3.5 --from bare name | Y | Y | | | | | | Y | Y |
 | 4.1 --local plain dir | Y | | Y | | Y | | | Y | Y |

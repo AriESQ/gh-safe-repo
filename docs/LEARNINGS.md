@@ -24,7 +24,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`is_public` is derived from config after overrides, not from `args.public` directly.** The main executable computes `is_public = not config.getbool('repo', 'private', fallback=True)` after `apply_overrides()` has run. This means both `--public` on the CLI and `private = false` in the config file produce the correct behaviour.
 
-**`--from` must be enforced to require `--public` early.** If `--from` is passed without `--public`, argparse raises an error immediately before any API calls are made. Allowing `--from` to a private repo would silently push code to a destination that has no branch protection — not what we want.
+**`--from` no longer requires `--public`.** The original constraint was removed because mirroring into a private repo is a valid use case (e.g., forking an upstream project into a private repo with safe defaults). The pre-flight scan runs regardless of destination visibility, so secrets are still caught. Branch protection is plan-gated (free+private repos skip it with a warning), which is the correct behaviour — the tool informs the user rather than refusing to run.
 
 ## Phase 3
 

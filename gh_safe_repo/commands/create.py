@@ -58,7 +58,7 @@ def add_arguments(parser):
         "--from",
         dest="from_repo",
         metavar="OWNER/REPO",
-        help="Mirror code from an existing private repo into the new public repo",
+        help="Mirror code from an existing repo into the new repo (runs pre-flight scan)",
     )
     parser.add_argument(
         "--dry-run",
@@ -70,11 +70,6 @@ def add_arguments(parser):
 
 def run(args):
     owner, repo_name = parse_repo_arg(args.repo)
-
-    # --from requires --public
-    if args.from_repo and not args.public:
-        error("--from requires --public (code copying is only for public repos)")
-        sys.exit(2)
 
     # --local and --from are mutually exclusive
     if args.local_path and args.from_repo:

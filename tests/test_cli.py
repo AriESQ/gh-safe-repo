@@ -9,6 +9,7 @@ import pytest
 
 from gh_safe_repo.commands._common import (
     _resolve_branches,
+    build_context,
     format_plan_json,
     parse_repo_arg,
 )
@@ -50,6 +51,42 @@ class TestParseRepoArg:
         owner, repo = parse_repo_arg("alice/my/repo")
         assert owner == "alice"
         assert repo == "my/repo"
+
+
+class TestBuildContext:
+    def _make_args(self):
+        args = MagicMock()
+        args.config = None
+        args.debug = False
+        return args
+
+    @patch("gh_safe_repo.commands._common.GitHubClient")
+    @patch("gh_safe_repo.commands._common.ConfigManager")
+    def test_owner_case_insensitive(self, MockConfig, MockClient):
+        """Owner comparison should be case-insensitive (GitHub usernames are)."""
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "AriESQ"
+        mock_client.get_plan_name.return_value = "free"
+        MockClient.return_value = mock_client
+        MockConfig.return_value = MagicMock()
+
+        # Should NOT exit — "ariesq" matches "AriESQ" case-insensitively
+        ctx = build_context(self._make_args(), expected_owner="ariesq")
+        assert ctx.owner == "AriESQ"
+
+    @patch("gh_safe_repo.commands._common.GitHubClient")
+    @patch("gh_safe_repo.commands._common.ConfigManager")
+    def test_owner_mismatch_exits(self, MockConfig, MockClient):
+        """Genuinely different owners should still be rejected."""
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "alice"
+        mock_client.get_plan_name.return_value = "free"
+        MockClient.return_value = mock_client
+        MockConfig.return_value = MagicMock()
+
+        with pytest.raises(SystemExit) as exc_info:
+            build_context(self._make_args(), expected_owner="bob")
+        assert exc_info.value.code == 1
 
 
 class TestResolveBranches:

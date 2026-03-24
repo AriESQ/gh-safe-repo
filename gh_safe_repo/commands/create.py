@@ -65,6 +65,11 @@ def add_arguments(parser):
         action="store_true",
         help="Preview what would be configured without creating anything",
     )
+    parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip confirmation prompt and apply immediately",
+    )
     add_common_args(parser)
 
 
@@ -259,6 +264,19 @@ def run(args):
     if args.dry_run:
         _info(_c(_YELLOW, "\nDry run — no changes made."))
         sys.exit(0)
+
+    # Prompt confirmation (skip with --yes)
+    if not args.yes:
+        try:
+            answer = input(
+                f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(0)
+        if answer not in ("y", "yes"):
+            _info(_c(_YELLOW, "Aborted."))
+            sys.exit(0)
 
     # Apply changes
     repo_plugin      = plugins[0]

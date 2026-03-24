@@ -83,7 +83,7 @@ def build_context(args, expected_owner):
         error(f"Could not determine GitHub user: {e}")
         sys.exit(1)
 
-    if actual_owner != expected_owner:
+    if actual_owner.lower() != expected_owner.lower():
         error(
             f"Owner '{expected_owner}' does not match authenticated user '{actual_owner}'"
         )

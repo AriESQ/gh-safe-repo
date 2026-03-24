@@ -113,7 +113,7 @@ enable_secret_scanning_push_protection = true
 #   - Dependency graph: automatic for public repos; enable via UI for private repos
 
 [pre_flight_scan]
-# Runs automatically when using --from --public, --local, or --audit.
+# Runs automatically when using --from, --local, or standalone via `scan`.
 # Scans the source locally before any code is copied or made public.
 scan_for_secrets = true
 scan_for_emails = true

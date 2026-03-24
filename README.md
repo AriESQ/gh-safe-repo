@@ -203,6 +203,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--public` | Create as a public repo (default: private) |
 | `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
 | `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
@@ -363,7 +364,7 @@ gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 
 Both `--local` and `--from` work for private and public repos. They are mutually exclusive.
 
-When `PATH` is a git repo, the local default branch (via `git symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
+When `PATH` is a git repo, the local default branch (via `git -C PATH symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
 
 > **Tip:** Run `gh-safe-repo scan PATH` first if you want to inspect findings without creating anything.
 

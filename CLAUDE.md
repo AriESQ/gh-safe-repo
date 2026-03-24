@@ -50,9 +50,9 @@ API and tool quirks that affect future work. For full context on any of these, s
 
 **Key design invariants:**
 - CLI uses subcommands: `create`, `fix`, `scan` — all GitHub-targeting commands require `owner/repo` format
-- `owner` in `owner/repo` is validated against the authenticated user (`build_context()` in `commands/_common.py`)
+- `owner` in `owner/repo` is validated case-insensitively against the authenticated user (`build_context()` in `commands/_common.py`)
 - `fix` has no secret scanning (settings-only); `create --local/--from` has automatic pre-flight scan
-- `fix --yes` skips confirmation prompt for scripted/batch use
+- `create` and `fix` both prompt for confirmation before applying; `--yes`/`-y` skips the prompt for scripted/batch use
 - `enforce_admins = false` is intentional (owner bypass for tooling)
 - `auto_init` must be `false` when `--local` or `--from` is used (avoids push rejection)
 - `bp_plugin.apply()` must run after code push (`--local`/`--from`) — branch must exist first

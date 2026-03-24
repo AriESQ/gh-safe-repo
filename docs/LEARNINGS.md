@@ -86,7 +86,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **Mutual exclusion checks before `ConfigManager` means no config file needed for error path.** Tests for `--local/--from` and `--local/--audit` conflicts need no auth mocking — `SystemExit(2)` is raised immediately from argparse.
 
-**`local_default_branch` feeds `_resolve_branches()` as `source_default_branch`.** This puts the local repo's HEAD branch at priority 2, so branch protection targets the right branch.
+**`local_default_branch` feeds `_resolve_branches()` as `source_default_branch`.** This puts the `--local` path's HEAD branch at priority 2, so branch protection targets the right branch. The local CWD is never consulted — only the explicit `--local PATH` directory (via `git -C`).
 
 **`git clone <local_path>` creates an `origin` remote pointing at the local path — `remote add` fails.** Fix: use `git remote set-url origin <github_url>` in the temp clone (for `is_git_repo`), keep `git remote add` for the fresh-init path.
 

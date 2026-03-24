@@ -3,7 +3,6 @@
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -370,25 +369,11 @@ def _resolve_branches(config, post_default_branch=None, source_default_branch=No
     Determine the list of branches to protect, in priority order:
       1. POST /user/repos response default_branch (new repo, non-dry-run)
       2. GET /repos/{owner}/{source} default_branch (--from workflow, non-dry-run)
-      3. git symbolic-ref --short HEAD (local CWD, works in dry-run too)
-      4. protected_branch from config (may be "master, main" from SAFE_DEFAULTS)
+      3. protected_branch from config (may be "master, main" from SAFE_DEFAULTS)
     """
     if post_default_branch:
         return [post_default_branch]
     if source_default_branch:
         return [source_default_branch]
-    try:
-        result = subprocess.run(
-            ["git", "symbolic-ref", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-            if branch:
-                return [branch]
-    except Exception:
-        pass
     raw = config.get("branch_protection", "protected_branch", fallback="master, main")
     return [b.strip() for b in raw.split(",") if b.strip()]

@@ -12,9 +12,6 @@ import sys
 
 from .commands import create, fix, scan
 
-# Temporary re-exports for test compatibility during migration
-from .commands._common import _resolve_branches, format_plan_json  # noqa: F401
-
 
 def main():
     parser = argparse.ArgumentParser(

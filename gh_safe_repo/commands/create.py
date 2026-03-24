@@ -41,7 +41,7 @@ HELP = "Create a new repo with safe defaults"
 def add_arguments(parser):
     parser.add_argument(
         "repo",
-        help="Repository as owner/repo (e.g. myuser/my-repo)",
+        help="New GitHub repository as owner/repo (e.g. myuser/my-repo)",
     )
     parser.add_argument(
         "--public",

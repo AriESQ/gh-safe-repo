@@ -1,4 +1,4 @@
-"""Tests for cli.py helpers — focused on _resolve_branches() and argument validation."""
+"""Tests for CLI subcommands and shared helpers."""
 
 import json
 import subprocess
@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gh_safe_repo.cli import _resolve_branches, format_plan_json, main
+from gh_safe_repo.commands._common import (
+    _resolve_branches,
+    format_plan_json,
+    parse_repo_arg,
+)
+from gh_safe_repo.cli import main
 from gh_safe_repo.config_manager import ConfigManager
 from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
 from gh_safe_repo.security_scanner import SecurityScanner
@@ -18,6 +23,33 @@ def make_config(overrides=None):
     if overrides:
         config.apply_overrides(overrides)
     return config
+
+
+class TestParseRepoArg:
+    def test_valid_owner_repo(self):
+        owner, repo = parse_repo_arg("alice/my-repo")
+        assert owner == "alice"
+        assert repo == "my-repo"
+
+    def test_bare_name_exits(self):
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg("my-repo")
+        assert exc_info.value.code == 2
+
+    def test_empty_owner_exits(self):
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg("/my-repo")
+        assert exc_info.value.code == 2
+
+    def test_empty_repo_exits(self):
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg("alice/")
+        assert exc_info.value.code == 2
+
+    def test_owner_with_nested_slash(self):
+        owner, repo = parse_repo_arg("alice/my/repo")
+        assert owner == "alice"
+        assert repo == "my/repo"
 
 
 class TestResolveBranches:
@@ -60,7 +92,6 @@ class TestResolveBranches:
         assert result == ["trunk"]
 
     def test_falls_back_to_default_when_git_fails_and_config_is_default(self):
-        # SAFE_DEFAULTS has "master, main" — both branches returned as fallback
         config = make_config()
         completed = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="")
         with patch("subprocess.run", return_value=completed):
@@ -71,7 +102,6 @@ class TestResolveBranches:
         config = make_config()
         with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
             result = _resolve_branches(config)
-        # Falls back to config default "master, main"
         assert result == ["master", "main"]
 
     def test_config_single_branch_returned_as_list(self):
@@ -96,38 +126,70 @@ class TestResolveBranches:
         assert result == ["main"]
 
 
-class TestLocalFlagValidation:
-    def _make_mock_client(self):
-        mock_client = MagicMock()
-        mock_client.get_owner.return_value = "alice"
-        mock_client.get_plan_name.return_value = "free"
-        return mock_client
-
+class TestCreateFlagValidation:
     def test_local_and_from_are_mutually_exclusive(self):
         with patch("sys.argv", [
-            "gh-safe-repo", "my-repo",
-            "--local", ".", "--from", "other-repo", "--public",
+            "gh-safe-repo", "create", "alice/my-repo",
+            "--local", ".", "--from", "alice/other-repo", "--public",
         ]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=MagicMock(), owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
         assert exc_info.value.code == 2
 
-    def test_local_and_audit_are_mutually_exclusive(self):
+    def test_from_requires_public(self):
         with patch("sys.argv", [
-            "gh-safe-repo", "my-repo", "--local", ".", "--audit",
+            "gh-safe-repo", "create", "alice/my-repo",
+            "--from", "alice/other-repo",
         ]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=MagicMock(), owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
         assert exc_info.value.code == 2
 
     def test_local_nonexistent_path_exits_with_error(self):
         with patch("sys.argv", [
-            "gh-safe-repo", "my-repo", "--local", "/nonexistent/path/xyz", "--dry-run",
+            "gh-safe-repo", "create", "alice/my-repo",
+            "--local", "/nonexistent/path/xyz", "--dry-run",
         ]):
-            with patch("gh_safe_repo.cli.GitHubClient") as MockClient:
-                MockClient.return_value = self._make_mock_client()
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=MagicMock(), owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
                 with pytest.raises(SystemExit) as exc_info:
                     main()
+        assert exc_info.value.code == 2
+
+    def test_bare_repo_name_exits(self):
+        """create my-repo (no owner/) should exit with error."""
+        with patch("sys.argv", ["gh-safe-repo", "create", "my-repo"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+
+
+class TestFixFlagValidation:
+    def test_bare_repo_name_exits(self):
+        with patch("sys.argv", ["gh-safe-repo", "fix", "my-repo"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 2
+
+
+class TestNoSubcommand:
+    def test_no_args_exits(self):
+        with patch("sys.argv", ["gh-safe-repo"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
         assert exc_info.value.code == 2
 
 
@@ -192,32 +254,34 @@ class TestScannerDescriptionInPlan:
         mock_client = MagicMock()
         mock_client.get_owner.return_value = "alice"
         mock_client.get_plan_name.return_value = "free"
-        mock_client.repo_path.return_value = "/repos/alice/my-repo"
+        mock_client.repo_path.return_value = "/repos/alice/my-public-repo"
         mock_client.call_api.return_value = (404, {})  # repo doesn't exist
         return mock_client
 
     def test_scan_plan_entry_includes_scanner_description(self, capsys):
-        # In --dry-run --from mode, the SCAN plan entry's new field should
-        # include the scanner description in parentheses.
         with patch("sys.argv", [
-            "gh-safe-repo", "my-public-repo",
-            "--from", "my-private-repo", "--public", "--dry-run",
+            "gh-safe-repo", "create", "alice/my-public-repo",
+            "--from", "alice/my-private-repo", "--public", "--dry-run",
         ]):
-            with patch("gh_safe_repo.cli.GitHubClient") as MockClient:
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
                 mock_client = self._make_mock_client()
-                MockClient.return_value = mock_client
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config({("repo", "private"): "false"}),
+                )
 
                 # Patch plugin plan() calls to return empty plans
-                with patch("gh_safe_repo.cli.RepositoryPlugin") as MockRepo, \
-                     patch("gh_safe_repo.cli.ActionsPlugin") as MockActions, \
-                     patch("gh_safe_repo.cli.BranchProtectionPlugin") as MockBP, \
-                     patch("gh_safe_repo.cli.SecurityPlugin") as MockSec:
+                with patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
+                     patch("gh_safe_repo.commands.create.ActionsPlugin") as MockActions, \
+                     patch("gh_safe_repo.commands.create.BranchProtectionPlugin") as MockBP, \
+                     patch("gh_safe_repo.commands.create.SecurityPlugin") as MockSec, \
+                     patch("gh_safe_repo.commands.create.TagProtectionPlugin") as MockTag:
 
-                    for MockPlugin in (MockRepo, MockActions, MockBP, MockSec):
+                    for MockPlugin in (MockRepo, MockActions, MockBP, MockSec, MockTag):
                         instance = MockPlugin.return_value
                         instance.plan.return_value = Plan()
 
-                    # Force scanner to report "regex only" (no trufflehog, no container)
+                    # Force scanner to report "regex only"
                     original_init = SecurityScanner.__init__
                     def patched_init(self_inner, config, debug=False):
                         original_init(self_inner, config, debug=debug)
@@ -227,19 +291,18 @@ class TestScannerDescriptionInPlan:
                             main()
 
         captured = capsys.readouterr()
-        # The plan table is printed to stdout; SCAN new field should contain description
         assert "regex only" in captured.out
 
 
 class TestScanSkippedDirsWarning:
-    """--scan warns when SKIP_DIRS subdirectories were present but not scanned."""
+    """scan command warns when SKIP_DIRS subdirectories were present but not scanned."""
 
     def test_skipped_dirs_warning_printed_to_stdout(self, tmp_path, capsys):
         node_modules = tmp_path / "node_modules"
         node_modules.mkdir()
         (node_modules / "index.js").write_text("hello")
 
-        with patch("sys.argv", ["gh-safe-repo", "--scan", str(tmp_path)]):
+        with patch("sys.argv", ["gh-safe-repo", "scan", str(tmp_path)]):
             with pytest.raises(SystemExit):
                 main()
 
@@ -250,7 +313,7 @@ class TestScanSkippedDirsWarning:
     def test_no_warning_when_no_skip_dirs_present(self, tmp_path, capsys):
         (tmp_path / "main.py").write_text("print('hello')")
 
-        with patch("sys.argv", ["gh-safe-repo", "--scan", str(tmp_path)]):
+        with patch("sys.argv", ["gh-safe-repo", "scan", str(tmp_path)]):
             with pytest.raises(SystemExit):
                 main()
 

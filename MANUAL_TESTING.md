@@ -51,7 +51,7 @@ gh-safe-repo fix --help
 gh-safe-repo scan --help
 ```
 
-**Expected:** Each subcommand shows its own arguments (e.g. `create` shows `--public`, `--local`, `--from`; `fix` shows `--yes`; `scan` has no `--dry-run`).
+**Expected:** Each subcommand shows its own arguments (e.g. `create` shows `--public`, `--local`, `--from`, `--yes`; `fix` shows `--yes`; `scan` has no `--dry-run`).
 
 ### 0.4 No subcommand shows help
 

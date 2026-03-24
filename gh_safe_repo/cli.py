@@ -13,10 +13,28 @@ import sys
 from .commands import create, fix, scan
 
 
+def _options_last(parser):
+    """Reorder action groups so 'options' appears last in --help output."""
+    # _action_groups is [positionals, optionals, ...extra]. Move optionals to end.
+    groups = parser._action_groups
+    for i, g in enumerate(groups):
+        if g.title == "options":
+            groups.append(groups.pop(i))
+            break
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="gh-safe-repo",
-        description="Manage safe defaults for GitHub repositories.",
+        description="""\
+Manage safe defaults for GitHub repositories.
+
+usage:
+  gh-safe-repo create <owner/repo> [--public] [--local PATH | --from OWNER/REPO] [--dry-run]
+  gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
+  gh-safe-repo scan  <path>
+
+common options: --config PATH, --json, --debug""",
         epilog="""\
 examples:
   gh-safe-repo create <owner/repo>                    Create a private repo
@@ -42,6 +60,11 @@ examples:
         )
         cmd_module.add_arguments(sub)
         sub.set_defaults(func=cmd_module.run)
+        # Move options to the end of help output (after positional args)
+        _options_last(sub)
+
+    # Move commands before options in top-level help
+    _options_last(parser)
 
     args = parser.parse_args()
 

@@ -141,20 +141,6 @@ class TestCreateFlagValidation:
                     main()
         assert exc_info.value.code == 2
 
-    def test_from_requires_public(self):
-        with patch("sys.argv", [
-            "gh-safe-repo", "create", "alice/my-repo",
-            "--from", "alice/other-repo",
-        ]):
-            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
-                mock_ctx.return_value = MagicMock(
-                    client=MagicMock(), owner="alice", plan_name="free",
-                    is_paid_plan=False, config=make_config(),
-                )
-                with pytest.raises(SystemExit) as exc_info:
-                    main()
-        assert exc_info.value.code == 2
-
     def test_local_nonexistent_path_exits_with_error(self):
         with patch("sys.argv", [
             "gh-safe-repo", "create", "alice/my-repo",

@@ -3,7 +3,7 @@
 Create GitHub repositories with safe defaults applied automatically. Replaces the five-minute post-creation settings checklist with a single command.
 
 ```
-gh-safe-repo my-project
+gh-safe-repo create myuser/my-project
 ```
 
 Branch protection, immutable tags, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
@@ -19,7 +19,7 @@ Branch protection, immutable tags, Dependabot, restricted Actions permissions, d
 - [Quick Start](#quick-start)
 - [CLI Reference](#cli-reference)
 - [Dry Run / Plan Output](#dry-run--plan-output)
-- [Audit Mode](#audit-mode)
+- [Fix Mode (Audit Existing Repos)](#fix-mode-audit-existing-repos)
 - [Public Repos from Private (`--from`)](#public-repos-from-private---from)
 - [Creating a Repo from a Local Directory (`--local`)](#creating-a-repo-from-a-local-directory---local)
 - [Pre-flight Security Scanner](#pre-flight-security-scanner)
@@ -135,7 +135,7 @@ This installs `gh-safe-repo` into uv's tool environment and adds it to your `PAT
 git clone https://github.com/your-username/gh-safe-repo
 cd gh-safe-repo
 uv sync           # creates .venv
-./gh-safe-repo my-project
+./gh-safe-repo create myuser/my-project
 ```
 
 ### Verify
@@ -150,32 +150,35 @@ gh-safe-repo --help
 
 ```bash
 # Create a private repo with all safe defaults
-gh-safe-repo my-project
+gh-safe-repo create myuser/my-project
 
 # Preview what would happen — no changes made
-gh-safe-repo my-project --dry-run
+gh-safe-repo create myuser/my-project --dry-run
 
 # Create a public repo (branch protection + security scanning applied)
-gh-safe-repo my-public-project --public
+gh-safe-repo create myuser/my-public-project --public
 
 # Mirror a private repo to a new public repo (with pre-flight scan)
-gh-safe-repo my-public-project --from my-private-project --public
+gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --public
 
 # Create a repo from a local directory (with pre-flight scan)
-gh-safe-repo my-project --local ~/projects/myapp
+gh-safe-repo create myuser/my-project --local ~/projects/myapp
 
 # Same, but make it public (branch protection applied before push)
-gh-safe-repo my-project --local ~/projects/myapp --public
+gh-safe-repo create myuser/my-project --local ~/projects/myapp --public
 
 # Audit an existing repo and apply any missing safe defaults
-gh-safe-repo my-existing-repo --audit
+gh-safe-repo fix myuser/my-existing-repo
 
 # Audit without making changes
-gh-safe-repo my-existing-repo --audit --dry-run
+gh-safe-repo fix myuser/my-existing-repo --dry-run
+
+# Apply fixes without confirmation prompt (scripting/batch use)
+gh-safe-repo fix myuser/my-existing-repo --yes
 
 # Scan a local repo for secrets before pushing anywhere
-gh-safe-repo --scan .
-gh-safe-repo --scan ~/projects/myapp
+gh-safe-repo scan .
+gh-safe-repo scan ~/projects/myapp
 ```
 
 ---
@@ -183,30 +186,44 @@ gh-safe-repo --scan ~/projects/myapp
 ## CLI Reference
 
 ```
-gh-safe-repo REPO_NAME [OPTIONS]
-gh-safe-repo --scan PATH [OPTIONS]
+gh-safe-repo create OWNER/REPO [OPTIONS]
+gh-safe-repo fix OWNER/REPO [OPTIONS]
+gh-safe-repo scan PATH [OPTIONS]
 ```
 
-### Arguments
+All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). The owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems.
 
-| Argument | Description |
-|---|---|
-| `REPO_NAME` | Name of the repository to create or audit (not required with `--scan`) |
-
-### Options
+### `create` — Create a new repo
 
 | Option | Description |
 |---|---|
-| `--scan PATH` | Scan a local directory for secrets and exit. No GitHub interaction. Exit code 0 = clean, 1 = critical findings. |
-| `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from` and `--audit`. |
-| `--dry-run` | Print the plan without making any changes |
 | `--public` | Create as a public repo (default: private) |
-| `--from REPO` | Mirror code from an existing private repo before making public. Requires `--public`. Mutually exclusive with `--local`. |
-| `--audit` | Audit an existing repo and apply missing safe defaults. Mutually exclusive with `--local`. |
-| `--json` | Emit the plan as JSON to stdout instead of the ANSI table. All other messages go to stderr. Combine with `--dry-run` for clean machine-readable output. |
+| `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
+| `--from OWNER/REPO` | Mirror code from an existing private repo before making public. Requires `--public`. Mutually exclusive with `--local`. |
+| `--dry-run` | Print the plan without making any changes |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
 | `--debug` | Print every API call and response |
-| `--help` | Show help and exit |
+
+### `fix` — Audit and fix an existing repo
+
+| Option | Description |
+|---|---|
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
+| `--dry-run` | Show settings diff without applying changes |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
+| `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
+| `--debug` | Print every API call and response |
+
+### `scan` — Local secret scanning
+
+| Option | Description |
+|---|---|
+| `--json` | Emit findings as JSON |
+| `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
+| `--debug` | Show scanner details |
+
+Exit code is `0` if no critical findings, `1` if criticals are found.
 
 ---
 
@@ -215,14 +232,14 @@ gh-safe-repo --scan PATH [OPTIONS]
 `--dry-run` shows exactly what `gh-safe-repo` would do, without making any changes or API calls. Use it before running for real. Combine with `--json` for machine-readable plan output:
 
 ```bash
-gh-safe-repo my-project --dry-run --json
-gh-safe-repo my-existing-repo --audit --dry-run --json
+gh-safe-repo create myuser/my-project --dry-run --json
+gh-safe-repo fix myuser/my-existing-repo --dry-run --json
 ```
 
 When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer) go to stderr, so the output is clean for piping or scripting.
 
 ```
-$ gh-safe-repo my-project --dry-run
+$ gh-safe-repo create myuser/my-project --dry-run
 
   Plan for my-project (private)
 
@@ -266,24 +283,27 @@ $ gh-safe-repo my-project --dry-run
 
 ---
 
-## Audit Mode
+## Fix Mode (Audit Existing Repos)
 
-`--audit` compares an existing repo's current settings against the safe defaults and applies any differences.
+`fix` compares an existing repo's current settings against the safe defaults and applies any corrections. No secret scanning — `fix` is purely about repo settings.
 
 ```bash
 # See what's out of compliance
-gh-safe-repo existing-repo --audit --dry-run
+gh-safe-repo fix myuser/existing-repo --dry-run
 
 # Apply missing safe defaults
-gh-safe-repo existing-repo --audit
+gh-safe-repo fix myuser/existing-repo
+
+# Apply without confirmation prompt (scripting/batch use)
+gh-safe-repo fix myuser/existing-repo --yes
 ```
 
-Audit mode:
+Fix mode:
 
 1. Fetches the current value of every setting via the GitHub API
 2. Compares against desired safe defaults
 3. Shows a plan table with `UPDATE` for changed settings and `SKIP` for settings already at the desired value (no-op detection — it never makes API calls that would change nothing)
-4. Prompts for confirmation before applying
+4. Prompts for confirmation before applying (skip with `--yes`)
 
 Settings that are already correct are silently skipped. Only real changes are shown and applied.
 
@@ -294,22 +314,22 @@ Settings that are already correct are silently skipped. Only real changes are sh
 Making a private repo public is the riskiest thing you can do on GitHub. The `--from` workflow is designed to make it safe:
 
 ```bash
-gh-safe-repo my-public-project --from my-private-project --public
+gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --public
 ```
 
 **What happens, in order:**
 
-1. The source repo (`my-private-project`) is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
+1. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
 3. You review findings and confirm (or abort)
-4. A new repo (`my-public-project`) is created as **public**
+4. A new repo is created as **public**
 5. Branch protection is applied **before any code is pushed**
 6. The full history is mirrored: `git clone --mirror` + `git push --mirror`
 7. Dependabot and secret scanning are configured
 
 Branch protection is applied before the push intentionally. If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
-> **Note:** `--from` requires `--public`. Mirroring to a private repo with no branch protection is not supported.
+> **Note:** `--from` requires `--public` and uses `owner/repo` format. Mirroring to a private repo with no branch protection is not supported.
 
 ---
 
@@ -318,8 +338,8 @@ Branch protection is applied before the push intentionally. If the scan reveals 
 `--local PATH` is the local-to-GitHub counterpart to `--from`. It creates a new GitHub repo and pushes code from a directory on your machine.
 
 ```bash
-gh-safe-repo my-project --local ~/projects/myapp
-gh-safe-repo my-project --local ~/projects/myapp --public
+gh-safe-repo create myuser/my-project --local ~/projects/myapp
+gh-safe-repo create myuser/my-project --local ~/projects/myapp --public
 ```
 
 **What happens, in order:**
@@ -334,11 +354,11 @@ gh-safe-repo my-project --local ~/projects/myapp --public
    - If `PATH` is an empty directory: nothing is pushed (silently skipped)
 6. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
-Unlike `--from`, `--local` works for both private and public repos. It is mutually exclusive with `--from` and `--audit`.
+Unlike `--from`, `--local` works for both private and public repos. It is mutually exclusive with `--from`.
 
 When `PATH` is a git repo, the local default branch (via `git symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
 
-> **Tip:** Run `gh-safe-repo --scan PATH` first if you want to inspect findings without creating anything.
+> **Tip:** Run `gh-safe-repo scan PATH` first if you want to inspect findings without creating anything.
 
 ---
 
@@ -350,16 +370,16 @@ The scanner runs locally and never sends code to GitHub. Use it standalone befor
 
 ```bash
 # Scan the current directory
-gh-safe-repo --scan .
+gh-safe-repo scan .
 
 # Scan an explicit path
-gh-safe-repo --scan ~/projects/myapp
+gh-safe-repo scan ~/projects/myapp
 ```
 
 Exit code is `0` if no critical findings, `1` if criticals are found — so it composes cleanly with other commands:
 
 ```bash
-gh-safe-repo --scan . && git push
+gh-safe-repo scan . && git push
 ```
 
 The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb`, `trufflehog_mode`, etc.
@@ -499,7 +519,7 @@ When banned strings or AI context files are found the scanner prints a ready-to-
 
 ```bash
 # Use a custom config file
-gh-safe-repo my-project --config ./my-config.ini
+gh-safe-repo create myuser/my-project --config ./my-config.ini
 ```
 
 A fully-annotated example config is included in the repository as `config.ini.example`. Copy it to get started:
@@ -677,8 +697,9 @@ Some features are only available depending on repo visibility and your GitHub pl
 ## How It Works
 
 ```
-gh-safe-repo my-project
+gh-safe-repo create myuser/my-project
       │
+      ├─ Parse owner/repo, validate owner matches authenticated user
       ├─ Load config (~/.config/gh-safe-repo/config.ini)
       ├─ Apply CLI flag overrides (--public, etc.)
       ├─ Authenticate via gh CLI or GITHUB_TOKEN
@@ -746,7 +767,7 @@ uv sync                          # creates .venv, installs pytest
 uv run pytest tests/ -v
 
 # Run the tool directly (without installing)
-./gh-safe-repo my-project --dry-run
+./gh-safe-repo create myuser/my-project --dry-run
 
 # Install globally (picks up the current source)
 uv tool install .
@@ -760,6 +781,13 @@ See [`tests/README.md`](tests/README.md) for test file descriptions, mocking con
 gh-safe-repo/
 ├── gh-safe-repo          # Thin launcher (entry point for direct use)
 ├── gh_safe_repo/         # Package — see gh_safe_repo/README.md for internals
+│   ├── cli.py            # Subparser dispatch (create, fix, scan)
+│   ├── commands/         # Subcommand implementations
+│   │   ├── _common.py    # Shared helpers, CLIContext, plan formatting
+│   │   ├── create.py     # create subcommand
+│   │   ├── fix.py        # fix subcommand
+│   │   └── scan.py       # scan subcommand
+│   └── plugins/          # Settings plugins (one per category)
 ├── pyproject.toml        # Build config, entry points
 ├── config.ini.example    # Fully annotated example config
 └── tests/

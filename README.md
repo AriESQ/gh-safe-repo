@@ -3,7 +3,7 @@
 Create GitHub repositories with safe defaults applied automatically. Replaces the five-minute post-creation settings checklist with a single command.
 
 ```
-gh-safe-repo create myuser/my-project
+gh-safe-repo create <owner/repo>
 ```
 
 Branch protection, immutable tags, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
@@ -135,7 +135,7 @@ This installs `gh-safe-repo` into uv's tool environment and adds it to your `PAT
 git clone https://github.com/your-username/gh-safe-repo
 cd gh-safe-repo
 uv sync           # creates .venv
-./gh-safe-repo create myuser/my-project
+./gh-safe-repo create <owner/repo>
 ```
 
 ### Verify
@@ -150,34 +150,34 @@ gh-safe-repo --help
 
 ```bash
 # Create a private repo with all safe defaults
-gh-safe-repo create myuser/my-project
+gh-safe-repo create <owner/repo>
 
 # Preview what would happen — no changes made
-gh-safe-repo create myuser/my-project --dry-run
+gh-safe-repo create <owner/repo> --dry-run
 
 # Create a public repo (branch protection + security scanning applied)
-gh-safe-repo create myuser/my-public-project --public
+gh-safe-repo create <owner/repo> --public
 
 # Mirror an existing repo into a new private repo (with pre-flight scan)
-gh-safe-repo create myuser/my-project --from myuser/upstream-project
+gh-safe-repo create <owner/repo> --from <owner/source>
 
 # Mirror a private repo to a new public repo (with pre-flight scan)
-gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --public
+gh-safe-repo create <owner/pub> --from <owner/priv> --public
 
 # Create a repo from a local directory (with pre-flight scan)
-gh-safe-repo create myuser/my-project --local ~/projects/myapp
+gh-safe-repo create <owner/repo> --local ~/projects/myapp
 
 # Same, but make it public (branch protection applied before push)
-gh-safe-repo create myuser/my-project --local ~/projects/myapp --public
+gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 
 # Audit an existing repo and apply any missing safe defaults
-gh-safe-repo fix myuser/my-existing-repo
+gh-safe-repo fix <owner/repo>
 
 # Audit without making changes
-gh-safe-repo fix myuser/my-existing-repo --dry-run
+gh-safe-repo fix <owner/repo> --dry-run
 
 # Apply fixes without confirmation prompt (scripting/batch use)
-gh-safe-repo fix myuser/my-existing-repo --yes
+gh-safe-repo fix <owner/repo> --yes
 
 # Scan a local repo for secrets before pushing anywhere
 gh-safe-repo scan .
@@ -189,9 +189,9 @@ gh-safe-repo scan ~/projects/myapp
 ## CLI Reference
 
 ```
-gh-safe-repo create OWNER/REPO [OPTIONS]
-gh-safe-repo fix OWNER/REPO [OPTIONS]
-gh-safe-repo scan PATH [OPTIONS]
+gh-safe-repo create <owner/repo> [OPTIONS]
+gh-safe-repo fix <owner/repo> [OPTIONS]
+gh-safe-repo scan <path> [OPTIONS]
 ```
 
 All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). The owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems.
@@ -235,14 +235,14 @@ Exit code is `0` if no critical findings, `1` if criticals are found.
 `--dry-run` shows exactly what `gh-safe-repo` would do, without making any changes or API calls. Use it before running for real. Combine with `--json` for machine-readable plan output:
 
 ```bash
-gh-safe-repo create myuser/my-project --dry-run --json
-gh-safe-repo fix myuser/my-existing-repo --dry-run --json
+gh-safe-repo create <owner/repo> --dry-run --json
+gh-safe-repo fix <owner/repo> --dry-run --json
 ```
 
 When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer) go to stderr, so the output is clean for piping or scripting.
 
 ```
-$ gh-safe-repo create myuser/my-project --dry-run
+$ gh-safe-repo create <owner/repo> --dry-run
 
   Plan for my-project (private)
 
@@ -292,13 +292,13 @@ $ gh-safe-repo create myuser/my-project --dry-run
 
 ```bash
 # See what's out of compliance
-gh-safe-repo fix myuser/existing-repo --dry-run
+gh-safe-repo fix <owner/repo> --dry-run
 
 # Apply missing safe defaults
-gh-safe-repo fix myuser/existing-repo
+gh-safe-repo fix <owner/repo>
 
 # Apply without confirmation prompt (scripting/batch use)
-gh-safe-repo fix myuser/existing-repo --yes
+gh-safe-repo fix <owner/repo> --yes
 ```
 
 Fix mode:
@@ -318,10 +318,10 @@ Settings that are already correct are silently skipped. Only real changes are sh
 
 ```bash
 # Mirror into a new private repo (default)
-gh-safe-repo create myuser/my-project --from myuser/upstream-project
+gh-safe-repo create <owner/repo> --from <owner/source>
 
 # Mirror a private repo to a new public repo (riskiest operation — scanned thoroughly)
-gh-safe-repo create myuser/my-public-project --from myuser/my-private-project --public
+gh-safe-repo create <owner/pub> --from <owner/priv> --public
 ```
 
 **What happens, in order:**
@@ -345,8 +345,8 @@ If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 `--local PATH` is the local-to-GitHub counterpart to `--from`. It creates a new GitHub repo and pushes code from a directory on your machine.
 
 ```bash
-gh-safe-repo create myuser/my-project --local ~/projects/myapp
-gh-safe-repo create myuser/my-project --local ~/projects/myapp --public
+gh-safe-repo create <owner/repo> --local ~/projects/myapp
+gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 ```
 
 **What happens, in order:**
@@ -526,7 +526,7 @@ When banned strings or AI context files are found the scanner prints a ready-to-
 
 ```bash
 # Use a custom config file
-gh-safe-repo create myuser/my-project --config ./my-config.ini
+gh-safe-repo create <owner/repo> --config ./my-config.ini
 ```
 
 A fully-annotated example config is included in the repository as `config.ini.example`. Copy it to get started:
@@ -704,7 +704,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 ## How It Works
 
 ```
-gh-safe-repo create myuser/my-project
+gh-safe-repo create <owner/repo>
       │
       ├─ Parse owner/repo, validate owner matches authenticated user
       ├─ Load config (~/.config/gh-safe-repo/config.ini)
@@ -774,7 +774,7 @@ uv sync                          # creates .venv, installs pytest
 uv run pytest tests/ -v
 
 # Run the tool directly (without installing)
-./gh-safe-repo create myuser/my-project --dry-run
+./gh-safe-repo create <owner/repo> --dry-run
 
 # Install globally (picks up the current source)
 uv tool install .

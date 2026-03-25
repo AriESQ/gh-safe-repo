@@ -196,7 +196,7 @@ def run(args):
     plugins = [
         RepositoryPlugin(client, owner, repo_name, config, auto_init=repo_auto_init,
                          source_description=source_description, source_topics=source_topics),
-        ActionsPlugin(client, owner, repo_name, config),
+        ActionsPlugin(client, owner, repo_name, config, is_public=is_public),
         BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
         TagProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),

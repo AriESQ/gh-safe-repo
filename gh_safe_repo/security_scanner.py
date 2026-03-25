@@ -125,7 +125,9 @@ _WARNING_PATTERNS = [
 ]
 
 EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
-TODO_PATTERN = re.compile(r"(?i)#\s*(?:TODO|FIXME|HACK|XXX)\b")
+# Stricter alternative: only match common comment prefixes (#, //, /*, --)
+# TODO_PATTERN = re.compile(r"(?i)(?:#|//|/\*|--)\s*(?:TODO|FIXME|HACK|XXX)\b")
+TODO_PATTERN = re.compile(r"(?i)\b(?:TODO|FIXME|HACK|XXX)\b")
 
 
 # --- Helpers ---

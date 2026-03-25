@@ -187,6 +187,7 @@ class BranchProtectionPlugin(BasePlugin):
                 "parameters": {
                     "required_approving_review_count": desired["required_approving_reviews"],
                     "dismiss_stale_reviews_on_push": desired["dismiss_stale_reviews"],
+                    "require_code_owner_review": False,
                     "require_last_push_approval": False,
                     "required_review_thread_resolution": desired["require_conversation_resolution"],
                 },

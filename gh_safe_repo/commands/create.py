@@ -191,8 +191,9 @@ def run(args):
         source_default_branch=local_default_branch or source_default_branch,
     )
 
-    # Run each plugin's plan()
-    repo_auto_init = None if (not local_path and not args.from_repo) else False
+    # Plain create: auto_init=True so the repo has a branch for protection.
+    # --local / --from: auto_init=False to avoid push rejection.
+    repo_auto_init = True if (not local_path and not args.from_repo) else False
     plugins = [
         RepositoryPlugin(client, owner, repo_name, config, auto_init=repo_auto_init,
                          source_description=source_description, source_topics=source_topics),

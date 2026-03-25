@@ -901,6 +901,44 @@ class TestActionsPluginAudit:
         assert any(c.key == "patterns_allowed" for c in skips)
         assert any(c.key == "fork_pr_approval_policy" for c in skips)
 
+    def test_private_repo_skips_fork_pr_approval_in_fetch(self):
+        client = make_mock_client()
+        client.get_json.side_effect = [
+            {"sha_pinning_required": True, "allowed_actions": "all"},
+            {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},
+            # No third call — fork endpoint is skipped for private repos
+        ]
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config(), is_public=False)
+        state = plugin.fetch_current_state()
+        assert client.get_json.call_count == 2
+        assert state["fork_pr_approval_policy"] is None
+
+    def test_private_repo_skips_fork_pr_approval_in_plan(self):
+        client = make_mock_client()
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config(), is_public=False)
+        plan = plugin.plan()
+        fork_changes = [c for c in plan.changes if c.key == "fork_pr_approval_policy"]
+        assert len(fork_changes) == 0  # not shown in create plan for private repos
+
+    def test_private_repo_audit_skips_fork_pr_approval(self):
+        client = make_mock_client()
+        current_state = {
+            "allowed_actions": "selected",
+            "github_owned_allowed": True,
+            "verified_allowed": True,
+            "patterns_allowed": [],
+            "sha_pinning_required": True,
+            "default_workflow_permissions": "read",
+            "can_approve_pull_request_reviews": False,
+            "fork_pr_approval_policy": None,
+        }
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config(), is_public=False)
+        plan = plugin.plan(current_state=current_state)
+        fork_skips = [c for c in plan.changes if c.key == "fork_pr_approval_policy"]
+        assert len(fork_skips) == 1
+        assert fork_skips[0].type == ChangeType.SKIP
+        assert "private" in fork_skips[0].reason.lower()
+
     def test_plan_audit_emits_update_when_differs(self):
         client = make_mock_client()
         # current is GitHub defaults, desired is our safe defaults

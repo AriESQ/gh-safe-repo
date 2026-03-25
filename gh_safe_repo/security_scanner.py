@@ -364,10 +364,23 @@ class SecurityScanner:
                 findings.extend(trufflehog_results)
                 secrets_via_trufflehog = True
 
-        # Single walk: large files, AI context files, text content (secrets if no truffleHog)
+        # Single walk: large files, AI context files, text content.
+        # Always run regex secret patterns even when trufflehog succeeds —
+        # trufflehog is a credential verifier that needs paired keys (e.g.
+        # both AKIA + secret access key); our regex catches standalone patterns.
+        # See: https://github.com/trufflesecurity/trufflehog/issues/2940
         walk_findings, skipped = self._unified_walk(
-            root_path, scan_secrets=not secrets_via_trufflehog, is_git_repo=is_git_repo
+            root_path, scan_secrets=self._scan_secrets, is_git_repo=is_git_repo
         )
+        if secrets_via_trufflehog:
+            # Deduplicate: drop regex secret findings already covered by trufflehog
+            th_locations = {(f.file_path, f.line_number) for f in findings
+                           if f.category == FindingCategory.SECRET}
+            walk_findings = [
+                f for f in walk_findings
+                if f.category != FindingCategory.SECRET
+                or (f.file_path, f.line_number) not in th_locations
+            ]
         findings.extend(walk_findings)
         self.skipped_committed_dirs = sorted(skipped)
 
@@ -721,9 +734,9 @@ class SecurityScanner:
             if disc["method"] == "native":
                 # Native trufflehog on PATH
                 if is_git_repo:
-                    cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update"]
+                    cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update", "--results=verified,unverified"]
                 else:
-                    cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+                    cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update", "--results=verified,unverified"]
                 if config_path:
                     cmd += ["--config", config_path]
                 if exclude_path_file:
@@ -741,9 +754,9 @@ class SecurityScanner:
                 if exclude_path_file:
                     volume_args += ["--volume", f"{exclude_path_file}:{exclude_path_file}:ro"]
                 if is_git_repo:
-                    th_args = ["git", f"file://{root_path}", "--json", "--no-update"]
+                    th_args = ["git", f"file://{root_path}", "--json", "--no-update", "--results=verified,unverified"]
                 else:
-                    th_args = ["filesystem", root_path, "--json", "--no-update"]
+                    th_args = ["filesystem", root_path, "--json", "--no-update", "--results=verified,unverified"]
                 if config_path:
                     th_args += ["--config", config_path]
                 if exclude_path_file:

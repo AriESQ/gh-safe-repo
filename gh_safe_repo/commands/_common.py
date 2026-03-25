@@ -63,7 +63,7 @@ def build_context(args, expected_owner):
     """Authenticate, load config, validate owner, detect plan. Returns CLIContext."""
     # Load config
     try:
-        config = ConfigManager(config_path=args.config)
+        config = ConfigManager(config_path=args.config, require_exists=args.config is not None)
     except ConfigError as e:
         error(str(e))
         sys.exit(1)

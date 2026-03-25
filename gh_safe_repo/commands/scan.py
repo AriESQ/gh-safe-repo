@@ -49,7 +49,7 @@ def run(args):
         sys.exit(2)
 
     try:
-        config = ConfigManager(config_path=args.config)
+        config = ConfigManager(config_path=args.config, require_exists=args.config is not None)
     except ConfigError as e:
         error(str(e))
         sys.exit(1)

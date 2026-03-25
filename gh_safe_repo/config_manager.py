@@ -69,7 +69,8 @@ CONFIG_PATH = Path.home() / ".config" / "gh-safe-repo" / "config.ini"
 
 
 class ConfigManager:
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, *, require_exists=False):
+        self._require_exists = require_exists
         self._path = Path(config_path) if config_path else CONFIG_PATH
         self._config = configparser.ConfigParser()
         self._load()
@@ -85,6 +86,8 @@ class ConfigManager:
                 self._config.read(self._path)
             except configparser.Error as e:
                 raise ConfigError(f"Failed to parse config at {self._path}: {e}")
+        elif self._require_exists:
+            raise ConfigError(f"Config file not found: {self._path}")
 
     def get(self, section, key, fallback=None):
         return self._config.get(section, key, fallback=fallback)

@@ -858,3 +858,98 @@ Run each test doc's full suite before considering these scripts production-ready
 | 9.1 Custom config | Y | | | | | | | Y | Y |
 | 11.1 Abort on findings | Y | | Y | | Y | | | Y | Y |
 | 12.1 Rulesets API | Y | | | | | | | | Y |
+
+---
+
+## Full Manual Test Run — 2026-03-25
+
+Sections 0–13 executed on a free GitHub plan against the `cli-subcommands` branch.
+All tests passed after fixes were applied. Cleanup (section 13) completed — all
+test repos deleted and `/tmp/gsr-*` removed.
+
+### Bugs Found and Fixed
+
+Six commits, eight bugs total. Each commit message references the
+MANUAL_TESTING.md section and line number where the bug was discovered.
+
+| Commit | Section | Bug | Fix |
+|--------|---------|-----|-----|
+| `c81578a` | 0.6 (L78) | Owner check was case-sensitive (`ariesq` ≠ `AriESQ`) | `.lower()` comparison in `build_context()` |
+| `c81578a` | 1.1 (L94) | `create` applied changes without confirmation prompt | Added `[y/N]` prompt + `--yes`/`-y` flag |
+| `904e281` | 2.1 (L163) | `_resolve_branches` picked up CWD git branch (`cli-subcommands`) | Removed `git symbolic-ref` fallback; branches come only from explicit sources |
+| `f787a67` | 5.1 (L340) | `fork_pr_approval_policy` showed perpetual UPDATE on private repos | Pass `is_public` to `ActionsPlugin`; skip fork endpoint on private repos |
+| `b2bb638` | 6.2 (L460) | Regex secret patterns skipped when trufflehog succeeded | Always run regex alongside trufflehog with dedup; add `--results=verified,unverified` |
+| `f9ac3cf` | 6.5 (L510) | TODO pattern only matched `# TODO`, missed `// TODO` etc. | Broadened regex to match any comment style |
+| `f9ac3cf` | 9.2 (L676) | `--config` with non-existent path silently used defaults | `ConfigManager` raises `ConfigError` when explicit path missing |
+| `b82ec36` | 12.1 (L760) | Rulesets POST returned 422; plain creates left repo empty | Added `require_code_owner_review` param; `auto_init=True` for plain creates |
+
+### Tips, Tricks, and Learnings
+
+These notes are relevant both for future manual testing and for designing E2E tests.
+
+**GitHub token scopes matter.** The default `gh auth login` token cannot delete
+repos. You need `gh auth refresh -h github.com -s delete_repo` before cleanup.
+An E2E harness should acquire this scope upfront or document it as a prerequisite.
+
+**trufflehog is a credential verifier, not a pattern scanner.** It requires paired
+credentials (e.g. both AWS access key ID + secret access key) and will not flag
+standalone patterns. Our regex scanner fills this gap. When writing scan test
+fixtures, use realistic paired credentials or test the regex path directly.
+See: https://github.com/trufflesecurity/trufflehog/issues/2940
+
+**trufflehog scanner availability varies.** Results differ depending on whether
+trufflehog is available (native or container). With trufflehog: only paired/verified
+secrets are found. Without: regex catches standalone patterns. E2E tests should
+cover both paths — run with trufflehog available and with `trufflehog_mode = off`.
+
+**Heredoc copy-paste from markdown breaks in terminals.** Indented `EOF` blocks
+from rendered markdown get pasted with leading spaces, causing the heredoc to
+never terminate. Use `echo -e "line1\nline2" > file` instead for test fixture
+creation, or write a setup script.
+
+**GitHub defaults sometimes match safe defaults.** `has_wiki`, `has_issues`,
+`default_workflow_permissions`, and `can_approve_pull_request_reviews` often
+show SKIP even on un-configured repos because GitHub's defaults already align.
+E2E assertions should not hardcode which settings show UPDATE vs SKIP — check
+that actionable changes are non-negative and that re-running produces all SKIPs.
+
+**Empty repos can't have branch protection.** If `auto_init` is false and no
+code is pushed, the repo has zero branches. Both classic branch protection and
+rulesets require at least one branch to exist. E2E tests for branch protection
+must ensure the repo is initialized first.
+
+**`fork_pr_approval_policy` is private-repo-hostile.** The GitHub API returns
+422 for this endpoint on private repos. Both `fetch_current_state()` and `plan()`
+must guard on `is_public`. E2E tests should verify this shows SKIP on private
+repos and UPDATE/SKIP on public repos.
+
+**Rulesets and classic branch protection are separate systems.** Creating
+protection via rulesets does not populate the classic branch protection API (and
+vice versa). A `fix` run after a rulesets-based `create` will see no classic
+protection and try to apply it. This is expected — the two APIs are independent.
+E2E tests should not mix the two unless explicitly testing this interaction.
+
+**The user's GitHub default branch name matters.** Some accounts default to
+`master`, others to `main`. The tool handles this via the API response
+(`default_branch` field), but test assertions should not hardcode branch names.
+
+**Idempotency is the key acceptance criterion.** For every `create` or `fix`,
+run the operation twice. The second run must show 0 actionable changes and all
+SKIPs. This is the single most important E2E assertion.
+
+### E2E Test Design Notes
+
+The manual test sections map naturally to E2E test cases. Key considerations:
+
+- **Fixture repos are expensive.** Each `create` makes 4–8 API calls. Batch
+  related assertions against the same repo where possible (e.g. create + fix
+  idempotency in one test).
+- **Cleanup must be robust.** Use `gh repo delete` in teardown with
+  `delete_repo` scope. A failed test must not leave repos behind.
+- **Plan output is the primary interface.** Parse `--json` output for assertions
+  rather than scraping table output. The JSON schema is stable.
+- **Two scanner configurations.** Test with trufflehog available and with
+  `trufflehog_mode = off` to cover both the trufflehog and regex paths.
+- **Free vs. paid plan gating.** Most testers will be on free plans. Tests
+  should assert that free+private repos show SKIP for gated features, and
+  free+public repos show ADD/UPDATE.

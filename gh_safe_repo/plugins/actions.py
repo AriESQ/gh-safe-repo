@@ -9,6 +9,7 @@ Four API calls:
 """
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
+from ..errors import APIError
 from .base import BasePlugin
 
 # GitHub defaults for Actions on a new repo
@@ -50,6 +51,10 @@ def _parse_patterns(value):
 
 
 class ActionsPlugin(BasePlugin):
+    def __init__(self, client, owner, repo, config, is_public=True):
+        super().__init__(client, owner, repo, config)
+        self.is_public = is_public
+
     def fetch_current_state(self) -> dict:
         perms_path = self.client.repo_path(self.owner, self.repo, "actions/permissions")
         perms = self.client.get_json(perms_path)
@@ -82,14 +87,21 @@ class ActionsPlugin(BasePlugin):
             )
 
         # Fetch fork PR contributor approval policy
-        fork_path = self.client.repo_path(
-            self.owner, self.repo, "actions/permissions/fork-pr-contributor-approval"
-        )
-        fork_data = self.client.get_json(fork_path)
-        state["fork_pr_approval_policy"] = fork_data.get(
-            "approval_policy",
-            GITHUB_DEFAULTS["fork_pr_approval_policy"],
-        )
+        # This endpoint returns 422 on private repos ("not allowed for private repositories")
+        if self.is_public:
+            fork_path = self.client.repo_path(
+                self.owner, self.repo, "actions/permissions/fork-pr-contributor-approval"
+            )
+            try:
+                fork_data = self.client.get_json(fork_path)
+                state["fork_pr_approval_policy"] = fork_data.get(
+                    "approval_policy",
+                    GITHUB_DEFAULTS["fork_pr_approval_policy"],
+                )
+            except APIError:
+                state["fork_pr_approval_policy"] = None
+        else:
+            state["fork_pr_approval_policy"] = None
 
         return state
 
@@ -230,34 +242,42 @@ class ActionsPlugin(BasePlugin):
             )
 
         # --- fork_pr_approval_policy ---
-        desired_fork_policy = settings.get(
-            "fork_pr_approval_policy",
-            GITHUB_DEFAULTS["fork_pr_approval_policy"],
-        )
-        current_fork_policy = baseline.get(
-            "fork_pr_approval_policy",
-            GITHUB_DEFAULTS["fork_pr_approval_policy"],
-        )
-
-        if desired_fork_policy != current_fork_policy:
-            plan.add(
-                Change(
-                    type=ChangeType.UPDATE,
-                    category=ChangeCategory.ACTIONS,
-                    key="fork_pr_approval_policy",
-                    old=current_fork_policy,
-                    new=desired_fork_policy,
+        # Not available for private repos (API returns 422)
+        current_fork_policy = baseline.get("fork_pr_approval_policy")
+        if not self.is_public or current_fork_policy is None:
+            if is_audit:
+                plan.add(
+                    Change(
+                        type=ChangeType.SKIP,
+                        category=ChangeCategory.ACTIONS,
+                        key="fork_pr_approval_policy",
+                        reason="Not available for private repositories",
+                    )
                 )
+        else:
+            desired_fork_policy = settings.get(
+                "fork_pr_approval_policy",
+                GITHUB_DEFAULTS["fork_pr_approval_policy"],
             )
-        elif is_audit:
-            plan.add(
-                Change(
-                    type=ChangeType.SKIP,
-                    category=ChangeCategory.ACTIONS,
-                    key="fork_pr_approval_policy",
-                    reason="Already at desired value",
+            if desired_fork_policy != current_fork_policy:
+                plan.add(
+                    Change(
+                        type=ChangeType.UPDATE,
+                        category=ChangeCategory.ACTIONS,
+                        key="fork_pr_approval_policy",
+                        old=current_fork_policy,
+                        new=desired_fork_policy,
+                    )
                 )
-            )
+            elif is_audit:
+                plan.add(
+                    Change(
+                        type=ChangeType.SKIP,
+                        category=ChangeCategory.ACTIONS,
+                        key="fork_pr_approval_policy",
+                        reason="Already at desired value",
+                    )
+                )
 
         return plan
 

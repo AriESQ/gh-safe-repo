@@ -86,7 +86,7 @@ def run(args):
     # Build plugins and fetch current state per plugin
     plugins = [
         RepositoryPlugin(client, owner, repo_name, config),
-        ActionsPlugin(client, owner, repo_name, config),
+        ActionsPlugin(client, owner, repo_name, config, is_public=is_public),
         BranchProtectionPlugin(
             client, owner, repo_name, config,
             is_public=is_public, is_paid_plan=is_paid_plan,

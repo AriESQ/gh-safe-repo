@@ -68,6 +68,45 @@ a real client.
 `ConfigManager`. The scanner only calls `config.getbool()` and `config.get()` so a full
 `ConfigManager` instance is not needed.
 
+## E2E tests (`tests/e2e/`)
+
+End-to-end tests that run the real `gh-safe-repo` binary via subprocess with no mocking.
+Organized into three tiers by dependency level:
+
+| File | Tier | Dependencies | Tests |
+|---|---|---|---|
+| `test_input_validation.py` | 1 | None | Help output, bad repo args, mutually exclusive flags, config errors |
+| `test_scan.py` | 1 | Filesystem only | Scan for secrets, emails, large files, TODOs, AI context files |
+| `test_auth_errors.py` | 2 | `gh auth token` | Wrong owner, --json/--debug output, custom config, plan-level gating |
+| `test_live_api.py` | 3 | `gh auth token` + `E2E_LIVE=1` | Create/fix/delete real repos, idempotency, pre-flight scan abort |
+
+### Running E2E tests
+
+```bash
+# Tier 1 — no auth or network needed
+uv run pytest tests/e2e/test_input_validation.py tests/e2e/test_scan.py -v
+
+# Tier 2 — requires gh auth login
+uv run pytest tests/e2e/test_auth_errors.py -v
+
+# Tier 3 — creates/deletes real repos (requires E2E_LIVE + delete_repo scope)
+gh auth refresh -h github.com -s delete_repo
+E2E_LIVE=1 uv run pytest tests/e2e/test_live_api.py -v
+
+# All E2E tests
+E2E_LIVE=1 uv run pytest tests/e2e/ -v
+
+# Skip slow tests (e.g. 150MB large file scan)
+uv run pytest tests/e2e/ -v -m "not slow"
+```
+
+### Prerequisites for Tier 3
+
+- `gh auth login` with a token that has `delete_repo` scope
+- `E2E_LIVE=1` environment variable set
+- Tests use unique repo names (`gsr-e2e-{uuid}-{test}`) and clean up on teardown
+- Recommended: use a dedicated bot account, not your main GitHub account
+
 ## Adding tests
 
 - Plugin tests go in `test_plugins.py`. Mock `GitHubClient` via `make_mock_client()` and

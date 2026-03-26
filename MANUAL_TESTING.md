@@ -643,8 +643,8 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-debug-01 --dry-run --debug
 **Expected:** All normal output PLUS lines like:
 
 ```
-[DEBUG] GET /user -> 200
-[DEBUG] GET /repos/YOUR_USERNAME/gsr-test-debug-01 -> 404
+[debug] GET /user
+[debug] GET /repos/YOUR_USERNAME/gsr-test-debug-01
 ```
 
 No tokens or credentials appear in debug output (sanitized URLs).

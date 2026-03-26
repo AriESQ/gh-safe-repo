@@ -104,8 +104,8 @@ class TestDebugOutput:
         )
         assert r.returncode == 0
         combined = r.stderr + r.stdout
-        # Debug output should show API calls like "[DEBUG] GET /user -> 200"
-        assert "[DEBUG]" in combined
+        # Debug output should show API calls like "[debug] GET /user"
+        assert "[debug]" in combined
         assert "GET" in combined
 
 

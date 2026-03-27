@@ -6,7 +6,7 @@ Create GitHub repositories with safe defaults applied automatically. Replaces th
 gh-safe-repo create <owner/repo>
 ```
 
-Branch protection, immutable tags, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
+Branch protection, immutable tags, Dependabot, restricted Actions permissions, secret scanning with push protection, and disabled wiki and projects — all configured before you write your first line of code.
 
 ---
 
@@ -57,8 +57,8 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Wiki | Enabled | **Disabled** | |
 | Projects | Enabled | **Disabled** | |
 | Issues | Enabled | Enabled | |
-| Delete branch on merge | Off | **On** | Auto-cleanup |
-| Allow merge commits | On | **Off** | Squash and rebase only |
+| Delete branch on merge | Off | Off | Set to `true` in config for auto-cleanup |
+| Allow merge commits | On | On | Set to `false` in config for squash-only |
 | Allow squash merge | On | On | |
 | Allow rebase merge | On | On | |
 
@@ -70,7 +70,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Default workflow permissions | Read/write | **Read-only** |
 | Actions can approve PRs | Yes | **No** |
 | Require SHA pinning | No | **Yes** (workflows must pin actions to a commit SHA, not a mutable tag) |
-| Fork PR approval policy | First-time contributors new to GitHub | **All external contributors** (require approval before running workflows on fork PRs) |
+| Fork PR approval policy | First-time contributors new to GitHub | **All external contributors** — require approval before fork PR workflows run CI. Options: brand-new GitHub accounts only (GitHub default), first-time repo contributors, or all fork PRs (safest) |
 
 ### Branch protection (public repos, or any repo on a paid plan)
 
@@ -93,7 +93,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Prevent tag update (rewriting) | Yes |
 | Admin bypass | Yes (consistent with branch protection) |
 
-Tag protection uses the Rulesets API exclusively — there is no "classic" tag protection equivalent. This means it has the same plan-level restrictions as branch protection rulesets.
+Tag protection uses the Rulesets API exclusively — there is no "classic" tag protection equivalent. This only works on public repos or paid GitHub plans (same restriction as branch protection). Free-plan private repos will see this skipped in the plan output.
 
 ### Security
 
@@ -252,8 +252,6 @@ $ gh-safe-repo create <owner/repo> --dry-run
   Repository          ADD     repository                       my-project (private)
   Repository          ADD     has_wiki                         false
   Repository          ADD     has_projects                     false
-  Repository          ADD     delete_branch_on_merge           true
-  Repository          ADD     allow_merge_commit               false
   Actions             ADD     default_workflow_permissions     read
   Actions             ADD     can_approve_pull_request_reviews false
   Branch Protection   SKIP    branch_protection                Not available for private repos on free plan
@@ -548,12 +546,13 @@ has_wiki = false
 has_projects = false
 has_issues = true
 
-# Clean up merged branches automatically
-delete_branch_on_merge = true
+# Auto-delete head branches after merge (default: off, matching GitHub)
+delete_branch_on_merge = false
 
-# Merge strategy: disable merge commits, keep squash and rebase
+# Merge strategies (all enabled by default, matching GitHub)
+# Set allow_merge_commit = false for squash-only workflows
 allow_squash_merge = true
-allow_merge_commit = false
+allow_merge_commit = true
 allow_rebase_merge = true
 
 # Do not initialize with a README — keeps the remote empty so pushing is seamless
@@ -614,7 +613,8 @@ allow_deletions = false
 
 
 [tag_protection]
-# Immutable tags via Rulesets API (same plan restrictions as branch protection).
+# Immutable tags via Rulesets API.
+# Only works on public repos or paid GitHub plans (same restriction as branch protection).
 # Glob pattern(s) for tags to protect — comma-separated.
 protected_tags = *
 

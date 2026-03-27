@@ -48,15 +48,13 @@ class TestRepositoryPlugin:
         assert wiki_change.old is True
         assert wiki_change.new is False
 
-    def test_plan_includes_update_for_delete_branch_on_merge(self):
+    def test_plan_no_update_for_delete_branch_on_merge(self):
         client = make_mock_client()
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
         dbom = next((c for c in updates if c.key == "delete_branch_on_merge"), None)
-        assert dbom is not None
-        assert dbom.old is False
-        assert dbom.new is True
+        assert dbom is None  # safe default matches GitHub default, no change needed
 
     def test_apply_posts_to_user_repos(self):
         client = make_mock_client()
@@ -83,7 +81,7 @@ class TestRepositoryPlugin:
         assert len(patch_calls) == 1
         patch_body = patch_calls[0].args[2]
         assert patch_body.get("has_wiki") is False
-        assert patch_body.get("delete_branch_on_merge") is True
+        assert "delete_branch_on_merge" not in patch_body  # matches GitHub default
 
     def test_apply_raises_repo_exists_on_422(self):
         client = make_mock_client()
@@ -760,9 +758,9 @@ class TestRepositoryPluginAudit:
             "has_wiki": False,
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
@@ -777,9 +775,9 @@ class TestRepositoryPluginAudit:
             "has_wiki": True,
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
@@ -792,22 +790,22 @@ class TestRepositoryPluginAudit:
 
     def test_plan_audit_emits_skip_for_match(self):
         client = make_mock_client()
-        # delete_branch_on_merge already True (matches desired)
+        # has_wiki already False (matches desired)
         current_state = {
             "private": True,
             "has_wiki": False,
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
-        assert any(c.key == "delete_branch_on_merge" for c in skips)
-        skip = next(c for c in skips if c.key == "delete_branch_on_merge")
+        assert any(c.key == "has_wiki" for c in skips)
+        skip = next(c for c in skips if c.key == "has_wiki")
         assert skip.reason == "Already at desired value"
 
     def test_apply_audit_skips_post(self):
@@ -819,9 +817,9 @@ class TestRepositoryPluginAudit:
             "has_wiki": True,  # differs → UPDATE
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())

@@ -57,7 +57,7 @@ API and tool quirks that affect future work. For full context on any of these, s
 - `auto_init` must be `false` when `--local` or `--from` is used (avoids push rejection)
 - `bp_plugin.apply()` must run after code push (`--local`/`--from`) — branch must exist first
 - Tag protection uses Rulesets API exclusively (`POST /repos/{owner}/{repo}/rulesets` with `target: "tag"`); no classic equivalent exists
-- Tag protection has same plan-level gating as branch protection (free+private → SKIP)
+- Tag protection only works on public repos or paid GitHub plans (free+private → SKIP), same as branch protection
 - `is_public` derived from config after `apply_overrides()`, not from `args.public` directly
 - `--from` uses `owner/repo` format; works with both private (default) and public destinations
 - `--dry-run` makes zero API calls (including no repo-exists check)

@@ -107,8 +107,6 @@ Plan for YOUR_USERNAME/gsr-test-private-01:
   ADD     REPO              create_repo                      private
   ADD     REPO              has_wiki                         false
   ADD     REPO              has_projects                     false
-  ADD     REPO              delete_branch_on_merge           true
-  ADD     REPO              allow_merge_commit               false
   ADD     ACTIONS           allowed_actions                  selected
   ADD     ACTIONS           verified_allowed                 true
   ADD     ACTIONS           sha_pinning_required             true
@@ -367,8 +365,6 @@ gh-safe-repo fix YOUR_USERNAME/gsr-test-fix-target-01
 **Expected — plan table shows UPDATE rows** for all settings that differ from safe defaults:
 - `has_wiki`: true → false
 - `has_projects`: true → false
-- `delete_branch_on_merge`: false → true
-- `allow_merge_commit`: true → false
 - `sha_pinning_required`: false → true
 - `default_workflow_permissions`: write → read
 - `can_approve_pull_request_reviews`: true → false

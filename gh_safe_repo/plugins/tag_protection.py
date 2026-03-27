@@ -2,7 +2,8 @@
 Tag protection plugin — creates a Ruleset to make tags immutable.
 
 Uses the Rulesets API (POST /repos/{owner}/{repo}/rulesets) with target=tag.
-Same plan-level restrictions as branch protection: free+private repos cannot use rulesets.
+Only works on public repos or paid GitHub plans — free-plan private repos
+cannot use rulesets (same restriction as branch protection).
 """
 
 import json

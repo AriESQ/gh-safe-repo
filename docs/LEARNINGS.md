@@ -4,7 +4,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 ## Phase 1 (MVP)
 
-**`allow_merge_commit` is an additional safe default.** GitHub defaults it to `true`; we set it to `false`. This wasn't in the original planning docs but is now applied and tested.
+**`allow_merge_commit` was reverted to match GitHub's default (`true`).** Originally set to `false` as a safe default, it was later removed because disabling merge commits is a workflow preference, not a security setting. Users who want squash-only can set `allow_merge_commit = false` in their config.
 
 **`gh api` body passing pattern.** JSON request bodies are passed via `--input -` with the JSON written to stdin — not via `--field` flags. `--field` only handles simple key=value pairs and doesn't support nested objects. See `gh_safe_repo/github_client.py:call_api()`.
 

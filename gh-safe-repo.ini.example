@@ -1,5 +1,5 @@
 # gh-safe-repo configuration
-# Copy to ~/.config/gh-safe-repo/config.ini and edit as needed.
+# Copy to ~/.config/gh-safe-repo/gh-safe-repo.ini or ./gh-safe-repo.ini and edit as needed.
 # All values shown here are the safe defaults — you only need to specify
 # values you want to change.
 

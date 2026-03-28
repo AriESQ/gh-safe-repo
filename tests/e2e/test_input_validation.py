@@ -129,7 +129,7 @@ class TestConfigFileHandling:
         """
         r = run(
             "create", "alice/my-repo",
-            "--config", "/tmp/path-that-does-not-exist/config.ini",
+            "--config", "/tmp/path-that-does-not-exist/gh-safe-repo.ini",
             "--dry-run",
         )
         assert r.returncode == 1

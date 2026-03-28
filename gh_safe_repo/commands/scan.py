@@ -35,11 +35,6 @@ def add_arguments(parser):
         metavar="PATH",
         help="Path to config file (default: ~/.config/gh-safe-repo/config.ini)",
     )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit findings as JSON",
-    )
 
 
 def run(args):

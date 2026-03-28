@@ -223,7 +223,6 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 
 | Option | Description |
 |---|---|
-| `--json` | Emit findings as JSON |
 | `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
 | `--debug` | Show scanner details |
 

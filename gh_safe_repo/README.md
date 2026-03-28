@@ -64,7 +64,7 @@ cli.main()
 
 1. Identify the GitHub API endpoint.
 2. Add the key and safe default to `config_manager.py:ConfigManager.SAFE_DEFAULTS`.
-3. Add the corresponding entry (with a comment) to `config.ini.example` in the repo root.
+3. Add the corresponding entry (with a comment) to `gh-safe-repo.ini.example` in the repo root.
 4. Update the appropriate plugin's `plan()` and `apply()` methods.
 5. Add tests in `tests/test_plugins.py` — all `subprocess` calls must be mocked.
 

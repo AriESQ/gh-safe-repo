@@ -206,7 +206,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
-| `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
+| `--config PATH` | Path to config file (default: `./gh-safe-repo.ini` or `~/.config/gh-safe-repo/gh-safe-repo.ini`) |
 | `--debug` | Print every API call and response |
 
 ### `fix` — Audit and fix an existing repo
@@ -216,14 +216,14 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Show settings diff without applying changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
-| `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
+| `--config PATH` | Path to config file (default: `./gh-safe-repo.ini` or `~/.config/gh-safe-repo/gh-safe-repo.ini`) |
 | `--debug` | Print every API call and response |
 
 ### `scan` — Local secret scanning
 
 | Option | Description |
 |---|---|
-| `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
+| `--config PATH` | Path to config file (default: `./gh-safe-repo.ini` or `~/.config/gh-safe-repo/gh-safe-repo.ini`) |
 | `--debug` | Show scanner details |
 
 Exit code is `0` if no critical findings, `1` if criticals are found.
@@ -520,17 +520,23 @@ When banned strings or AI context files are found the scanner prints a ready-to-
 
 ## Configuration
 
-`gh-safe-repo` reads from `~/.config/gh-safe-repo/config.ini`. All values have safe defaults — no config file is required to get started.
+`gh-safe-repo` looks for configuration in this order (first match wins):
+
+1. **`--config PATH`** — explicit override
+2. **`./gh-safe-repo.ini`** — current working directory
+3. **`$XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini`** — defaults to `~/.config` when `$XDG_CONFIG_HOME` is unset
+
+All values have safe defaults — no config file is required to get started.
+
+A fully-annotated example config is included in the repository as `gh-safe-repo.ini.example`. Copy it to get started:
 
 ```bash
-# Use a custom config file
-gh-safe-repo create <owner/repo> --config ./my-config.ini
-```
+# User-level config (XDG)
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gh-safe-repo"
+cp gh-safe-repo.ini.example "${XDG_CONFIG_HOME:-$HOME/.config}/gh-safe-repo/gh-safe-repo.ini"
 
-A fully-annotated example config is included in the repository as `config.ini.example`. Copy it to get started:
-
-```bash
-cp config.ini.example ~/.config/gh-safe-repo/config.ini
+# Or project-level config (current directory)
+cp gh-safe-repo.ini.example ./gh-safe-repo.ini
 ```
 
 ### Full configuration reference
@@ -707,7 +713,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 gh-safe-repo create <owner/repo>
       │
       ├─ Parse owner/repo, validate owner matches authenticated user
-      ├─ Load config (~/.config/gh-safe-repo/config.ini)
+      ├─ Load config (./gh-safe-repo.ini or $XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini)
       ├─ Apply CLI flag overrides (--public, etc.)
       ├─ Authenticate via gh CLI or GITHUB_TOKEN
       ├─ GET /user → owner login + plan level  (single cached call)
@@ -796,7 +802,7 @@ gh-safe-repo/
 │   │   └── scan.py       # scan subcommand
 │   └── plugins/          # Settings plugins (one per category)
 ├── pyproject.toml        # Build config, entry points
-├── config.ini.example    # Fully annotated example config
+├── gh-safe-repo.ini.example  # Fully annotated example config
 └── tests/
 ```
 

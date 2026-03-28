@@ -6,7 +6,9 @@ Create GitHub repositories with safe defaults applied automatically. Replaces th
 gh-safe-repo create <owner/repo>
 ```
 
-Branch protection, immutable tags, Dependabot, restricted Actions permissions, secret scanning with push protection, and disabled wiki and projects — all configured before you write your first line of code.
+Branch protection, immutable tags, Dependabot, restricted Actions permissions, secret scanning with push protection, and disabled wiki and projects — all configured before you write your first line of code.  
+
+gh-safe-repo is undergoing heavy development. It works well for the use-case of creating a new repo with secure defaults. I am working on polishing the CLI options to best align with users expectations. Expect breaking changes until we get to a point where I'm doing releases, and have CI/CD nailed down. ✌️
 
 ---
 

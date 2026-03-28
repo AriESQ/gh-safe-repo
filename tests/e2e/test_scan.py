@@ -44,7 +44,7 @@ class TestScanEmailAddress:
     def test_email_shows_warning(self, tmp_scan_dir):
         readme = os.path.join(tmp_scan_dir, "README.md")
         with open(readme, "w") as f:
-            f.write("Contact: user@example.com\n")
+            f.write("Contact: example@example.com\n")
 
         r = run("scan", tmp_scan_dir)
         assert "[WARNING]" in r.stdout

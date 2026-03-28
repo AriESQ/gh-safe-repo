@@ -11,6 +11,7 @@ Always runs locally — never in GitHub Actions.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -861,9 +862,32 @@ class SecurityScanner:
 
 # --- Module-level utility ---
 
+def _view_hint(f: "Finding") -> str:
+    """Build a 'View with: ...' command string for a finding.
+
+    File paths and commit hashes originate from untrusted content
+    (trufflehog JSON, filesystem walk), so every interpolated value
+    is shell-quoted via shlex.quote().
+    """
+    if not f.line_number and not f.commit:
+        return ""
+    if f.commit:
+        ref = shlex.quote(f"{f.commit}:{f.file_path}")
+        if not f.line_number:
+            return f"git show {ref}"
+        ctx = 4  # lines of context on each side
+        start = max(1, f.line_number - ctx)
+        end = f.line_number + ctx
+        return f"git show {ref} | sed -n '{start},{end}p'"
+    ctx = 4
+    start = max(1, f.line_number - ctx)
+    end = f.line_number + ctx
+    return f"sed -n '{start},{end}p' {shlex.quote(f.file_path)}"
+
+
 def format_findings(findings: List[Finding]) -> str:
     """
-    Pure formatting: "[SEVERITY] rule in file:line" + match line if not redacted.
+    Pure formatting: "[SEVERITY] rule in file:line" + view hint + match line.
     Used in tests to verify output shape without ANSI codes.
     """
     if not findings:
@@ -877,6 +901,9 @@ def format_findings(findings: List[Finding]) -> str:
                 loc += f", {f.timestamp}"
             loc += ")"
         lines.append(f"[{f.severity.value}] {f.rule} in {loc}")
+        hint = _view_hint(f)
+        if hint:
+            lines.append(f"  View with: {hint}")
         if f.match and f.match != "[redacted]":
             lines.append(f"  {f.match[:80]}")
     return "\n".join(lines)

@@ -12,7 +12,7 @@ from ..config_manager import ConfigManager
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError
 from ..github_client import GitHubClient
-from ..security_scanner import FindingCategory, SecurityScanner, Severity
+from ..security_scanner import FindingCategory, SecurityScanner, Severity, _view_hint
 
 # ANSI escape codes
 _RESET  = "\033[0m"
@@ -270,6 +270,9 @@ def _print_findings(findings, config):
             if f.timestamp:
                 detail += f"  {f.timestamp}"
             print(_c(_DIM, detail))
+        hint = _view_hint(f)
+        if hint:
+            print(_c(_DIM, f"             View with: {hint}"))
         if f.match and f.match != "[redacted]":
             for match_line in f.match.splitlines():
                 print(_c(_DIM, f"             {match_line}"))
@@ -282,6 +285,9 @@ def _print_findings(findings, config):
             if f.timestamp:
                 detail += f"  {f.timestamp}"
             print(_c(_DIM, detail))
+        hint = _view_hint(f)
+        if hint:
+            print(_c(_DIM, f"             View with: {hint}"))
         if f.match and f.match != "[redacted]":
             print(_c(_DIM, f"             {f.match[:80]}"))
     for f in infos:
@@ -295,9 +301,10 @@ def _print_findings(findings, config):
         if s.strip()
     ]
     if banned_strings and any(f.category == FindingCategory.BANNED_STRING for f in findings):
+        import shlex
         print(_c(_BOLD, "Banned strings found. To scrub from git history, run in your source repo:"))
         replacements = "\n".join(f"literal:{s}==>***REMOVED***" for s in banned_strings)
-        print(_c(_DIM, f"  git filter-repo --replace-text <(printf '{replacements}')"))
+        print(_c(_DIM, f"  git filter-repo --replace-text <(printf %s {shlex.quote(replacements)})"))
         print()
 
     return bool(criticals)

@@ -176,11 +176,11 @@ class TestEmailScanning:
     def test_detects_email_address(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
-            write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
+            write_file(tmpdir, "readme.md", "Contact: example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) >= 1
-        assert emails[0].match == "alice@example.com"
+        assert emails[0].match == "example@example.com"
 
     def test_email_shows_literal_match(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -246,7 +246,7 @@ class TestSkipBehavior:
         with tempfile.TemporaryDirectory() as tmpdir:
             scanner = make_scanner()
             # Write a .png file with email-like content — should be skipped
-            write_file(tmpdir, "image.png", "alice@example.com\n")
+            write_file(tmpdir, "image.png", "example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -256,7 +256,7 @@ class TestSkipBehavior:
             scanner = make_scanner()
             git_dir = os.path.join(tmpdir, ".git")
             os.makedirs(git_dir)
-            write_file(git_dir, "config", "alice@example.com\n")
+            write_file(git_dir, "config", "example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -266,7 +266,7 @@ class TestSkipBehavior:
             scanner = make_scanner()
             nm_dir = os.path.join(tmpdir, "node_modules")
             os.makedirs(nm_dir)
-            write_file(nm_dir, "index.js", "alice@example.com\n")
+            write_file(nm_dir, "index.js", "example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -276,7 +276,7 @@ class TestSkipBehavior:
             scanner = make_scanner()
             pycache_dir = os.path.join(tmpdir, "__pycache__")
             os.makedirs(pycache_dir)
-            write_file(pycache_dir, "module.pyc", "alice@example.com\n")
+            write_file(pycache_dir, "module.pyc", "example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -286,7 +286,7 @@ class TestSkipBehavior:
             scanner = make_scanner()
             venv_dir = os.path.join(tmpdir, ".venv")
             os.makedirs(venv_dir)
-            write_file(venv_dir, "site.py", "alice@example.com\n")
+            write_file(venv_dir, "site.py", "example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -362,7 +362,7 @@ class TestTruffleHogIntegration:
                 ("pre_flight_scan", "trufflehog_mode"): "auto",
                 ("pre_flight_scan", "scan_for_todos"): "false",
             })
-            write_file(tmpdir, "file.txt", "alice@example.com\n")
+            write_file(tmpdir, "file.txt", "example@example.com\n")
             # truffleHog returns success with no findings (non-None empty list)
             scanner._try_trufflehog = MagicMock(return_value=[])
             findings = scanner.scan(tmpdir)
@@ -761,7 +761,7 @@ class TestExcludePaths:
             scanner = make_scanner({
                 ("pre_flight_scan", "scan_exclude_paths"): r"docs/",
             })
-            write_file(tmpdir, "docs/api.json", "contact: alice@example.com\n")
+            write_file(tmpdir, "docs/api.json", "contact: example@example.com\n")
             findings = scanner.scan(tmpdir)
         assert findings == []
 
@@ -802,8 +802,8 @@ class TestExcludePaths:
                 ("pre_flight_scan", "scan_for_todos"): "false",
                 ("pre_flight_scan", "scan_for_secrets"): "false",
             })
-            write_file(tmpdir, "docs/api.json", "contact: alice@example.com\n")
-            write_file(tmpdir, "src/main.py", "contact: bob@example.com\n")
+            write_file(tmpdir, "docs/api.json", "contact: example@example.com\n")
+            write_file(tmpdir, "src/main.py", "contact: example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) == 1
@@ -814,8 +814,8 @@ class TestExcludePaths:
             scanner = make_scanner({
                 ("pre_flight_scan", "scan_exclude_paths"): r"docs/, tests/",
             })
-            write_file(tmpdir, "docs/api.json", "alice@example.com\n")
-            write_file(tmpdir, "tests/test_foo.py", "alice@example.com\n")
+            write_file(tmpdir, "docs/api.json", "example@example.com\n")
+            write_file(tmpdir, "tests/test_foo.py", "example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -874,7 +874,7 @@ class TestExcludeEmails:
             scanner = make_scanner({
                 ("pre_flight_scan", "exclude_emails"): "@example.com",
             })
-            write_file(tmpdir, "readme.md", "Contact: alice@example.com\n")
+            write_file(tmpdir, "readme.md", "Contact: example@example.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -907,7 +907,7 @@ class TestExcludeEmails:
                 ("pre_flight_scan", "exclude_emails"): "action@github.com, @example.com, @domain.tld",
             })
             write_file(tmpdir, "readme.md",
-                       "action@github.com\nalice@example.com\nuser@domain.tld\nbob@real.io\n")
+                       "action@github.com\nexample@example.com\nuser@domain.tld\nbob@real.io\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert len(emails) == 1
@@ -918,7 +918,7 @@ class TestExcludeEmails:
             scanner = make_scanner({
                 ("pre_flight_scan", "exclude_emails"): "@Example.COM, Action@GitHub.com",
             })
-            write_file(tmpdir, "readme.md", "alice@example.com\naction@github.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\naction@github.com\n")
             findings = scanner.scan(tmpdir)
         emails = [f for f in findings if f.category == FindingCategory.EMAIL]
         assert emails == []
@@ -940,32 +940,32 @@ class TestEmailHistoryScanning:
     def test_email_in_history_produces_finding(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "readme.md", "Contact: dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "Contact: example@example.com\n")
             git_add_commit(tmpdir, "add readme")
             scanner = make_scanner()
             findings = scanner.scan(tmpdir)
         history = [f for f in findings if f.rule == "Email address in git history"]
         assert len(history) >= 1
-        assert history[0].match == "dev@corp.com"
+        assert history[0].match == "example@example.com"
         assert history[0].commit  # non-empty short hash
         assert history[0].timestamp  # non-empty ISO timestamp
 
     def test_deleted_email_still_found_in_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "secret.txt", "leak@corp.com\n")
+            write_file(tmpdir, "secret.txt", "example@example.com\n")
             git_add_commit(tmpdir, "add secret")
             write_file(tmpdir, "secret.txt", "cleaned\n")
             git_add_commit(tmpdir, "clean up")
             scanner = make_scanner()
             findings = scanner.scan(tmpdir)
         history = [f for f in findings if f.rule == "Email address in git history"]
-        assert any(f.match == "leak@corp.com" for f in history)
+        assert any(f.match == "example@example.com" for f in history)
 
     def test_exclude_emails_domain_applies_to_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "readme.md", "user@example.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\n")
             git_add_commit(tmpdir, "add readme")
             scanner = make_scanner({
                 ("pre_flight_scan", "exclude_emails"): "@example.com",
@@ -991,7 +991,7 @@ class TestEmailHistoryScanning:
     def test_scan_exclude_paths_applies_to_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "vendor/lib.txt", "dev@corp.com\n")
+            write_file(tmpdir, "vendor/lib.txt", "example@example.com\n")
             git_add_commit(tmpdir, "add vendor")
             scanner = make_scanner({
                 ("pre_flight_scan", "scan_exclude_paths"): "vendor/",
@@ -1003,33 +1003,33 @@ class TestEmailHistoryScanning:
     def test_deduplication_same_email_same_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\n")
             git_add_commit(tmpdir, "commit 1")
-            write_file(tmpdir, "readme.md", "updated dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "updated example@example.com\n")
             git_add_commit(tmpdir, "commit 2")
             scanner = make_scanner()
             findings = scanner.scan(tmpdir)
         history = [f for f in findings if f.rule == "Email address in git history"]
-        matches = [f for f in history if f.match == "dev@corp.com" and f.file_path == "readme.md"]
+        matches = [f for f in history if f.match == "example@example.com" and f.file_path == "readme.md"]
         assert len(matches) == 1
 
     def test_same_email_different_files_separate_findings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "a.txt", "dev@corp.com\n")
-            write_file(tmpdir, "b.txt", "dev@corp.com\n")
+            write_file(tmpdir, "a.txt", "example@example.com\n")
+            write_file(tmpdir, "b.txt", "example@example.com\n")
             git_add_commit(tmpdir, "add both")
             scanner = make_scanner()
             findings = scanner.scan(tmpdir)
         history = [f for f in findings
-                   if f.rule == "Email address in git history" and f.match == "dev@corp.com"]
+                   if f.rule == "Email address in git history" and f.match == "example@example.com"]
         files = {f.file_path for f in history}
         assert "a.txt" in files
         assert "b.txt" in files
 
     def test_non_git_repo_no_history_findings(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\n")
             scanner = make_scanner()
             findings = scanner.scan(tmpdir)
         history = [f for f in findings if f.rule == "Email address in git history"]
@@ -1038,7 +1038,7 @@ class TestEmailHistoryScanning:
     def test_scan_for_emails_false_skips_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\n")
             git_add_commit(tmpdir, "add")
             scanner = make_scanner({
                 ("pre_flight_scan", "scan_for_emails"): "false",
@@ -1050,7 +1050,7 @@ class TestEmailHistoryScanning:
     def test_scan_email_history_false_skips_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\n")
             git_add_commit(tmpdir, "add")
             scanner = make_scanner({
                 ("pre_flight_scan", "scan_email_history"): "false",
@@ -1062,7 +1062,7 @@ class TestEmailHistoryScanning:
     def test_finding_has_warning_severity(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             make_git_repo(tmpdir)
-            write_file(tmpdir, "readme.md", "dev@corp.com\n")
+            write_file(tmpdir, "readme.md", "example@example.com\n")
             git_add_commit(tmpdir, "add")
             scanner = make_scanner()
             findings = scanner.scan(tmpdir)
@@ -1093,7 +1093,7 @@ class TestFormatFindings:
             file_path="readme.md",
             line_number=10,
             rule="Email address",
-            match="user@example.com",
+            match="example@example.com",
         )]
         output = format_findings(findings)
         assert "readme.md:10" in output
@@ -1108,9 +1108,10 @@ class TestFormatFindings:
             match="[redacted]",
         )]
         output = format_findings(findings)
-        # Only one line for a redacted finding — no extra match line
+        # Two lines: header + view hint, no match line for redacted
         lines = output.splitlines()
-        assert len(lines) == 1
+        assert len(lines) == 2
+        assert "[redacted]" not in output
 
     def test_literal_email_shown_in_output(self):
         findings = [Finding(
@@ -1119,10 +1120,119 @@ class TestFormatFindings:
             file_path="docs.md",
             line_number=3,
             rule="Email address",
-            match="alice@example.com",
+            match="example@example.com",
         )]
         output = format_findings(findings)
-        assert "alice@example.com" in output
+        assert "example@example.com" in output
+
+    def test_view_hint_for_trufflehog_finding(self):
+        findings = [Finding(
+            severity=Severity.CRITICAL,
+            category=FindingCategory.SECRET,
+            file_path="github_stars.json",
+            line_number=13819,
+            rule="Secret detected by truffleHog (Box)",
+            match="[redacted]",
+            commit="7a4e0375",
+            timestamp="2026-03-27 23:21:01 +0000",
+        )]
+        output = format_findings(findings)
+        assert "View with: git show 7a4e0375:github_stars.json | sed -n '13815,13823p'" in output
+
+    def test_view_hint_for_regex_finding(self):
+        findings = [Finding(
+            severity=Severity.CRITICAL,
+            category=FindingCategory.SECRET,
+            file_path="config.py",
+            line_number=5,
+            rule="AWS Access Key ID",
+            match="[redacted]",
+        )]
+        output = format_findings(findings)
+        assert "View with: sed -n '1,9p' config.py" in output
+
+    def test_no_view_hint_when_no_line_number(self):
+        findings = [Finding(
+            severity=Severity.WARNING,
+            category=FindingCategory.LARGE_FILE,
+            file_path="big.bin",
+            line_number=0,
+            rule="Large file",
+            match="15 MB",
+        )]
+        output = format_findings(findings)
+        assert "View with:" not in output
+
+    def test_view_hint_quotes_spaces_in_filename(self):
+        findings = [Finding(
+            severity=Severity.CRITICAL,
+            category=FindingCategory.SECRET,
+            file_path="my secrets/creds file.env",
+            line_number=10,
+            rule="AWS Access Key ID",
+            match="[redacted]",
+        )]
+        output = format_findings(findings)
+        assert "sed -n '6,14p' 'my secrets/creds file.env'" in output
+
+    def test_view_hint_quotes_single_quotes_in_filename(self):
+        findings = [Finding(
+            severity=Severity.CRITICAL,
+            category=FindingCategory.SECRET,
+            file_path="it's a file.txt",
+            line_number=1,
+            rule="AWS Access Key ID",
+            match="[redacted]",
+        )]
+        output = format_findings(findings)
+        hint_line = [l for l in output.splitlines() if "View with:" in l][0]
+        # The hint must not contain an unquoted single quote that would break shell parsing
+        assert "it's a file.txt" not in hint_line
+        # shlex.quote wraps the path so the quote is escaped
+        assert "View with: sed" in hint_line
+
+    def test_view_hint_quotes_shell_metacharacters(self):
+        findings = [Finding(
+            severity=Severity.CRITICAL,
+            category=FindingCategory.SECRET,
+            file_path="$(rm -rf /).txt",
+            line_number=5,
+            rule="AWS Access Key ID",
+            match="[redacted]",
+        )]
+        output = format_findings(findings)
+        hint_line = [l for l in output.splitlines() if "View with:" in l][0]
+        # The $() must be quoted so it won't execute
+        assert "$(rm -rf /)" not in hint_line or "'$(rm -rf /).txt'" in hint_line
+
+    def test_view_hint_for_git_history_email_no_line_number(self):
+        findings = [Finding(
+            severity=Severity.WARNING,
+            category=FindingCategory.EMAIL,
+            file_path="public/github_stars.json",
+            line_number=0,
+            rule="Email address in git history",
+            match="example@example.com",
+            commit="c216887",
+            timestamp="2026-03-27T19:21:01-04:00",
+        )]
+        output = format_findings(findings)
+        assert "View with: git show c216887:public/github_stars.json" in output
+        # No sed since there's no line number
+        assert "sed" not in output
+
+    def test_view_hint_quotes_trufflehog_path_with_spaces(self):
+        findings = [Finding(
+            severity=Severity.CRITICAL,
+            category=FindingCategory.SECRET,
+            file_path="src/my config.json",
+            line_number=20,
+            rule="Secret detected by truffleHog (AWS)",
+            match="[redacted]",
+            commit="abcd1234",
+        )]
+        output = format_findings(findings)
+        assert "git show 'abcd1234:src/my config.json'" in output
 
 
 class TestSkipDirsGitAware:

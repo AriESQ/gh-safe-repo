@@ -13,6 +13,7 @@ from gh_safe_repo.commands._common import (
     parse_repo_arg,
 )
 from gh_safe_repo.cli import main
+from gh_safe_repo.commands import create, fix, scan
 from gh_safe_repo.config_manager import ConfigManager
 from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
 from gh_safe_repo.security_scanner import SecurityScanner
@@ -279,6 +280,46 @@ class TestScannerDescriptionInPlan:
 
         captured = capsys.readouterr()
         assert "regex only" in captured.out
+
+
+class TestNoDeadFlags:
+    """Every optional CLI flag must be referenced in its command's run() function.
+
+    This prevents flags that are accepted by argparse but silently ignored
+    at runtime (e.g. --json was once accepted by 'scan' but never read).
+    """
+
+    @pytest.mark.parametrize("cmd_module", [create, fix, scan], ids=lambda m: m.NAME)
+    def test_all_flags_referenced_in_run(self, cmd_module):
+        import argparse
+        import inspect
+
+        parser = argparse.ArgumentParser()
+        cmd_module.add_arguments(parser)
+
+        optional_dests = {
+            a.dest for a in parser._actions
+            if a.option_strings and a.dest != "help"
+        }
+
+        # Source of run() plus any helper in the module that accepts the
+        # args namespace (e.g. build_context reads args.config and
+        # args.debug on behalf of create/fix).
+        source = inspect.getsource(cmd_module.run)
+        for obj in vars(cmd_module).values():
+            if not callable(obj) or obj is cmd_module.run:
+                continue
+            try:
+                if "args" in inspect.signature(obj).parameters:
+                    source += inspect.getsource(obj)
+            except (ValueError, TypeError):
+                pass
+
+        for dest in optional_dests:
+            assert f"args.{dest}" in source, (
+                f"{cmd_module.NAME}: --{dest.replace('_', '-')} is accepted "
+                f"by the parser but never referenced as args.{dest} in run()"
+            )
 
 
 class TestScanSkippedDirsWarning:

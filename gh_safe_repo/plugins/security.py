@@ -243,6 +243,11 @@ class SecurityPlugin(BasePlugin):
                         self.client.call_json("PUT", path)
                         break
 
+        # GitHub requires secret_scanning to be present alongside
+        # secret_scanning_push_protection — otherwise the PATCH is silently ignored.
+        if "secret_scanning_push_protection" in sa_body and "secret_scanning" not in sa_body:
+            sa_body["secret_scanning"] = {"status": "enabled"}
+
         if sa_body:
             path = self.client.repo_path(self.owner, self.repo)
             self.client.call_json("PATCH", path, {"security_and_analysis": sa_body})

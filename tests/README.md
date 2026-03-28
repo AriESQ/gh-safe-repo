@@ -107,6 +107,14 @@ uv run pytest tests/e2e/ -v -m "not slow"
 - Tests use unique repo names (`gsr-e2e-{uuid}-{test}`) and clean up on teardown
 - Recommended: use a dedicated bot account, not your main GitHub account
 
+## Test conventions
+
+**Default test email:** Use `example@example.com` (RFC 2606 reserved) as the standard
+email in test fixtures. This avoids collisions with real addresses and keeps tests
+consistent. Other emails (e.g. `action@github.com`, `alice@real-corp.com`) should only
+appear where the test specifically requires a different address — for example, exclusion
+logic tests that need distinct included/excluded values.
+
 ## Adding tests
 
 - Plugin tests go in `test_plugins.py`. Mock `GitHubClient` via `make_mock_client()` and

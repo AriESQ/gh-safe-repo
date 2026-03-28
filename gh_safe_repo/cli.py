@@ -34,7 +34,7 @@ usage:
   gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
   gh-safe-repo scan  <path>
 
-common options: --config PATH, --json, --debug""",
+common options: --config PATH, --debug""",
         epilog="""\
 examples:
   gh-safe-repo create <owner/repo>                    Create a private repo

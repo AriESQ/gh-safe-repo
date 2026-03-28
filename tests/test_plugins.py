@@ -652,10 +652,11 @@ class TestSecurityPlugin:
         assert len(auto_fix) == 1
         assert len(pvr) == 1
 
-        # PATCH call: batched security_and_analysis (push protection only)
+        # PATCH call: push protection must include secret_scanning alongside it
         assert len(patch_calls) == 1
         sa_body = patch_calls[0].args[2]["security_and_analysis"]
-        assert "secret_scanning_push_protection" in sa_body
+        assert sa_body["secret_scanning"] == {"status": "enabled"}
+        assert sa_body["secret_scanning_push_protection"] == {"status": "enabled"}
 
     def test_plan_public_repo_no_security_updates_when_disabled(self):
         client = make_mock_client()

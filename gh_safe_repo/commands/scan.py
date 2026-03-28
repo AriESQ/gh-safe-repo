@@ -33,7 +33,7 @@ def add_arguments(parser):
     parser.add_argument(
         "--config",
         metavar="PATH",
-        help="Path to config file (default: ~/.config/gh-safe-repo/config.ini)",
+        help="Path to config file (default: ./gh-safe-repo.ini or ~/.config/gh-safe-repo/gh-safe-repo.ini)",
     )
 
 

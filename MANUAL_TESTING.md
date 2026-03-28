@@ -653,7 +653,7 @@ No tokens or credentials appear in debug output (sanitized URLs).
 
 ```bash
 mkdir -p /tmp/gsr-config-test
-cat > /tmp/gsr-config-test/config.ini << 'EOF'
+cat > /tmp/gsr-config-test/gh-safe-repo.ini << 'EOF'
 [repo]
 has_issues = false
 has_wiki = true
@@ -661,7 +661,7 @@ has_wiki = true
 [branch_protection]
 required_approving_reviews = 2
 EOF
-gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/gsr-config-test/config.ini --dry-run
+gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/gsr-config-test/gh-safe-repo.ini --dry-run
 ```
 
 **Expected plan differences vs. defaults:**
@@ -672,7 +672,7 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/gsr-config-te
 ### 9.2 Config file that doesn't exist
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/path-that-does-not-exist/config.ini --dry-run
+gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/path-that-does-not-exist/gh-safe-repo.ini --dry-run
 ```
 
 **Expected:** Tool runs normally using built-in safe defaults (missing config file is not an error — it's treated as "use defaults").
@@ -756,11 +756,11 @@ Repeat the above but type `y`. Repo should be created with the file pushed to it
 ### 12.1 Create a repo using Rulesets instead of classic branch protection
 
 ```bash
-cat > /tmp/gsr-ruleset-config.ini << 'EOF'
+cat > /tmp/gsr-ruleset.ini << 'EOF'
 [branch_protection]
 use_rulesets = true
 EOF
-gh-safe-repo create YOUR_USERNAME/gsr-test-rulesets-01 --public --config /tmp/gsr-ruleset-config.ini
+gh-safe-repo create YOUR_USERNAME/gsr-test-rulesets-01 --public --config /tmp/gsr-ruleset.ini
 ```
 
 Type `y` at the prompt.

@@ -144,6 +144,12 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`AT_HEAD` parallel array distinguishes present vs. history-only targets.** Targets absent from the working tree are filtered but not re-added.
 
+## Visibility Changes and Rulesets
+
+**Branch and tag rulesets survive a public → private → public round-trip.** Tested 2026-03-28: creating rulesets (target `"branch"` and `"tag"`) on a free-plan public repo, flipping to private, then back to public — both rulesets retained their original IDs, enforcement status (`active`), and rules. GitHub's "All push rulesets will be disabled" warning during the private→public transition refers specifically to rulesets with target `"push"` (file size/path/extension restrictions, Team+ only), not branch or tag rulesets.
+
+**Free+private blocks all ruleset API access, not just creation.** `GET /repos/{owner}/{repo}/rulesets` returns 403 on free+private repos — you cannot list, read, or create rulesets. The rulesets are not deleted, just inaccessible until the repo is public again (or the plan is upgraded). The `fix` command's existing plan-gating (SKIP on free+private) already handles this correctly.
+
 ## Branch Protection Ordering
 
 **`bp_plugin.apply()` must run after `push_local()` / `copy_repo()`, not before.** Classic branch protection requires the branch to exist. For `--local` and `--from`, `auto_init=False` means the repo is empty at creation time. Moved `bp_plugin.apply()` to the end of the apply sequence in `cli.py`.

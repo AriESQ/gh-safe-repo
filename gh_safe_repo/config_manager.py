@@ -95,6 +95,11 @@ class ConfigManager:
         self._config = configparser.ConfigParser()
         self._load()
 
+    @property
+    def config_source(self) -> str:
+        """Human-readable description of which config was loaded."""
+        return self._config_source
+
     def _load(self):
         # Seed with safe defaults
         for section, values in SAFE_DEFAULTS.items():
@@ -104,10 +109,13 @@ class ConfigManager:
         if self._path.exists():
             try:
                 self._config.read(self._path)
+                self._config_source = str(self._path)
             except configparser.Error as e:
                 raise ConfigError(f"Failed to parse config at {self._path}: {e}")
         elif self._require_exists:
             raise ConfigError(f"Config file not found: {self._path}")
+        else:
+            self._config_source = "built-in defaults"
 
     def get(self, section, key, fallback=None):
         return self._config.get(section, key, fallback=fallback)

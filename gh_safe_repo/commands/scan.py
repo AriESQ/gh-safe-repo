@@ -32,8 +32,10 @@ def add_arguments(parser):
     )
     parser.add_argument(
         "--config",
+        nargs="?",
+        const="",
         metavar="PATH",
-        help="Path to config file (default: ./gh-safe-repo.ini or ~/.config/gh-safe-repo/gh-safe-repo.ini)",
+        help="Path to config file; bare --config uses built-in defaults only",
     )
 
 
@@ -44,10 +46,14 @@ def run(args):
         sys.exit(2)
 
     try:
-        config = ConfigManager(config_path=args.config, require_exists=args.config is not None)
+        config_path = args.config or None  # bare --config ("") → defaults only
+        config = ConfigManager(config_path=config_path, require_exists=config_path is not None)
     except ConfigError as e:
         error(str(e))
         sys.exit(1)
+
+    if args.debug:
+        print(f"[debug] config: {config.config_source}", file=sys.stderr)
 
     scanner = SecurityScanner(config, debug=args.debug)
     print(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")

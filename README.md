@@ -208,7 +208,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
-| `--config PATH` | Path to config file (default: `./gh-safe-repo.ini` or `~/.config/gh-safe-repo/gh-safe-repo.ini`) |
+| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | Print every API call and response |
 
 ### `fix` — Audit and fix an existing repo
@@ -218,14 +218,14 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Show settings diff without applying changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
-| `--config PATH` | Path to config file (default: `./gh-safe-repo.ini` or `~/.config/gh-safe-repo/gh-safe-repo.ini`) |
+| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | Print every API call and response |
 
 ### `scan` — Local secret scanning
 
 | Option | Description |
 |---|---|
-| `--config PATH` | Path to config file (default: `./gh-safe-repo.ini` or `~/.config/gh-safe-repo/gh-safe-repo.ini`) |
+| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | Show scanner details |
 
 Exit code is `0` if no critical findings, `1` if criticals are found.
@@ -528,6 +528,7 @@ When banned strings or AI context files are found the scanner prints a ready-to-
 2. **`./gh-safe-repo.ini`** — current working directory
 3. **`$XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini`** — defaults to `~/.config` when `$XDG_CONFIG_HOME` is unset
 
+Bare `--config` (no path) skips file lookup entirely and uses built-in defaults only.
 All values have safe defaults — no config file is required to get started.
 
 A fully-annotated example config is included in the repository as `gh-safe-repo.ini.example`. Copy it to get started:

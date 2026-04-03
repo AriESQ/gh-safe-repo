@@ -1,10 +1,7 @@
-"""Tests that SAFE_DEFAULTS, config.ini.example, and config loading stay in sync."""
+"""Tests that SAFE_DEFAULTS, gh-safe-repo.ini.example, and config loading stay in sync."""
 
-import ast
 import configparser
 import re
-import tempfile
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -12,7 +9,7 @@ import pytest
 from gh_safe_repo.config_manager import SAFE_DEFAULTS, ConfigManager
 
 ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE_INI = ROOT / "config.ini.example"
+EXAMPLE_INI = ROOT / "gh-safe-repo.ini.example"
 SOURCE_DIR = ROOT / "gh_safe_repo"
 
 
@@ -21,7 +18,8 @@ SOURCE_DIR = ROOT / "gh_safe_repo"
 # ---------------------------------------------------------------------------
 
 def _parse_example_ini():
-    """Parse config.ini.example and return {section: {key: value}}."""
+    """Parse gh-safe-repo.ini.example and return {section: {key: value}}."""
+    assert EXAMPLE_INI.exists(), f"Example config not found: {EXAMPLE_INI}"
     parser = configparser.ConfigParser()
     parser.read(EXAMPLE_INI)
     return {section: dict(parser[section]) for section in parser.sections()}
@@ -50,10 +48,6 @@ def _all_config_reads() -> list[tuple[str, str, bool]]:
         r"""config\.(?:get|getbool)\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']"""
         r"""(?:\s*,\s*fallback\s*=)?"""
     )
-    # More precise: check if fallback= is present in the full call
-    full_call = re.compile(
-        r"""config\.(?:get|getbool)\([^)]*\bfallback\s*=""",
-    )
     results = []
     for py_file in SOURCE_DIR.rglob("*.py"):
         text = py_file.read_text()
@@ -78,11 +72,11 @@ def _all_config_reads() -> list[tuple[str, str, bool]]:
 
 
 # ---------------------------------------------------------------------------
-# Group 1: SAFE_DEFAULTS ↔ config.ini.example parity
+# Group 1: SAFE_DEFAULTS ↔ gh-safe-repo.ini.example parity
 # ---------------------------------------------------------------------------
 
 class TestExampleMatchesDefaults:
-    """Ensure config.ini.example stays in sync with SAFE_DEFAULTS."""
+    """Ensure gh-safe-repo.ini.example stays in sync with SAFE_DEFAULTS."""
 
     @pytest.fixture(autouse=True)
     def _load(self):
@@ -137,32 +131,26 @@ class TestConfigFilePickup:
     """Every key in SAFE_DEFAULTS can be overridden via a config file."""
 
     @pytest.mark.parametrize("section,key", _ALL_KEYS)
-    def test_each_key_overridable_via_config_file(self, section, key):
+    def test_each_key_overridable_via_config_file(self, section, key, tmp_path):
         default_val = SAFE_DEFAULTS[section][key]
         new_val = _flip_value(default_val)
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ini", delete=False
-        ) as f:
-            f.write(f"[{section}]\n{key} = {new_val}\n")
-            path = f.name
+        ini = tmp_path / "test.ini"
+        ini.write_text(f"[{section}]\n{key} = {new_val}\n")
 
-        config = ConfigManager(config_path=path)
+        config = ConfigManager(config_path=str(ini))
         actual = config.get(section, key)
         assert actual == new_val, (
             f"[{section}] {key}: expected {new_val!r} from config file, "
             f"got {actual!r}"
         )
 
-    def test_unset_keys_retain_defaults(self):
+    def test_unset_keys_retain_defaults(self, tmp_path):
         """A config file that sets one key should not disturb others."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ini", delete=False
-        ) as f:
-            f.write("[repo]\nhas_wiki = true\n")
-            path = f.name
+        ini = tmp_path / "test.ini"
+        ini.write_text("[repo]\nhas_wiki = true\n")
 
-        config = ConfigManager(config_path=path)
+        config = ConfigManager(config_path=str(ini))
         # The overridden key
         assert config.get("repo", "has_wiki") == "true"
         # An untouched key in the same section
@@ -187,15 +175,11 @@ class TestCLIOverrides:
         config.apply_overrides({("repo", "private"): "false"})
         assert config.getbool("repo", "private") is False
 
-    def test_cli_override_trumps_config_file(self):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".ini", delete=False
-        ) as f:
-            # Config file says private = true (same as default)
-            f.write("[repo]\nprivate = true\n")
-            path = f.name
+    def test_cli_override_trumps_config_file(self, tmp_path):
+        ini = tmp_path / "test.ini"
+        ini.write_text("[repo]\nprivate = true\n")
 
-        config = ConfigManager(config_path=path)
+        config = ConfigManager(config_path=str(ini))
         assert config.getbool("repo", "private") is True
         config.apply_overrides({("repo", "private"): "false"})
         assert config.getbool("repo", "private") is False

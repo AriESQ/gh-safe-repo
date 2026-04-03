@@ -379,6 +379,16 @@ git -C "$REPO_ROOT" gc --prune=now --quiet
 
 ok "Objects purged from local repository."
 
+# ── Refresh remote tracking refs ────────────────────────────────────────────
+# filter-branch rewrites refs/remotes/origin/* locally, leaving them pointing
+# at rewritten (non-existent-on-remote) commits. This makes --force-with-lease
+# fail because the "expected" value no longer matches the actual remote ref.
+# A fetch updates tracking refs to the real remote state so force-with-lease
+# works correctly in the post-push step.
+if [[ -n "$REMOTES" ]]; then
+    git -C "$REPO_ROOT" fetch --quiet 2>/dev/null || true
+fi
+
 if [[ "$KEEP" = true ]]; then
     # ── Re-add current content ───────────────────────────────────────────────
     # Ensure parent directory exists (filter-branch may have removed it)

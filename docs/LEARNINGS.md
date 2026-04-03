@@ -4,7 +4,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 ## Phase 1 (MVP)
 
-**`allow_merge_commit` is an additional safe default.** GitHub defaults it to `true`; we set it to `false`. This wasn't in the original planning docs but is now applied and tested.
+**`allow_merge_commit` was reverted to match GitHub's default (`true`).** Originally set to `false` as a safe default, it was later removed because disabling merge commits is a workflow preference, not a security setting. Users who want squash-only can set `allow_merge_commit = false` in their config.
 
 **`gh api` body passing pattern.** JSON request bodies are passed via `--input -` with the JSON written to stdin — not via `--field` flags. `--field` only handles simple key=value pairs and doesn't support nested objects. See `gh_safe_repo/github_client.py:call_api()`.
 
@@ -24,7 +24,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`is_public` is derived from config after overrides, not from `args.public` directly.** The main executable computes `is_public = not config.getbool('repo', 'private', fallback=True)` after `apply_overrides()` has run. This means both `--public` on the CLI and `private = false` in the config file produce the correct behaviour.
 
-**`--from` must be enforced to require `--public` early.** If `--from` is passed without `--public`, argparse raises an error immediately before any API calls are made. Allowing `--from` to a private repo would silently push code to a destination that has no branch protection — not what we want.
+**`--from` no longer requires `--public`.** The original constraint was removed because mirroring into a private repo is a valid use case (e.g., forking an upstream project into a private repo with safe defaults). The pre-flight scan runs regardless of destination visibility, so secrets are still caught. Branch protection is plan-gated (free+private repos skip it with a warning), which is the correct behaviour — the tool informs the user rather than refusing to run.
 
 ## Phase 3
 
@@ -86,7 +86,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **Mutual exclusion checks before `ConfigManager` means no config file needed for error path.** Tests for `--local/--from` and `--local/--audit` conflicts need no auth mocking — `SystemExit(2)` is raised immediately from argparse.
 
-**`local_default_branch` feeds `_resolve_branches()` as `source_default_branch`.** This puts the local repo's HEAD branch at priority 2, so branch protection targets the right branch.
+**`local_default_branch` feeds `_resolve_branches()` as `source_default_branch`.** This puts the `--local` path's HEAD branch at priority 2, so branch protection targets the right branch. The local CWD is never consulted — only the explicit `--local PATH` directory (via `git -C`).
 
 **`git clone <local_path>` creates an `origin` remote pointing at the local path — `remote add` fails.** Fix: use `git remote set-url origin <github_url>` in the temp clone (for `is_git_repo`), keep `git remote add` for the fresh-init path.
 
@@ -143,6 +143,12 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 **Multiple targets are removed in one `filter-branch` pass.** The index-filter is a single `git rm --cached --ignore-unmatch -r <path1> <path2> ...` string.
 
 **`AT_HEAD` parallel array distinguishes present vs. history-only targets.** Targets absent from the working tree are filtered but not re-added.
+
+## Visibility Changes and Rulesets
+
+**Branch and tag rulesets survive a public → private → public round-trip.** Tested 2026-03-28: creating rulesets (target `"branch"` and `"tag"`) on a free-plan public repo, flipping to private, then back to public — both rulesets retained their original IDs, enforcement status (`active`), and rules. GitHub's "All push rulesets will be disabled" warning during the private→public transition refers specifically to rulesets with target `"push"` (file size/path/extension restrictions, Team+ only), not branch or tag rulesets.
+
+**Free+private blocks all ruleset API access, not just creation.** `GET /repos/{owner}/{repo}/rulesets` returns 403 on free+private repos — you cannot list, read, or create rulesets. The rulesets are not deleted, just inaccessible until the repo is public again (or the plan is upgraded). The `fix` command's existing plan-gating (SKIP on free+private) already handles this correctly.
 
 ## Branch Protection Ordering
 

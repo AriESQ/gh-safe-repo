@@ -16,3 +16,8 @@ dev = ["pytest>=7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["gh_safe_repo"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that take a long time to run (e.g. large file creation)",
+]

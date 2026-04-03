@@ -20,10 +20,14 @@ gh_safe_repo/         ← this package (all real logic lives here)
 
 | Module | Purpose |
 |---|---|
-| `cli.py` | `main()` + plan/apply orchestration, all I/O |
+| `cli.py` | `main()` — subparser dispatch to `create`, `fix`, `scan` commands |
+| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, plan formatting, ANSI output |
+| `commands/create.py` | `create` subcommand — new repo with safe defaults |
+| `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections |
+| `commands/scan.py` | `scan` subcommand — local-only secret scanning |
 | `github_client.py` | Wrapper around `gh api` (subprocess); `copy_repo()`, `push_local()` |
 | `config_manager.py` | INI config parsing via `configparser`; holds `SAFE_DEFAULTS` |
-| `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()`, `format_plan_json()` |
+| `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()` |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |
 | `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` |
 | `plugins/base.py` | Abstract `BasePlugin` — defines the `plan()` / `apply()` interface |
@@ -60,7 +64,7 @@ cli.main()
 
 1. Identify the GitHub API endpoint.
 2. Add the key and safe default to `config_manager.py:ConfigManager.SAFE_DEFAULTS`.
-3. Add the corresponding entry (with a comment) to `config.ini.example` in the repo root.
+3. Add the corresponding entry (with a comment) to `gh-safe-repo.ini.example` in the repo root.
 4. Update the appropriate plugin's `plan()` and `apply()` methods.
 5. Add tests in `tests/test_plugins.py` — all `subprocess` calls must be mocked.
 

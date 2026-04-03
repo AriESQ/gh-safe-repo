@@ -1,8 +1,8 @@
 """
-Pre-flight security scanner for the --from --public workflow.
+Pre-flight security scanner for the --from and --local workflows.
 
 Detects hardcoded secrets, emails, large files, and TODOs before
-a private repo is mirrored to a public repository.
+code is mirrored or pushed to a GitHub repository.
 
 truffleHog is used if installed; regex fallback otherwise.
 Always runs locally — never in GitHub Actions.
@@ -11,6 +11,7 @@ Always runs locally — never in GitHub Actions.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -125,7 +126,9 @@ _WARNING_PATTERNS = [
 ]
 
 EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
-TODO_PATTERN = re.compile(r"(?i)#\s*(?:TODO|FIXME|HACK|XXX)\b")
+# Stricter alternative: only match common comment prefixes (#, //, /*, --)
+# TODO_PATTERN = re.compile(r"(?i)(?:#|//|/\*|--)\s*(?:TODO|FIXME|HACK|XXX)\b")
+TODO_PATTERN = re.compile(r"(?i)\b(?:TODO|FIXME|HACK|XXX)\b")
 
 
 # --- Helpers ---
@@ -364,10 +367,23 @@ class SecurityScanner:
                 findings.extend(trufflehog_results)
                 secrets_via_trufflehog = True
 
-        # Single walk: large files, AI context files, text content (secrets if no truffleHog)
+        # Single walk: large files, AI context files, text content.
+        # Always run regex secret patterns even when trufflehog succeeds —
+        # trufflehog is a credential verifier that needs paired keys (e.g.
+        # both AKIA + secret access key); our regex catches standalone patterns.
+        # See: https://github.com/trufflesecurity/trufflehog/issues/2940
         walk_findings, skipped = self._unified_walk(
-            root_path, scan_secrets=not secrets_via_trufflehog, is_git_repo=is_git_repo
+            root_path, scan_secrets=self._scan_secrets, is_git_repo=is_git_repo
         )
+        if secrets_via_trufflehog:
+            # Deduplicate: drop regex secret findings already covered by trufflehog
+            th_locations = {(f.file_path, f.line_number) for f in findings
+                           if f.category == FindingCategory.SECRET}
+            walk_findings = [
+                f for f in walk_findings
+                if f.category != FindingCategory.SECRET
+                or (f.file_path, f.line_number) not in th_locations
+            ]
         findings.extend(walk_findings)
         self.skipped_committed_dirs = sorted(skipped)
 
@@ -721,9 +737,9 @@ class SecurityScanner:
             if disc["method"] == "native":
                 # Native trufflehog on PATH
                 if is_git_repo:
-                    cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update"]
+                    cmd = ["trufflehog", "git", f"file://{root_path}", "--json", "--no-update", "--results=verified,unverified"]
                 else:
-                    cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update"]
+                    cmd = ["trufflehog", "filesystem", root_path, "--json", "--no-update", "--results=verified,unverified"]
                 if config_path:
                     cmd += ["--config", config_path]
                 if exclude_path_file:
@@ -741,9 +757,9 @@ class SecurityScanner:
                 if exclude_path_file:
                     volume_args += ["--volume", f"{exclude_path_file}:{exclude_path_file}:ro"]
                 if is_git_repo:
-                    th_args = ["git", f"file://{root_path}", "--json", "--no-update"]
+                    th_args = ["git", f"file://{root_path}", "--json", "--no-update", "--results=verified,unverified"]
                 else:
-                    th_args = ["filesystem", root_path, "--json", "--no-update"]
+                    th_args = ["filesystem", root_path, "--json", "--no-update", "--results=verified,unverified"]
                 if config_path:
                     th_args += ["--config", config_path]
                 if exclude_path_file:
@@ -846,9 +862,32 @@ class SecurityScanner:
 
 # --- Module-level utility ---
 
+def _view_hint(f: "Finding") -> str:
+    """Build a 'View with: ...' command string for a finding.
+
+    File paths and commit hashes originate from untrusted content
+    (trufflehog JSON, filesystem walk), so every interpolated value
+    is shell-quoted via shlex.quote().
+    """
+    if not f.line_number and not f.commit:
+        return ""
+    if f.commit:
+        ref = shlex.quote(f"{f.commit}:{f.file_path}")
+        if not f.line_number:
+            return f"git show {ref}"
+        ctx = 4  # lines of context on each side
+        start = max(1, f.line_number - ctx)
+        end = f.line_number + ctx
+        return f"git show {ref} | sed -n '{start},{end}p'"
+    ctx = 4
+    start = max(1, f.line_number - ctx)
+    end = f.line_number + ctx
+    return f"sed -n '{start},{end}p' {shlex.quote(f.file_path)}"
+
+
 def format_findings(findings: List[Finding]) -> str:
     """
-    Pure formatting: "[SEVERITY] rule in file:line" + match line if not redacted.
+    Pure formatting: "[SEVERITY] rule in file:line" + view hint + match line.
     Used in tests to verify output shape without ANSI codes.
     """
     if not findings:
@@ -862,6 +901,9 @@ def format_findings(findings: List[Finding]) -> str:
                 loc += f", {f.timestamp}"
             loc += ")"
         lines.append(f"[{f.severity.value}] {f.rule} in {loc}")
+        hint = _view_hint(f)
+        if hint:
+            lines.append(f"  View with: {hint}")
         if f.match and f.match != "[redacted]":
             lines.append(f"  {f.match[:80]}")
     return "\n".join(lines)

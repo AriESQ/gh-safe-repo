@@ -20,8 +20,8 @@ class TestConfigManagerDefaults:
     def test_has_projects_default_false(self):
         assert self.config.getbool("repo", "has_projects") is False
 
-    def test_delete_branch_on_merge_default_true(self):
-        assert self.config.getbool("repo", "delete_branch_on_merge") is True
+    def test_delete_branch_on_merge_default_false(self):
+        assert self.config.getbool("repo", "delete_branch_on_merge") is False
 
     def test_workflow_permissions_default_read(self):
         assert self.config.get("actions", "default_workflow_permissions") == "read"
@@ -52,13 +52,13 @@ class TestConfigManagerFileLoading:
             f.write(textwrap.dedent("""\
                 [repo]
                 has_wiki = true
-                delete_branch_on_merge = false
+                delete_branch_on_merge = true
             """))
             path = f.name
 
         config = ConfigManager(config_path=path)
         assert config.getbool("repo", "has_wiki") is True
-        assert config.getbool("repo", "delete_branch_on_merge") is False
+        assert config.getbool("repo", "delete_branch_on_merge") is True
         # Other defaults remain
         assert config.getbool("repo", "has_projects") is False
 

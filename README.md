@@ -3,10 +3,12 @@
 Create GitHub repositories with safe defaults applied automatically. Replaces the five-minute post-creation settings checklist with a single command.
 
 ```
-gh-safe-repo my-project
+gh-safe-repo create <owner/repo>
 ```
 
-Branch protection, immutable tags, Dependabot, restricted Actions permissions, disabled wiki and projects, squash-only merges, and automatic branch cleanup — all configured before you write your first line of code.
+Branch protection, immutable tags, Dependabot, restricted Actions permissions, secret scanning with push protection, and disabled wiki and projects — all configured before you write your first line of code.  
+
+gh-safe-repo is undergoing heavy development. It works well for the use-case of creating a new repo with secure defaults. I am working on polishing the CLI options to best align with users expectations. Expect breaking changes until we get to a point where I'm doing releases, and have CI/CD nailed down. ✌️
 
 ---
 
@@ -19,8 +21,8 @@ Branch protection, immutable tags, Dependabot, restricted Actions permissions, d
 - [Quick Start](#quick-start)
 - [CLI Reference](#cli-reference)
 - [Dry Run / Plan Output](#dry-run--plan-output)
-- [Audit Mode](#audit-mode)
-- [Public Repos from Private (`--from`)](#public-repos-from-private---from)
+- [Fix Mode (Audit Existing Repos)](#fix-mode-audit-existing-repos)
+- [Mirroring Repos (`--from`)](#mirroring-repos---from)
 - [Creating a Repo from a Local Directory (`--local`)](#creating-a-repo-from-a-local-directory---local)
 - [Pre-flight Security Scanner](#pre-flight-security-scanner)
   - [Standalone scan](#standalone-scan)
@@ -57,8 +59,8 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Wiki | Enabled | **Disabled** | |
 | Projects | Enabled | **Disabled** | |
 | Issues | Enabled | Enabled | |
-| Delete branch on merge | Off | **On** | Auto-cleanup |
-| Allow merge commits | On | **Off** | Squash and rebase only |
+| Delete branch on merge | Off | Off | Set to `true` in config for auto-cleanup |
+| Allow merge commits | On | On | Set to `false` in config for squash-only |
 | Allow squash merge | On | On | |
 | Allow rebase merge | On | On | |
 
@@ -70,7 +72,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Default workflow permissions | Read/write | **Read-only** |
 | Actions can approve PRs | Yes | **No** |
 | Require SHA pinning | No | **Yes** (workflows must pin actions to a commit SHA, not a mutable tag) |
-| Fork PR approval policy | First-time contributors new to GitHub | **All external contributors** (require approval before running workflows on fork PRs) |
+| Fork PR approval policy | First-time contributors new to GitHub | **All external contributors** — require approval before fork PR workflows run CI. Options: brand-new GitHub accounts only (GitHub default), first-time repo contributors, or all fork PRs (safest) |
 
 ### Branch protection (public repos, or any repo on a paid plan)
 
@@ -93,7 +95,7 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Prevent tag update (rewriting) | Yes |
 | Admin bypass | Yes (consistent with branch protection) |
 
-Tag protection uses the Rulesets API exclusively — there is no "classic" tag protection equivalent. This means it has the same plan-level restrictions as branch protection rulesets.
+Tag protection uses the Rulesets API exclusively — there is no "classic" tag protection equivalent. This only works on public repos or paid GitHub plans (same restriction as branch protection). Free-plan private repos will see this skipped in the plan output.
 
 ### Security
 
@@ -135,7 +137,7 @@ This installs `gh-safe-repo` into uv's tool environment and adds it to your `PAT
 git clone https://github.com/your-username/gh-safe-repo
 cd gh-safe-repo
 uv sync           # creates .venv
-./gh-safe-repo my-project
+./gh-safe-repo create <owner/repo>
 ```
 
 ### Verify
@@ -150,32 +152,38 @@ gh-safe-repo --help
 
 ```bash
 # Create a private repo with all safe defaults
-gh-safe-repo my-project
+gh-safe-repo create <owner/repo>
 
 # Preview what would happen — no changes made
-gh-safe-repo my-project --dry-run
+gh-safe-repo create <owner/repo> --dry-run
 
 # Create a public repo (branch protection + security scanning applied)
-gh-safe-repo my-public-project --public
+gh-safe-repo create <owner/repo> --public
+
+# Mirror an existing repo into a new private repo (with pre-flight scan)
+gh-safe-repo create <owner/repo> --from <owner/source>
 
 # Mirror a private repo to a new public repo (with pre-flight scan)
-gh-safe-repo my-public-project --from my-private-project --public
+gh-safe-repo create <owner/pub> --from <owner/priv> --public
 
 # Create a repo from a local directory (with pre-flight scan)
-gh-safe-repo my-project --local ~/projects/myapp
+gh-safe-repo create <owner/repo> --local ~/projects/myapp
 
 # Same, but make it public (branch protection applied before push)
-gh-safe-repo my-project --local ~/projects/myapp --public
+gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 
 # Audit an existing repo and apply any missing safe defaults
-gh-safe-repo my-existing-repo --audit
+gh-safe-repo fix <owner/repo>
 
 # Audit without making changes
-gh-safe-repo my-existing-repo --audit --dry-run
+gh-safe-repo fix <owner/repo> --dry-run
+
+# Apply fixes without confirmation prompt (scripting/batch use)
+gh-safe-repo fix <owner/repo> --yes
 
 # Scan a local repo for secrets before pushing anywhere
-gh-safe-repo --scan .
-gh-safe-repo --scan ~/projects/myapp
+gh-safe-repo scan .
+gh-safe-repo scan ~/projects/myapp
 ```
 
 ---
@@ -183,30 +191,44 @@ gh-safe-repo --scan ~/projects/myapp
 ## CLI Reference
 
 ```
-gh-safe-repo REPO_NAME [OPTIONS]
-gh-safe-repo --scan PATH [OPTIONS]
+gh-safe-repo create <owner/repo> [OPTIONS]
+gh-safe-repo fix <owner/repo> [OPTIONS]
+gh-safe-repo scan <path> [OPTIONS]
 ```
 
-### Arguments
+All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). The owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems.
 
-| Argument | Description |
-|---|---|
-| `REPO_NAME` | Name of the repository to create or audit (not required with `--scan`) |
-
-### Options
+### `create` — Create a new repo
 
 | Option | Description |
 |---|---|
-| `--scan PATH` | Scan a local directory for secrets and exit. No GitHub interaction. Exit code 0 = clean, 1 = critical findings. |
-| `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from` and `--audit`. |
-| `--dry-run` | Print the plan without making any changes |
 | `--public` | Create as a public repo (default: private) |
-| `--from REPO` | Mirror code from an existing private repo before making public. Requires `--public`. Mutually exclusive with `--local`. |
-| `--audit` | Audit an existing repo and apply missing safe defaults. Mutually exclusive with `--local`. |
-| `--json` | Emit the plan as JSON to stdout instead of the ANSI table. All other messages go to stderr. Combine with `--dry-run` for clean machine-readable output. |
-| `--config PATH` | Path to config file (default: `~/.config/gh-safe-repo/config.ini`) |
+| `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
+| `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
+| `--dry-run` | Print the plan without making any changes |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
+| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | Print every API call and response |
-| `--help` | Show help and exit |
+
+### `fix` — Audit and fix an existing repo
+
+| Option | Description |
+|---|---|
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
+| `--dry-run` | Show settings diff without applying changes |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
+| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
+| `--debug` | Print every API call and response |
+
+### `scan` — Local secret scanning
+
+| Option | Description |
+|---|---|
+| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
+| `--debug` | Show scanner details |
+
+Exit code is `0` if no critical findings, `1` if criticals are found.
 
 ---
 
@@ -215,14 +237,14 @@ gh-safe-repo --scan PATH [OPTIONS]
 `--dry-run` shows exactly what `gh-safe-repo` would do, without making any changes or API calls. Use it before running for real. Combine with `--json` for machine-readable plan output:
 
 ```bash
-gh-safe-repo my-project --dry-run --json
-gh-safe-repo my-existing-repo --audit --dry-run --json
+gh-safe-repo create <owner/repo> --dry-run --json
+gh-safe-repo fix <owner/repo> --dry-run --json
 ```
 
 When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer) go to stderr, so the output is clean for piping or scripting.
 
 ```
-$ gh-safe-repo my-project --dry-run
+$ gh-safe-repo create <owner/repo> --dry-run
 
   Plan for my-project (private)
 
@@ -231,8 +253,6 @@ $ gh-safe-repo my-project --dry-run
   Repository          ADD     repository                       my-project (private)
   Repository          ADD     has_wiki                         false
   Repository          ADD     has_projects                     false
-  Repository          ADD     delete_branch_on_merge           true
-  Repository          ADD     allow_merge_commit               false
   Actions             ADD     default_workflow_permissions     read
   Actions             ADD     can_approve_pull_request_reviews false
   Branch Protection   SKIP    branch_protection                Not available for private repos on free plan
@@ -266,50 +286,57 @@ $ gh-safe-repo my-project --dry-run
 
 ---
 
-## Audit Mode
+## Fix Mode (Audit Existing Repos)
 
-`--audit` compares an existing repo's current settings against the safe defaults and applies any differences.
+`fix` compares an existing repo's current settings against the safe defaults and applies any corrections. No secret scanning — `fix` is purely about repo settings.
 
 ```bash
 # See what's out of compliance
-gh-safe-repo existing-repo --audit --dry-run
+gh-safe-repo fix <owner/repo> --dry-run
 
 # Apply missing safe defaults
-gh-safe-repo existing-repo --audit
+gh-safe-repo fix <owner/repo>
+
+# Apply without confirmation prompt (scripting/batch use)
+gh-safe-repo fix <owner/repo> --yes
 ```
 
-Audit mode:
+Fix mode:
 
 1. Fetches the current value of every setting via the GitHub API
 2. Compares against desired safe defaults
 3. Shows a plan table with `UPDATE` for changed settings and `SKIP` for settings already at the desired value (no-op detection — it never makes API calls that would change nothing)
-4. Prompts for confirmation before applying
+4. Prompts for confirmation before applying (skip with `--yes`)
 
 Settings that are already correct are silently skipped. Only real changes are shown and applied.
 
 ---
 
-## Public Repos from Private (`--from`)
+## Mirroring Repos (`--from`)
 
-Making a private repo public is the riskiest thing you can do on GitHub. The `--from` workflow is designed to make it safe:
+`--from` mirrors an existing repo into a new one with safe defaults. It works for both private and public destinations:
 
 ```bash
-gh-safe-repo my-public-project --from my-private-project --public
+# Mirror into a new private repo (default)
+gh-safe-repo create <owner/repo> --from <owner/source>
+
+# Mirror a private repo to a new public repo (riskiest operation — scanned thoroughly)
+gh-safe-repo create <owner/pub> --from <owner/priv> --public
 ```
 
 **What happens, in order:**
 
-1. The source repo (`my-private-project`) is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
+1. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
 3. You review findings and confirm (or abort)
-4. A new repo (`my-public-project`) is created as **public**
-5. Branch protection is applied **before any code is pushed**
+4. A new repo is created (private by default, or public with `--public`)
+5. Safe defaults are applied (branch protection, security scanning, etc.)
 6. The full history is mirrored: `git clone --mirror` + `git push --mirror`
 7. Dependabot and secret scanning are configured
 
-Branch protection is applied before the push intentionally. If the scan reveals a problem and you abort, no code is ever copied to GitHub.
+If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
-> **Note:** `--from` requires `--public`. Mirroring to a private repo with no branch protection is not supported.
+> **Note:** `--from` uses `owner/repo` format for both the source and destination.
 
 ---
 
@@ -318,8 +345,8 @@ Branch protection is applied before the push intentionally. If the scan reveals 
 `--local PATH` is the local-to-GitHub counterpart to `--from`. It creates a new GitHub repo and pushes code from a directory on your machine.
 
 ```bash
-gh-safe-repo my-project --local ~/projects/myapp
-gh-safe-repo my-project --local ~/projects/myapp --public
+gh-safe-repo create <owner/repo> --local ~/projects/myapp
+gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 ```
 
 **What happens, in order:**
@@ -334,32 +361,32 @@ gh-safe-repo my-project --local ~/projects/myapp --public
    - If `PATH` is an empty directory: nothing is pushed (silently skipped)
 6. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
-Unlike `--from`, `--local` works for both private and public repos. It is mutually exclusive with `--from` and `--audit`.
+Both `--local` and `--from` work for private and public repos. They are mutually exclusive.
 
-When `PATH` is a git repo, the local default branch (via `git symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
+When `PATH` is a git repo, the local default branch (via `git -C PATH symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
 
-> **Tip:** Run `gh-safe-repo --scan PATH` first if you want to inspect findings without creating anything.
+> **Tip:** Run `gh-safe-repo scan PATH` first if you want to inspect findings without creating anything.
 
 ---
 
 ## Pre-flight Security Scanner
 
-The scanner runs locally and never sends code to GitHub. Use it standalone before any push, or it runs automatically as part of the `--from --public` workflow.
+The scanner runs locally and never sends code to GitHub. Use it standalone before any push, or it runs automatically as part of the `--from` and `--local` workflows.
 
 ### Standalone scan
 
 ```bash
 # Scan the current directory
-gh-safe-repo --scan .
+gh-safe-repo scan .
 
 # Scan an explicit path
-gh-safe-repo --scan ~/projects/myapp
+gh-safe-repo scan ~/projects/myapp
 ```
 
 Exit code is `0` if no critical findings, `1` if criticals are found — so it composes cleanly with other commands:
 
 ```bash
-gh-safe-repo --scan . && git push
+gh-safe-repo scan . && git push
 ```
 
 The full `[pre_flight_scan]` config applies: `banned_strings`, `max_file_size_mb`, `trufflehog_mode`, etc.
@@ -495,17 +522,24 @@ When banned strings or AI context files are found the scanner prints a ready-to-
 
 ## Configuration
 
-`gh-safe-repo` reads from `~/.config/gh-safe-repo/config.ini`. All values have safe defaults — no config file is required to get started.
+`gh-safe-repo` looks for configuration in this order (first match wins):
+
+1. **`--config PATH`** — explicit override
+2. **`./gh-safe-repo.ini`** — current working directory
+3. **`$XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini`** — defaults to `~/.config` when `$XDG_CONFIG_HOME` is unset
+
+Bare `--config` (no path) skips file lookup entirely and uses built-in defaults only.
+All values have safe defaults — no config file is required to get started.
+
+A fully-annotated example config is included in the repository as `gh-safe-repo.ini.example`. Copy it to get started:
 
 ```bash
-# Use a custom config file
-gh-safe-repo my-project --config ./my-config.ini
-```
+# User-level config (XDG)
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gh-safe-repo"
+cp gh-safe-repo.ini.example "${XDG_CONFIG_HOME:-$HOME/.config}/gh-safe-repo/gh-safe-repo.ini"
 
-A fully-annotated example config is included in the repository as `config.ini.example`. Copy it to get started:
-
-```bash
-cp config.ini.example ~/.config/gh-safe-repo/config.ini
+# Or project-level config (current directory)
+cp gh-safe-repo.ini.example ./gh-safe-repo.ini
 ```
 
 ### Full configuration reference
@@ -520,12 +554,13 @@ has_wiki = false
 has_projects = false
 has_issues = true
 
-# Clean up merged branches automatically
-delete_branch_on_merge = true
+# Auto-delete head branches after merge (default: off, matching GitHub)
+delete_branch_on_merge = false
 
-# Merge strategy: disable merge commits, keep squash and rebase
+# Merge strategies (all enabled by default, matching GitHub)
+# Set allow_merge_commit = false for squash-only workflows
 allow_squash_merge = true
-allow_merge_commit = false
+allow_merge_commit = true
 allow_rebase_merge = true
 
 # Do not initialize with a README — keeps the remote empty so pushing is seamless
@@ -586,7 +621,8 @@ allow_deletions = false
 
 
 [tag_protection]
-# Immutable tags via Rulesets API (same plan restrictions as branch protection).
+# Immutable tags via Rulesets API.
+# Only works on public repos or paid GitHub plans (same restriction as branch protection).
 # Glob pattern(s) for tags to protect — comma-separated.
 protected_tags = *
 
@@ -677,9 +713,10 @@ Some features are only available depending on repo visibility and your GitHub pl
 ## How It Works
 
 ```
-gh-safe-repo my-project
+gh-safe-repo create <owner/repo>
       │
-      ├─ Load config (~/.config/gh-safe-repo/config.ini)
+      ├─ Parse owner/repo, validate owner matches authenticated user
+      ├─ Load config (./gh-safe-repo.ini or $XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini)
       ├─ Apply CLI flag overrides (--public, etc.)
       ├─ Authenticate via gh CLI or GITHUB_TOKEN
       ├─ GET /user → owner login + plan level  (single cached call)
@@ -746,7 +783,7 @@ uv sync                          # creates .venv, installs pytest
 uv run pytest tests/ -v
 
 # Run the tool directly (without installing)
-./gh-safe-repo my-project --dry-run
+./gh-safe-repo create <owner/repo> --dry-run
 
 # Install globally (picks up the current source)
 uv tool install .
@@ -760,8 +797,15 @@ See [`tests/README.md`](tests/README.md) for test file descriptions, mocking con
 gh-safe-repo/
 ├── gh-safe-repo          # Thin launcher (entry point for direct use)
 ├── gh_safe_repo/         # Package — see gh_safe_repo/README.md for internals
+│   ├── cli.py            # Subparser dispatch (create, fix, scan)
+│   ├── commands/         # Subcommand implementations
+│   │   ├── _common.py    # Shared helpers, CLIContext, plan formatting
+│   │   ├── create.py     # create subcommand
+│   │   ├── fix.py        # fix subcommand
+│   │   └── scan.py       # scan subcommand
+│   └── plugins/          # Settings plugins (one per category)
 ├── pyproject.toml        # Build config, entry points
-├── config.ini.example    # Fully annotated example config
+├── gh-safe-repo.ini.example  # Fully annotated example config
 └── tests/
 ```
 

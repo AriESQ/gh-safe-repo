@@ -1,6 +1,10 @@
 """
 INI config loading with safe defaults baked in.
-Config lives at ~/.config/gh-safe-repo/config.ini (XDG).
+
+Config lookup order (first match wins):
+  1. --config PATH           (explicit override)
+  2. ./gh-safe-repo.ini      (current working directory)
+  3. $XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini  (defaults to ~/.config)
 """
 
 import configparser
@@ -9,6 +13,8 @@ from pathlib import Path
 
 from .errors import ConfigError
 
+CONFIG_FILENAME = "gh-safe-repo.ini"
+
 # Safe defaults that differ from GitHub's own defaults
 SAFE_DEFAULTS = {
     "repo": {
@@ -16,9 +22,9 @@ SAFE_DEFAULTS = {
         "has_wiki": "false",
         "has_projects": "false",
         "has_issues": "true",
-        "delete_branch_on_merge": "true",
+        "delete_branch_on_merge": "false",
         "allow_squash_merge": "true",
-        "allow_merge_commit": "false",
+        "allow_merge_commit": "true",
         "allow_rebase_merge": "true",
         "auto_init": "false",
     },
@@ -69,14 +75,34 @@ SAFE_DEFAULTS = {
     },
 }
 
-CONFIG_PATH = Path.home() / ".config" / "gh-safe-repo" / "config.ini"
+
+def _default_config_path():
+    """Return the first existing config file, or the XDG path as fallback."""
+    # Check current working directory first
+    cwd_path = Path.cwd() / CONFIG_FILENAME
+    if cwd_path.is_file():
+        return cwd_path
+
+    # XDG_CONFIG_HOME (defaults to ~/.config)
+    xdg_home = os.environ.get("XDG_CONFIG_HOME", "")
+    if xdg_home:
+        xdg_path = Path(xdg_home) / "gh-safe-repo" / CONFIG_FILENAME
+    else:
+        xdg_path = Path.home() / ".config" / "gh-safe-repo" / CONFIG_FILENAME
+    return xdg_path
 
 
 class ConfigManager:
-    def __init__(self, config_path=None):
-        self._path = Path(config_path) if config_path else CONFIG_PATH
+    def __init__(self, config_path=None, *, require_exists=False):
+        self._require_exists = require_exists
+        self._path = Path(config_path) if config_path else _default_config_path()
         self._config = configparser.ConfigParser()
         self._load()
+
+    @property
+    def config_source(self) -> str:
+        """Human-readable description of which config was loaded."""
+        return self._config_source
 
     def _load(self):
         # Seed with safe defaults
@@ -87,8 +113,13 @@ class ConfigManager:
         if self._path.exists():
             try:
                 self._config.read(self._path)
+                self._config_source = str(self._path)
             except configparser.Error as e:
                 raise ConfigError(f"Failed to parse config at {self._path}: {e}")
+        elif self._require_exists:
+            raise ConfigError(f"Config file not found: {self._path}")
+        else:
+            self._config_source = "built-in defaults"
 
     def get(self, section, key, fallback=None):
         return self._config.get(section, key, fallback=fallback)

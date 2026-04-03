@@ -48,15 +48,13 @@ class TestRepositoryPlugin:
         assert wiki_change.old is True
         assert wiki_change.new is False
 
-    def test_plan_includes_update_for_delete_branch_on_merge(self):
+    def test_plan_no_update_for_delete_branch_on_merge(self):
         client = make_mock_client()
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan()
         updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
         dbom = next((c for c in updates if c.key == "delete_branch_on_merge"), None)
-        assert dbom is not None
-        assert dbom.old is False
-        assert dbom.new is True
+        assert dbom is None  # safe default matches GitHub default, no change needed
 
     def test_apply_posts_to_user_repos(self):
         client = make_mock_client()
@@ -83,7 +81,7 @@ class TestRepositoryPlugin:
         assert len(patch_calls) == 1
         patch_body = patch_calls[0].args[2]
         assert patch_body.get("has_wiki") is False
-        assert patch_body.get("delete_branch_on_merge") is True
+        assert "delete_branch_on_merge" not in patch_body  # matches GitHub default
 
     def test_apply_raises_repo_exists_on_422(self):
         client = make_mock_client()
@@ -654,10 +652,11 @@ class TestSecurityPlugin:
         assert len(auto_fix) == 1
         assert len(pvr) == 1
 
-        # PATCH call: batched security_and_analysis (push protection only)
+        # PATCH call: push protection must include secret_scanning alongside it
         assert len(patch_calls) == 1
         sa_body = patch_calls[0].args[2]["security_and_analysis"]
-        assert "secret_scanning_push_protection" in sa_body
+        assert sa_body["secret_scanning"] == {"status": "enabled"}
+        assert sa_body["secret_scanning_push_protection"] == {"status": "enabled"}
 
     def test_plan_public_repo_no_security_updates_when_disabled(self):
         client = make_mock_client()
@@ -760,9 +759,9 @@ class TestRepositoryPluginAudit:
             "has_wiki": False,
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
@@ -777,9 +776,9 @@ class TestRepositoryPluginAudit:
             "has_wiki": True,
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
@@ -792,22 +791,22 @@ class TestRepositoryPluginAudit:
 
     def test_plan_audit_emits_skip_for_match(self):
         client = make_mock_client()
-        # delete_branch_on_merge already True (matches desired)
+        # has_wiki already False (matches desired)
         current_state = {
             "private": True,
             "has_wiki": False,
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
-        assert any(c.key == "delete_branch_on_merge" for c in skips)
-        skip = next(c for c in skips if c.key == "delete_branch_on_merge")
+        assert any(c.key == "has_wiki" for c in skips)
+        skip = next(c for c in skips if c.key == "has_wiki")
         assert skip.reason == "Already at desired value"
 
     def test_apply_audit_skips_post(self):
@@ -819,9 +818,9 @@ class TestRepositoryPluginAudit:
             "has_wiki": True,  # differs → UPDATE
             "has_issues": True,
             "has_projects": False,
-            "delete_branch_on_merge": True,
+            "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": False,
+            "allow_merge_commit": True,
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
@@ -900,6 +899,44 @@ class TestActionsPluginAudit:
         assert any(c.key == "verified_allowed" for c in skips)
         assert any(c.key == "patterns_allowed" for c in skips)
         assert any(c.key == "fork_pr_approval_policy" for c in skips)
+
+    def test_private_repo_skips_fork_pr_approval_in_fetch(self):
+        client = make_mock_client()
+        client.get_json.side_effect = [
+            {"sha_pinning_required": True, "allowed_actions": "all"},
+            {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},
+            # No third call — fork endpoint is skipped for private repos
+        ]
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config(), is_public=False)
+        state = plugin.fetch_current_state()
+        assert client.get_json.call_count == 2
+        assert state["fork_pr_approval_policy"] is None
+
+    def test_private_repo_skips_fork_pr_approval_in_plan(self):
+        client = make_mock_client()
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config(), is_public=False)
+        plan = plugin.plan()
+        fork_changes = [c for c in plan.changes if c.key == "fork_pr_approval_policy"]
+        assert len(fork_changes) == 0  # not shown in create plan for private repos
+
+    def test_private_repo_audit_skips_fork_pr_approval(self):
+        client = make_mock_client()
+        current_state = {
+            "allowed_actions": "selected",
+            "github_owned_allowed": True,
+            "verified_allowed": True,
+            "patterns_allowed": [],
+            "sha_pinning_required": True,
+            "default_workflow_permissions": "read",
+            "can_approve_pull_request_reviews": False,
+            "fork_pr_approval_policy": None,
+        }
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config(), is_public=False)
+        plan = plugin.plan(current_state=current_state)
+        fork_skips = [c for c in plan.changes if c.key == "fork_pr_approval_policy"]
+        assert len(fork_skips) == 1
+        assert fork_skips[0].type == ChangeType.SKIP
+        assert "private" in fork_skips[0].reason.lower()
 
     def test_plan_audit_emits_update_when_differs(self):
         client = make_mock_client()

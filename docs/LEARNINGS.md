@@ -177,3 +177,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 **`source_data = client.get_repo_data(owner, from_repo)` is free (cached).** Only the topics `GET /repos/{owner}/{from_repo}/topics` is a new API call.
 
 **Description and topics changes are emitted only in create mode, not audit mode.** `is_audit = current_state is not None` gates both additions.
+
+## Config Consistency
+
+**`SAFE_DEFAULTS` must stay in sync with `gh-safe-repo.ini.example` — enforced by `test_config_consistency.py`.** Before this test existed, several keys consumed by `security_scanner.py` (`scan_email_history`, `exclude_emails`, `warn_ai_context_files`, `scan_exclude_paths`) relied on hardcoded `fallback=` values in the code but had no entry in `SAFE_DEFAULTS`. The `actions.enabled` key was in `SAFE_DEFAULTS` but missing from the example file. The test suite catches three classes of drift: missing/extra sections or keys, value mismatches, and config reads with neither a `SAFE_DEFAULTS` entry nor an explicit `fallback=`.

@@ -68,6 +68,10 @@ SAFE_DEFAULTS = {
         "max_file_size_mb":  "100",
         "trufflehog_mode":   "auto",
         "banned_strings":    "",
+        "scan_email_history":    "true",
+        "exclude_emails":        "",
+        "warn_ai_context_files": "true",
+        "scan_exclude_paths":    "",
     },
 }
 

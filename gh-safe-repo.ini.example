@@ -28,6 +28,9 @@ allow_rebase_merge = true
 auto_init = false
 
 [actions]
+# Whether GitHub Actions are enabled for the repository
+enabled = true
+
 # Which actions are allowed to run.
 # Options: all, local_only, selected
 allowed_actions = selected
@@ -39,7 +42,7 @@ github_owned_allowed = true
 verified_allowed = true
 # Comma-separated allowlist of specific actions/workflows (supports wildcards).
 # Example: myorg/*, actions/setup-node@*
-# patterns_allowed =
+patterns_allowed =
 
 # Principle of least privilege: read-only by default
 # Options: read, write
@@ -85,7 +88,7 @@ allow_force_pushes = false
 allow_deletions = false
 
 # Use the Rulesets API instead of classic branch protection (same rules, adds bypass actors)
-# use_rulesets = false
+use_rulesets = false
 
 [tag_protection]
 # Immutable tags via Rulesets API.
@@ -125,7 +128,7 @@ scan_for_emails = true
 scan_for_todos = true
 
 # Scan git history for email addresses (requires scan_for_emails = true)
-# scan_email_history = true
+scan_email_history = true
 max_file_size_mb = 100
 
 # Scanner selection: auto | native | docker | off
@@ -133,19 +136,23 @@ max_file_size_mb = 100
 #   native — native truffleHog only; prints a warning and uses regex if not found
 #   docker — container only (podman or docker); skip native PATH check
 #   off    — regex scanner only; no truffleHog attempt, no warning
-# trufflehog_mode = auto
+trufflehog_mode = auto
 
 # Literal strings to flag as critical findings (case-insensitive).
 # Comma-separated, or one per line with continuation indentation.
-# banned_strings = secret
-#     password
-#     credential
+# Example: secret, password, credential
+banned_strings =
 
 # Suppress email findings for specific addresses or entire domains.
 # Entries starting with @ match all emails at that domain; otherwise exact address match.
 # Case-insensitive, comma/newline separated.
-# exclude_emails = action@github.com, noreply@github.com, @example.com
+# Example: action@github.com, noreply@github.com, @example.com
+exclude_emails =
 
 # Flag AI context files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) as critical findings.
 # Their git history may contain more sensitive content than the current version.
-# warn_ai_context_files = true
+warn_ai_context_files = true
+
+# Regex patterns for files/directories to skip during scan.
+# Comma-separated, or one per line with continuation indentation.
+scan_exclude_paths =

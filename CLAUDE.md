@@ -54,6 +54,7 @@ API and tool quirks that affect future work. For full context on any of these, s
 - `fix` has no secret scanning (settings-only); `create --local/--from` has automatic pre-flight scan
 - `create` and `fix` both prompt for confirmation before applying; `--yes`/`-y` skips the prompt for scripted/batch use
 - `enforce_admins = false` is intentional (owner bypass for tooling)
+- Config with all merge strategies disabled (`allow_squash_merge`, `allow_merge_commit`, `allow_rebase_merge` all `false`) is rejected at `repo_settings()` with `ConfigError` — GitHub returns 422
 - `auto_init` must be `false` when `--local` or `--from` is used (avoids push rejection)
 - `bp_plugin.apply()` must run after code push (`--local`/`--from`) — branch must exist first
 - Tag protection uses Rulesets API exclusively (`POST /repos/{owner}/{repo}/rulesets` with `target: "tag"`); no classic equivalent exists

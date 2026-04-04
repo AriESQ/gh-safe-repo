@@ -117,6 +117,22 @@ class TestExampleMatchesDefaults:
 
 
 # ---------------------------------------------------------------------------
+# Group 1b: Semantic constraints on SAFE_DEFAULTS
+# ---------------------------------------------------------------------------
+
+class TestDefaultsSemantic:
+    """Catch defaults that are individually valid but collectively broken."""
+
+    def test_at_least_one_merge_strategy_enabled(self):
+        merge_keys = ("allow_squash_merge", "allow_merge_commit", "allow_rebase_merge")
+        enabled = [k for k in merge_keys if SAFE_DEFAULTS["repo"].get(k, "true").lower() == "true"]
+        assert enabled, (
+            "SAFE_DEFAULTS disables all merge strategies — "
+            "GitHub requires at least one (would return 422)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Group 2: Config file values are picked up
 # ---------------------------------------------------------------------------
 

@@ -46,6 +46,7 @@ API and tool quirks that affect future work. For full context on any of these, s
 - Private vulnerability reporting: `PUT /repos/{owner}/{repo}/private-vulnerability-reporting` (dedicated endpoint, not `security_and_analysis`)
 - Dependabot security updates: `PUT /repos/{owner}/{repo}/automated-security-fixes` (same pattern as vulnerability-alerts)
 - Toggle endpoint status detection: use `200 <= status < 300` not `status == 204` — different endpoints return 200 vs 204 and `gh api` sometimes infers 200 from exit code 0
+- Repo creation race: `PATCH /repos` can 404 immediately after `POST /user/repos` succeeds (GitHub eventual consistency); `repository.py` retries up to 3× with exponential backoff
 - No REST API for: grouped security updates (use dependabot.yml), automatic dependency submission (UI only), dependency graph on private repos (UI only)
 
 **Key design invariants:**

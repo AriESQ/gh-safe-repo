@@ -84,3 +84,15 @@ class TestConfigManagerSettings:
         settings = self.config.actions_settings()
         assert isinstance(settings, dict)
         assert "default_workflow_permissions" in settings
+
+    def test_repo_settings_rejects_all_merge_strategies_disabled(self, tmp_path):
+        ini = tmp_path / "test.ini"
+        ini.write_text(
+            "[repo]\n"
+            "allow_squash_merge = false\n"
+            "allow_merge_commit = false\n"
+            "allow_rebase_merge = false\n"
+        )
+        config = ConfigManager(config_path=str(ini))
+        with pytest.raises(ConfigError, match="merge strateg"):
+            config.repo_settings()

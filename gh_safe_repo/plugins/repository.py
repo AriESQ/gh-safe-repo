@@ -3,8 +3,10 @@ Repository plugin: creation (POST) and basic settings (PATCH).
 Compares desired config against known GitHub defaults for new repos.
 """
 
+import time
+
 from ..diff import Change, ChangeCategory, ChangeType, Plan
-from ..errors import RepoExistsError
+from ..errors import APIError, RepoExistsError
 from .base import BasePlugin
 
 # GitHub's own defaults for a newly created repo
@@ -151,7 +153,6 @@ class RepositoryPlugin(BasePlugin):
                 if isinstance(response, dict):
                     self.created_default_branch = response.get("default_branch")
             except Exception as e:
-                from ..errors import APIError
                 if isinstance(e, APIError) and e.status_code == 422:
                     raise RepoExistsError(self.owner, self.repo)
                 raise
@@ -164,7 +165,20 @@ class RepositoryPlugin(BasePlugin):
 
         if patch_body:
             path = self.client.repo_path(self.owner, self.repo)
-            self.client.call_json("PATCH", path, patch_body)
+            if has_create:
+                # Repo may not be immediately available after creation (GitHub
+                # eventual consistency).  Retry with backoff on 404.
+                for attempt in range(4):
+                    try:
+                        self.client.call_json("PATCH", path, patch_body)
+                        break
+                    except APIError as e:
+                        if e.status_code == 404 and attempt < 3:
+                            time.sleep(1 << attempt)  # 1s, 2s, 4s
+                            continue
+                        raise
+            else:
+                self.client.call_json("PATCH", path, patch_body)
 
         topics_change = next(
             (c for c in plan.actionable_changes

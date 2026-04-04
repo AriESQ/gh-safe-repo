@@ -14,6 +14,8 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`--dry-run` skips the repo-exists check.** No API calls are made at all during a dry-run — including the GET that checks whether the repo already exists. This is intentional: dry-run is a pure planning operation. The trade-off is that a dry-run won't warn you if the repo already exists.
 
+**`PATCH /repos` can 404 immediately after `POST /user/repos` succeeds.** GitHub's repo creation is eventually consistent — the repo object exists but may not be routable for settings updates for a brief window. `RepositoryPlugin.apply()` retries the PATCH up to 3 times with exponential backoff (1s, 2s, 4s) when it follows a creation POST. The retry only applies in the create path (`has_create`); standalone `fix` PATCHes are not retried.
+
 ## Phase 2
 
 **`enforce_admins = false` is the correct default for owner workflows.** `enforce_admins = false` means the repo owner's token bypasses branch protection rules, which is intentional — protect against external contributors, not the owner's own tooling. This matters for `--from` mirror pushes and `--local` pushes where the owner pushes directly to the default branch.

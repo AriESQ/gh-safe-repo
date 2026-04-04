@@ -3,7 +3,7 @@
 import sys
 
 from ..diff import ChangeType, Plan
-from ..errors import APIError
+from ..errors import APIError, SafeRepoError
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
 from ..plugins.repository import RepositoryPlugin
@@ -108,8 +108,8 @@ def run(args):
             current_state = plugin.fetch_current_state()
             plugin_plan = plugin.plan(current_state=current_state)
             full_plan.merge(plugin_plan)
-        except APIError as e:
-            error(f"Failed to fetch current state: {e}")
+        except SafeRepoError as e:
+            error(f"Planning failed: {e}")
             sys.exit(1)
 
     # Print plan

@@ -29,6 +29,26 @@ warn() { echo -e "${YELLOW}Warning:${RESET} $*"; }
 ok()   { echo -e "${GREEN}✓${RESET} $*"; }
 bold() { echo -e "${BOLD}$*${RESET}"; }
 
+# _timed_fetch — git fetch with timeout; suppresses SSH/git noise.
+# Usage: _timed_fetch <repo-path> [timeout-secs]
+# Returns 0 on success, 1 on timeout or fetch failure.
+_timed_fetch() {
+    local repo="$1" secs="${2:-10}"
+    git -C "$repo" fetch --quiet &>/dev/null &
+    local pid=$!
+    local elapsed=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ $elapsed -ge $secs ]]; then
+            kill "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null || true
+            return 1
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    wait "$pid" 2>/dev/null
+}
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
     cat <<EOF
@@ -212,40 +232,66 @@ fi
 # ── Collect remote info ───────────────────────────────────────────────────────
 REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 
-# ── Require branch is up to date with remote ────────────────────────────────
+# ── Fetch from remote and check sync status ─────────────────────────────────
 # After filter-branch rewrites history, local and remote will diverge. If the
 # branch was already behind or diverged before the rewrite, the resulting state
 # is very hard to reason about. Fetch first, then check.
 UNPUSHED=0
 DIVERGED=false
+FETCH_OK=false
 if [[ -n "$REMOTES" ]]; then
-    git -C "$REPO_ROOT" fetch --quiet 2>/dev/null || true
-
-    LOCAL_REF="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
-    REMOTE_REF="$(git -C "$REPO_ROOT" rev-parse --short '@{u}' 2>/dev/null || echo "unknown")"
-    BEHIND="$(git -C "$REPO_ROOT" rev-list 'HEAD..@{u}' --count 2>/dev/null || echo 0)"
-    AHEAD="$(git -C "$REPO_ROOT" rev-list '@{u}..HEAD' --count 2>/dev/null || echo 0)"
-
-    if [[ "$BEHIND" -gt 0 && "$AHEAD" -gt 0 ]]; then
-        if [[ "$FORCE" = true ]]; then
-            DIVERGED=true
-        else
-            err "Local branch has diverged from remote ($AHEAD ahead, $BEHIND behind)."
-            echo "Resolve with 'git pull --rebase' or 'git merge' before rewriting history." >&2
-            echo "Or use --force to skip this check (will make upstreaming very difficult)." >&2
-            exit 1
+    _do_fetch=true
+    if [[ "$YES" = false ]]; then
+        echo ""
+        echo "Remote detected — need to fetch to verify local/remote are in sync."
+        echo "This requires network access; SSH key touch may be needed."
+        read -r -p "Fetch from remote? [Y/n] " _fetch_ans
+        if [[ "${_fetch_ans,,}" == "n" || "${_fetch_ans,,}" == "no" ]]; then
+            _do_fetch=false
+            warn "Skipped — remote sync status will be unknown."
         fi
-    elif [[ "$BEHIND" -gt 0 ]]; then
-        if [[ "$FORCE" = true ]]; then
-            DIVERGED=true
+    fi
+
+    if [[ "$_do_fetch" = true ]]; then
+        echo -n "Fetching (touch your key now, 10s timeout)... "
+        if _timed_fetch "$REPO_ROOT" 10; then
+            echo "done."
+            FETCH_OK=true
         else
-            err "Local branch is $BEHIND commit(s) behind remote."
-            echo "Run 'git pull' to incorporate remote changes before rewriting history." >&2
-            echo "Or use --force to skip this check (will make upstreaming very difficult)." >&2
+            echo ""
+            err "Fetch timed out after 10 seconds."
+            echo "Check your SSH key or network connection and retry." >&2
             exit 1
         fi
     fi
-    UNPUSHED="$AHEAD"
+
+    if [[ "$FETCH_OK" = true ]]; then
+        LOCAL_REF="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+        REMOTE_REF="$(git -C "$REPO_ROOT" rev-parse --short '@{u}' 2>/dev/null || echo "unknown")"
+        BEHIND="$(git -C "$REPO_ROOT" rev-list 'HEAD..@{u}' --count 2>/dev/null || echo 0)"
+        AHEAD="$(git -C "$REPO_ROOT" rev-list '@{u}..HEAD' --count 2>/dev/null || echo 0)"
+
+        if [[ "$BEHIND" -gt 0 && "$AHEAD" -gt 0 ]]; then
+            if [[ "$FORCE" = true ]]; then
+                DIVERGED=true
+            else
+                err "Local branch has diverged from remote ($AHEAD ahead, $BEHIND behind)."
+                echo "Resolve with 'git pull --rebase' or 'git merge' before rewriting history." >&2
+                echo "Or use --force to skip this check (will make upstreaming very difficult)." >&2
+                exit 1
+            fi
+        elif [[ "$BEHIND" -gt 0 ]]; then
+            if [[ "$FORCE" = true ]]; then
+                DIVERGED=true
+            else
+                err "Local branch is $BEHIND commit(s) behind remote."
+                echo "Run 'git pull' to incorporate remote changes before rewriting history." >&2
+                echo "Or use --force to skip this check (will make upstreaming very difficult)." >&2
+                exit 1
+            fi
+        fi
+        UNPUSHED="$AHEAD"
+    fi
 fi
 
 # ── Summary banner ────────────────────────────────────────────────────────────
@@ -261,7 +307,7 @@ else
     echo "  Operation:  Remove from all history and working tree"
 fi
 
-if [[ -n "$REMOTES" && -n "$LOCAL_REF" && -n "$REMOTE_REF" ]]; then
+if [[ -n "$REMOTES" && "$FETCH_OK" = true ]]; then
     if [[ "$DIVERGED" = true ]]; then
         echo -e "  Remote:     ${RED}diverged${RESET} — local ${LOCAL_REF} ($AHEAD ahead, $BEHIND behind)"
     elif [[ "$UNPUSHED" -eq 0 ]]; then
@@ -269,6 +315,8 @@ if [[ -n "$REMOTES" && -n "$LOCAL_REF" && -n "$REMOTE_REF" ]]; then
     else
         echo -e "  Remote:     ${YELLOW}local ${LOCAL_REF} is ${UNPUSHED} ahead of remote ${REMOTE_REF}${RESET}"
     fi
+elif [[ -n "$REMOTES" ]]; then
+    echo -e "  Remote:     ${YELLOW}sync status unknown (fetch skipped)${RESET}"
 elif [[ -z "$REMOTES" ]]; then
     echo -e "  Remote:     ${DIM}none (local-only repo)${RESET}"
 fi
@@ -298,6 +346,9 @@ if [[ "$DRY_RUN" = true ]]; then
     echo "    --prune-empty --tag-name-filter cat -- --all"
     echo "  git reflog expire --expire=now --all"
     echo "  git gc --prune=now --quiet"
+    if [[ -n "$REMOTES" ]]; then
+        echo "  git fetch  (refresh remote tracking refs for --force-with-lease)"
+    fi
     if [[ "$KEEP" = true ]]; then
         echo "  cp <backup> '$ABS_PATH'"
         echo "  git add '$RELATIVE_PATH'"
@@ -378,6 +429,22 @@ git -C "$REPO_ROOT" reflog expire --expire=now --all
 git -C "$REPO_ROOT" gc --prune=now --quiet
 
 ok "Objects purged from local repository."
+
+# ── Refresh remote tracking refs ────────────────────────────────────────────
+# filter-branch rewrites refs/remotes/origin/* locally, leaving them pointing
+# at rewritten (non-existent-on-remote) commits. This makes --force-with-lease
+# fail because the "expected" value no longer matches the actual remote ref.
+# A fetch updates tracking refs to the real remote state so force-with-lease
+# works correctly in the post-push step.
+if [[ -n "$REMOTES" ]]; then
+    echo -n "Refreshing remote tracking refs (touch your key, 10s timeout)... "
+    if _timed_fetch "$REPO_ROOT" 10; then
+        echo "done."
+    else
+        echo ""
+        warn "Fetch timed out — run 'git fetch' before pushing, or use --force instead of --force-with-lease."
+    fi
+fi
 
 if [[ "$KEEP" = true ]]; then
     # ── Re-add current content ───────────────────────────────────────────────

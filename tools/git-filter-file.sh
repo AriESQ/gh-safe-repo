@@ -328,8 +328,8 @@ echo ""
 
 if [[ -n "$REMOTES" ]]; then
     echo "  After scrubbing you MUST force-push to every remote:"
-    echo "    git push --force-with-lease --all"
-    echo "    git push --force-with-lease --tags"
+    echo "    cd $REPO_ROOT && git push --force-with-lease --all"
+    echo "    cd $REPO_ROOT && git push --force-with-lease --tags"
     if [[ "$DIVERGED" = true ]]; then
         echo ""
         echo -e "  ${RED}--force enabled,${RESET} upstreaming changes will be very difficult."
@@ -477,15 +477,15 @@ if [[ "$KEEP" = true ]]; then
     echo "       cat '$ABS_PATH'"
 else
     echo "  $STEP. Verify the file is gone from history:"
-    echo "       git log --all --oneline -- '$RELATIVE_PATH'  # should be empty"
+    echo "       cd $REPO_ROOT && git log --all --oneline -- '$RELATIVE_PATH'  # should be empty"
 fi
 echo ""
 
 if [[ -n "$REMOTES" ]]; then
     STEP=$((STEP + 1))
     echo "  $STEP. Force-push ALL branches and tags to every remote:"
-    echo "       git push --force-with-lease --all"
-    echo "       git push --force-with-lease --tags"
+    echo "       cd $REPO_ROOT && git push --force-with-lease --all"
+    echo "       cd $REPO_ROOT && git push --force-with-lease --tags"
     echo ""
     STEP=$((STEP + 1))
     echo "  $STEP. If hosted on GitHub, cached content may linger."

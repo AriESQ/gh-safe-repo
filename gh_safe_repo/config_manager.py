@@ -142,7 +142,17 @@ class ConfigManager:
         section = "repo"
         if not self._config.has_section(section):
             return {}
-        return dict(self._config[section])
+        settings = dict(self._config[section])
+
+        merge_keys = ("allow_squash_merge", "allow_merge_commit", "allow_rebase_merge")
+        if all(settings.get(k, "true").lower() == "false" for k in merge_keys):
+            raise ConfigError(
+                "Config disables all merge strategies "
+                "(allow_squash_merge, allow_merge_commit, allow_rebase_merge). "
+                "GitHub requires at least one to be enabled."
+            )
+
+        return settings
 
     def actions_settings(self):
         """Return the full actions settings dict."""

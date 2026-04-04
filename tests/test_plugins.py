@@ -156,6 +156,39 @@ class TestRepositoryPlugin:
         ]
         assert len(topics_puts) == 0
 
+    @patch("gh_safe_repo.plugins.repository.time.sleep")
+    def test_apply_retries_patch_on_404_after_create(self, mock_sleep):
+        """After POST /user/repos, a 404 on PATCH should be retried."""
+        client = make_mock_client()
+        # POST succeeds, first PATCH 404s, second PATCH succeeds
+        client.call_json.side_effect = [
+            {"id": 1, "name": "my-repo"},         # POST /user/repos
+            APIError("Not Found", status_code=404),  # PATCH attempt 1
+            {},                                      # PATCH attempt 2
+        ]
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        plugin.apply(plan)
+        patch_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PATCH"]
+        assert len(patch_calls) == 2
+        mock_sleep.assert_called_once_with(1)
+
+    @patch("gh_safe_repo.plugins.repository.time.sleep")
+    def test_apply_raises_after_max_retries(self, mock_sleep):
+        """After exhausting retries, the 404 should propagate."""
+        client = make_mock_client()
+        client.call_json.side_effect = [
+            {"id": 1, "name": "my-repo"},
+            APIError("Not Found", status_code=404),
+            APIError("Not Found", status_code=404),
+            APIError("Not Found", status_code=404),
+            APIError("Not Found", status_code=404),
+        ]
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        with pytest.raises(APIError):
+            plugin.apply(plan)
+
 
 class TestActionsPlugin:
     def test_plan_includes_workflow_permissions_update(self):

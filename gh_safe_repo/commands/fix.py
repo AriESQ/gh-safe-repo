@@ -75,6 +75,12 @@ def run(args):
             error(f"Failed to fetch repository info: {e}")
         sys.exit(1)
 
+    if args.debug:
+        repo_id = repo_data.get("id", "unknown")
+        full_name = repo_data.get("full_name", f"{owner}/{repo_name}")
+        owner_type = repo_data.get("owner", {}).get("type", "unknown")
+        print(f"[debug] repo: {full_name} (id={repo_id}, owner_type={owner_type})", file=sys.stderr)
+
     # Verify the authenticated user has admin access (required to change settings)
     if not repo_data.get("permissions", {}).get("admin", False):
         error(

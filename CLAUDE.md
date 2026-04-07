@@ -52,7 +52,7 @@ API and tool quirks that affect future work. For full context on any of these, s
 **Key design invariants:**
 - CLI uses subcommands: `create`, `fix`, `scan` — all GitHub-targeting commands require `owner/repo` format
 - `create` validates `owner` case-insensitively against the authenticated user (UX guard for multi-account systems)
-- `fix` skips the owner check and instead verifies admin permissions on the target repo (supports org repos and collaborator access)
+- `fix` skips the owner check and instead verifies admin permissions on the target repo (supports org repos and collaborator access); `--debug` emits the resolved repo identity (id, full_name, owner_type) to help confirm the correct repo is targeted
 - `fix` has no secret scanning (settings-only); `create --local/--from` has automatic pre-flight scan
 - `create` and `fix` both prompt for confirmation before applying; `--yes`/`-y` skips the prompt for scripted/batch use
 - `enforce_admins = false` is intentional (owner bypass for tooling)

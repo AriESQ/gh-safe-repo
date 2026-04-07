@@ -219,7 +219,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--dry-run` | Show settings diff without applying changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
 | `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | Print every API call and response |
+| `--debug` | Print every API call and response, plus resolved repo identity (id, full name, owner type) |
 
 ### `scan` — Local secret scanning
 

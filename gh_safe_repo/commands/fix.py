@@ -34,7 +34,7 @@ HELP = "Audit an existing repo and apply safe defaults"
 def add_arguments(parser):
     parser.add_argument(
         "repo",
-        help="Existing GitHub repository as owner/repo (e.g. myuser/my-repo)",
+        help="Existing GitHub repository as owner/repo (e.g. myuser/my-repo or my-org/my-repo); requires admin access",
     )
     parser.add_argument(
         "--yes", "-y",
@@ -52,7 +52,7 @@ def add_arguments(parser):
 def run(args):
     owner, repo_name = parse_repo_arg(args.repo)
 
-    ctx = build_context(args, owner)
+    ctx = build_context(args, owner, require_owner_match=False)
     config = ctx.config
     client = ctx.client
     is_paid_plan = ctx.is_paid_plan
@@ -73,6 +73,20 @@ def run(args):
             )
         else:
             error(f"Failed to fetch repository info: {e}")
+        sys.exit(1)
+
+    if args.debug:
+        repo_id = repo_data.get("id", "unknown")
+        full_name = repo_data.get("full_name", f"{owner}/{repo_name}")
+        owner_type = repo_data.get("owner", {}).get("type", "unknown")
+        print(f"[debug] repo: {full_name} (id={repo_id}, owner_type={owner_type})", file=sys.stderr)
+
+    # Verify the authenticated user has admin access (required to change settings)
+    if not repo_data.get("permissions", {}).get("admin", False):
+        error(
+            f"You do not have admin permissions on '{owner}/{repo_name}'. "
+            "Admin access is required to modify repository settings."
+        )
         sys.exit(1)
 
     is_public = not repo_data.get("private", True)

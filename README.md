@@ -196,7 +196,7 @@ gh-safe-repo fix <owner/repo> [OPTIONS]
 gh-safe-repo scan <path> [OPTIONS]
 ```
 
-All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). The owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems.
+All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). For `create`, the owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems. For `fix`, admin permissions on the target repo are required instead, allowing you to fix repos owned by organizations or other accounts where you have admin access.
 
 ### `create` — Create a new repo
 
@@ -219,7 +219,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--dry-run` | Show settings diff without applying changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
 | `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | Print every API call and response |
+| `--debug` | Print every API call and response, plus resolved repo identity (id, full name, owner type) |
 
 ### `scan` — Local secret scanning
 
@@ -715,7 +715,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 ```
 gh-safe-repo create <owner/repo>
       │
-      ├─ Parse owner/repo, validate owner matches authenticated user
+      ├─ Parse owner/repo, validate owner matches authenticated user (create only)
       ├─ Load config (./gh-safe-repo.ini or $XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini)
       ├─ Apply CLI flag overrides (--public, etc.)
       ├─ Authenticate via gh CLI or GITHUB_TOKEN

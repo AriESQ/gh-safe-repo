@@ -51,7 +51,8 @@ API and tool quirks that affect future work. For full context on any of these, s
 
 **Key design invariants:**
 - CLI uses subcommands: `create`, `fix`, `scan` — all GitHub-targeting commands require `owner/repo` format
-- `owner` in `owner/repo` is validated case-insensitively against the authenticated user (`build_context()` in `commands/_common.py`)
+- `create` validates `owner` case-insensitively against the authenticated user (UX guard for multi-account systems)
+- `fix` skips the owner check and instead verifies admin permissions on the target repo (supports org repos and collaborator access); `--debug` emits the resolved repo identity (id, full_name, owner_type) to help confirm the correct repo is targeted
 - `fix` has no secret scanning (settings-only); `create --local/--from` has automatic pre-flight scan
 - `create` and `fix` both prompt for confirmation before applying; `--yes`/`-y` skips the prompt for scripted/batch use
 - `enforce_admins = false` is intentional (owner bypass for tooling)
@@ -92,4 +93,4 @@ The tool must detect repo visibility and plan level at runtime and gracefully sk
 - **Test conventions and mocking patterns:** see `tests/README.md`
 - **Tools (scrub-ai-context.sh, trufflehog wrapper):** see `tools/README.md`
 - **API endpoint research:** see `docs/`
-- **Implementation learnings (phase-by-phase technical notes):** see `docs/LEARNINGS.md`
+- **Implementation learnings (phase-by-phase technical notes):** see `docs/LEARNINGS.md` — **check here first** when investigating why something was built a certain way; also check `git log`/`git blame` for commit messages explaining design rationale

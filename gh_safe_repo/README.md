@@ -77,5 +77,8 @@ cli.main()
   `gh api` directly from a plugin or from `cli.py`.
 - **Tokens are never logged.** Debug output uses sanitised URLs; `GH_TOKEN` is
   injected into the child-process environment, not into logged command strings.
+- **`fix` emits repo identity in debug mode.** After `get_repo_data()`, `fix`
+  prints the repo's `id`, `full_name`, and `owner.type` to stderr when `--debug`
+  is set, so users can confirm they are targeting the correct repo.
 - **`GET /user` and `GET /repos/{owner}/{repo}` are cached.** `GitHubClient` caches
   both; every plugin hits the cache instead of making a fresh HTTP call.

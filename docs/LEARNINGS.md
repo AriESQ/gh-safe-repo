@@ -183,3 +183,9 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 ## Config Consistency
 
 **`SAFE_DEFAULTS` must stay in sync with `gh-safe-repo.ini.example` — enforced by `test_config_consistency.py`.** Before this test existed, several keys consumed by `security_scanner.py` (`scan_email_history`, `exclude_emails`, `warn_ai_context_files`, `scan_exclude_paths`) relied on hardcoded `fallback=` values in the code but had no entry in `SAFE_DEFAULTS`. The `actions.enabled` key was in `SAFE_DEFAULTS` but missing from the example file. The test suite catches three classes of drift: missing/extra sections or keys, value mismatches, and config reads with neither a `SAFE_DEFAULTS` entry nor an explicit `fallback=`.
+
+## `fix` Non-Owner Repo Support
+
+**`fix` skips the `build_context()` owner check and verifies admin permissions from the repo API response instead.** The original owner check (`actual_owner.lower() != expected_owner.lower()`) was a UX guard for multi-account systems, not a security mechanism. For `fix`, requiring ownership is too strict — users need to fix org repos and repos where they are collaborators with admin access. The `permissions.admin` field from `GET /repos/{owner}/{repo}` is the correct check because admin access is what's actually needed to modify repo settings.
+
+**`fix --debug` emits the resolved repo identity (id, full_name, owner_type) after fetching repo data.** When multiple repos share the same name under different owners (e.g. `user/quest` and `org/quest`), the standard debug output (`[debug] GET /repos/{owner}/{repo}`) doesn't confirm which concrete repo was resolved. The identity line (`[debug] repo: owner/repo (id=N, owner_type=User|Organization)`) makes this immediately visible.

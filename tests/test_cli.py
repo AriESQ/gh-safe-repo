@@ -88,6 +88,22 @@ class TestBuildContext:
             build_context(self._make_args(), expected_owner="bob")
         assert exc_info.value.code == 1
 
+    @patch("gh_safe_repo.commands._common.GitHubClient")
+    @patch("gh_safe_repo.commands._common.ConfigManager")
+    def test_owner_mismatch_allowed_when_not_required(self, MockConfig, MockClient):
+        """With require_owner_match=False, different owners should be accepted."""
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "alice"
+        mock_client.get_plan_name.return_value = "free"
+        MockClient.return_value = mock_client
+        MockConfig.return_value = MagicMock()
+
+        ctx = build_context(
+            self._make_args(), expected_owner="some-org",
+            require_owner_match=False,
+        )
+        assert ctx.owner == "alice"
+
 
 class TestResolveBranches:
     def test_post_default_branch_takes_priority(self):
@@ -171,6 +187,53 @@ class TestFixFlagValidation:
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == 2
+
+    def test_no_admin_permission_exits(self):
+        """fix should reject repos where the user lacks admin permissions."""
+        with patch("sys.argv", ["gh-safe-repo", "fix", "some-org/some-repo", "--dry-run"]):
+            with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
+                mock_client = MagicMock()
+                mock_client.get_repo_data.return_value = {
+                    "id": 123,
+                    "full_name": "some-org/some-repo",
+                    "owner": {"login": "some-org", "type": "Organization"},
+                    "private": False,
+                    "default_branch": "main",
+                    "permissions": {"admin": False, "push": True, "pull": True},
+                }
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="myuser", plan_name="free",
+                    is_paid_plan=False, config=MagicMock(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 1
+
+    def test_admin_permission_proceeds(self):
+        """fix should allow repos where the user has admin permissions (no exit at permission check)."""
+        with patch("sys.argv", ["gh-safe-repo", "fix", "some-org/some-repo", "--dry-run"]):
+            with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
+                mock_client = MagicMock()
+                mock_client.get_repo_data.return_value = {
+                    "id": 123,
+                    "full_name": "some-org/some-repo",
+                    "owner": {"login": "some-org", "type": "Organization"},
+                    "private": False,
+                    "default_branch": "main",
+                    "permissions": {"admin": True, "push": True, "pull": True},
+                }
+                # call_api returns (status, body) tuples
+                mock_client.call_api.return_value = (200, "{}")
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="myuser", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                # Should proceed past the permission check (may exit 0 from dry-run
+                # or raise elsewhere — the point is it does NOT exit 1 for permissions)
+                try:
+                    main()
+                except SystemExit as e:
+                    assert e.code != 1, "Should not exit 1 — admin permission is granted"
 
 
 class TestNoSubcommand:

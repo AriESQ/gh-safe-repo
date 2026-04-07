@@ -665,6 +665,33 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-debug-01 --dry-run --debug
 
 No tokens or credentials appear in debug output (sanitized URLs).
 
+### 8.2 Debug output shows resolved repo identity (fix)
+
+```bash
+gh-safe-repo fix YOUR_USERNAME/some-repo --dry-run --debug
+```
+
+**Expected:** After the `GET /repos` line, a repo identity line:
+
+```
+[debug] GET /repos/YOUR_USERNAME/some-repo
+[debug] repo: YOUR_USERNAME/some-repo (id=123456789, owner_type=User)
+```
+
+For an org repo:
+
+```bash
+gh-safe-repo fix some-org/some-repo --dry-run --debug
+```
+
+**Expected:**
+
+```
+[debug] repo: some-org/some-repo (id=987654321, owner_type=Organization)
+```
+
+This helps confirm you are targeting the correct repo when multiple repos share the same name under different owners.
+
 ---
 
 ## 9. Config File Customisation
@@ -873,6 +900,8 @@ Run each test doc's full suite before considering these scripts production-ready
 | 7.1 --json output | Y | | | | | Y | | Y | Y |
 | 7.2 --json pipeable | Y | | | | | Y | | Y | Y |
 | 7.3 --json fix | | | | Y | | Y | | Y | Y |
+| 8.1 Debug API calls | Y | | | Y | | | | Y | Y |
+| 8.2 Debug repo identity (fix) | | | | Y | | | | Y | Y |
 | 9.1 Custom config | Y | | | | | | | Y | Y |
 | 11.1 Abort on findings | Y | | Y | | Y | | | Y | Y |
 | 12.1 Rulesets API | Y | | | | | | | | Y |

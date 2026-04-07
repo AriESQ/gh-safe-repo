@@ -194,6 +194,9 @@ class TestFixFlagValidation:
             with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
                 mock_client = MagicMock()
                 mock_client.get_repo_data.return_value = {
+                    "id": 123,
+                    "full_name": "some-org/some-repo",
+                    "owner": {"login": "some-org", "type": "Organization"},
                     "private": False,
                     "default_branch": "main",
                     "permissions": {"admin": False, "push": True, "pull": True},
@@ -212,6 +215,9 @@ class TestFixFlagValidation:
             with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
                 mock_client = MagicMock()
                 mock_client.get_repo_data.return_value = {
+                    "id": 123,
+                    "full_name": "some-org/some-repo",
+                    "owner": {"login": "some-org", "type": "Organization"},
                     "private": False,
                     "default_branch": "main",
                     "permissions": {"admin": True, "push": True, "pull": True},

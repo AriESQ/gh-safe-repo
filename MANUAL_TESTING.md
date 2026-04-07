@@ -75,7 +75,7 @@ Error: Use owner/repo format (e.g. myuser/my-repo)
 
 Exits with status 2.
 
-### 0.6 Wrong owner is rejected
+### 0.6 Wrong owner is rejected (create)
 
 ```bash
 gh-safe-repo create wronguser/my-repo --dry-run
@@ -86,6 +86,26 @@ gh-safe-repo create wronguser/my-repo --dry-run
 ```
 Error: Owner 'wronguser' does not match authenticated user 'YOUR_USERNAME'
 ```
+
+### 0.6b Non-admin repo is rejected (fix)
+
+```bash
+gh-safe-repo fix some-org/repo-you-cannot-admin --dry-run
+```
+
+**Expected:**
+
+```
+Error: You do not have admin permissions on 'some-org/repo-you-cannot-admin'. Admin access is required to modify repository settings.
+```
+
+### 0.6c Org repo with admin access is accepted (fix)
+
+```bash
+gh-safe-repo fix some-org/repo-you-admin --dry-run
+```
+
+**Expected:** Proceeds to show the settings diff (no owner mismatch error).
 
 ---
 
@@ -824,7 +844,9 @@ Run each test doc's full suite before considering these scripts production-ready
 |------|:------:|:------:|:-------:|:---:|:----:|:------:|:-----:|:---------:|:---------:|
 | 0.4 No subcommand | | | | | | | | Y | Y |
 | 0.5 Bare repo name | Y | | | | | | | Y | Y |
-| 0.6 Wrong owner | Y | | | | | | | Y | Y |
+| 0.6 Wrong owner (create) | Y | | | | | | | Y | Y |
+| 0.6b Non-admin (fix) | | | | | | | | | |
+| 0.6c Org admin (fix) | | | | | | | | | |
 | 1.1 Basic private create | Y | | | | | | | Y | Y |
 | 1.2 Duplicate repo error | Y | | | | | | | Y | Y |
 | 2.1 Basic public create | Y | | | | | | | Y | Y |

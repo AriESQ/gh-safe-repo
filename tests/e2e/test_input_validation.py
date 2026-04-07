@@ -85,11 +85,12 @@ class TestLocalFlagErrors:
         """4.3 — --local with path that doesn't exist.
 
         NOTE: The --local path check happens after build_context() (which
-        validates the owner against the authenticated user).  When no valid
-        token is present or the owner is wrong, the owner check fails first.
-        We use --dry-run here, but the owner still must be valid — so this
-        test is in Group 2 (auth-dependent) territory.  We keep it here with
-        a relaxed assertion: the tool must fail with non-zero exit.
+        validates the owner against the authenticated user for create).
+        When no valid token is present or the owner is wrong, the owner
+        check fails first.  We use --dry-run here, but the owner still
+        must be valid for create — so this test is in Group 2
+        (auth-dependent) territory.  We keep it here with a relaxed
+        assertion: the tool must fail with non-zero exit.
         """
         r = run("create", "alice/my-repo", "--local", "/tmp/path-does-not-exist-xyz")
         assert r.returncode != 0

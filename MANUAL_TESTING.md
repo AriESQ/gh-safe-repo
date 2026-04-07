@@ -75,7 +75,7 @@ Error: Use owner/repo format (e.g. myuser/my-repo)
 
 Exits with status 2.
 
-### 0.6 Wrong owner is rejected
+### 0.6 Wrong owner is rejected (create)
 
 ```bash
 gh-safe-repo create wronguser/my-repo --dry-run
@@ -86,6 +86,26 @@ gh-safe-repo create wronguser/my-repo --dry-run
 ```
 Error: Owner 'wronguser' does not match authenticated user 'YOUR_USERNAME'
 ```
+
+### 0.6b Non-admin repo is rejected (fix)
+
+```bash
+gh-safe-repo fix some-org/repo-you-cannot-admin --dry-run
+```
+
+**Expected:**
+
+```
+Error: You do not have admin permissions on 'some-org/repo-you-cannot-admin'. Admin access is required to modify repository settings.
+```
+
+### 0.6c Org repo with admin access is accepted (fix)
+
+```bash
+gh-safe-repo fix some-org/repo-you-admin --dry-run
+```
+
+**Expected:** Proceeds to show the settings diff (no owner mismatch error).
 
 ---
 
@@ -645,6 +665,33 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-debug-01 --dry-run --debug
 
 No tokens or credentials appear in debug output (sanitized URLs).
 
+### 8.2 Debug output shows resolved repo identity (fix)
+
+```bash
+gh-safe-repo fix YOUR_USERNAME/some-repo --dry-run --debug
+```
+
+**Expected:** After the `GET /repos` line, a repo identity line:
+
+```
+[debug] GET /repos/YOUR_USERNAME/some-repo
+[debug] repo: YOUR_USERNAME/some-repo (id=123456789, owner_type=User)
+```
+
+For an org repo:
+
+```bash
+gh-safe-repo fix some-org/some-repo --dry-run --debug
+```
+
+**Expected:**
+
+```
+[debug] repo: some-org/some-repo (id=987654321, owner_type=Organization)
+```
+
+This helps confirm you are targeting the correct repo when multiple repos share the same name under different owners.
+
 ---
 
 ## 9. Config File Customisation
@@ -824,7 +871,9 @@ Run each test doc's full suite before considering these scripts production-ready
 |------|:------:|:------:|:-------:|:---:|:----:|:------:|:-----:|:---------:|:---------:|
 | 0.4 No subcommand | | | | | | | | Y | Y |
 | 0.5 Bare repo name | Y | | | | | | | Y | Y |
-| 0.6 Wrong owner | Y | | | | | | | Y | Y |
+| 0.6 Wrong owner (create) | Y | | | | | | | Y | Y |
+| 0.6b Non-admin (fix) | | | | | | | | | |
+| 0.6c Org admin (fix) | | | | | | | | | |
 | 1.1 Basic private create | Y | | | | | | | Y | Y |
 | 1.2 Duplicate repo error | Y | | | | | | | Y | Y |
 | 2.1 Basic public create | Y | | | | | | | Y | Y |
@@ -851,6 +900,8 @@ Run each test doc's full suite before considering these scripts production-ready
 | 7.1 --json output | Y | | | | | Y | | Y | Y |
 | 7.2 --json pipeable | Y | | | | | Y | | Y | Y |
 | 7.3 --json fix | | | | Y | | Y | | Y | Y |
+| 8.1 Debug API calls | Y | | | Y | | | | Y | Y |
+| 8.2 Debug repo identity (fix) | | | | Y | | | | Y | Y |
 | 9.1 Custom config | Y | | | | | | | Y | Y |
 | 11.1 Abort on findings | Y | | Y | | Y | | | Y | Y |
 | 12.1 Rulesets API | Y | | | | | | | | Y |

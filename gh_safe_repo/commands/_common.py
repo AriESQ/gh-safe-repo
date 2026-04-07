@@ -59,8 +59,14 @@ def parse_repo_arg(arg):
     return owner, repo
 
 
-def build_context(args, expected_owner):
-    """Authenticate, load config, validate owner, detect plan. Returns CLIContext."""
+def build_context(args, expected_owner, require_owner_match=True):
+    """Authenticate, load config, validate owner, detect plan. Returns CLIContext.
+
+    When require_owner_match is True (default, used by create), the repo owner
+    must match the authenticated user — a UX guard for multi-account systems.
+    When False (used by fix), the check is skipped; callers should verify
+    permissions separately (e.g. admin access on the target repo).
+    """
     # Load config
     try:
         config_path = args.config or None  # bare --config ("") → defaults only
@@ -86,7 +92,7 @@ def build_context(args, expected_owner):
         error(f"Could not determine GitHub user: {e}")
         sys.exit(1)
 
-    if actual_owner.lower() != expected_owner.lower():
+    if require_owner_match and actual_owner.lower() != expected_owner.lower():
         error(
             f"Owner '{expected_owner}' does not match authenticated user '{actual_owner}'"
         )

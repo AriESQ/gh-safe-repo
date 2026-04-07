@@ -88,14 +88,20 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 
 ### Tag protection (public repos, or any repo on a paid plan)
 
-| Rule | Value |
-|---|---|
-| Protected tag patterns | `*` (all tags; configurable) |
-| Prevent tag deletion | Yes |
-| Prevent tag update (rewriting) | Yes |
-| Admin bypass | Yes (consistent with branch protection) |
+Tag protection creates a GitHub Ruleset targeting all tags (`*` by default, configurable via `protected_tags`). The following rules are enforced:
 
-Tag protection uses the Rulesets API exclusively — there is no "classic" tag protection equivalent. This only works on public repos or paid GitHub plans (same restriction as branch protection). Free-plan private repos will see this skipped in the plan output.
+| Ruleset rule | Enforced? | Notes |
+|---|---|---|
+| Restrict creations | No | |
+| **Restrict updates** | **Yes** | Prevents rewriting / force-pushing tags |
+| **Restrict deletions** | **Yes** | Prevents `git push --delete` of tags |
+| Require linear history | No | |
+| Require deployments to succeed | No | |
+| Require signed commits | No | |
+| Require status checks to pass | No | |
+| Block force pushes | No | |
+
+Repository admins are on the bypass list (consistent with the branch protection `enforce_admins = false` default). Only works on public repos or paid GitHub plans (same restriction as branch protection). Free-plan private repos will see this skipped in the plan output.
 
 ### Security
 
@@ -268,7 +274,7 @@ $ gh-safe-repo create <owner/repo> --dry-run
 | `ADD` (green) | New setting being applied |
 | `UPDATE` (yellow) | Existing setting being changed (audit mode) |
 | `DELETE` (red) | Setting being removed |
-| `SKIP` (dim) | Feature unavailable on your plan/visibility combination |
+| `SKIP` (dim) | No action needed — already at the desired value, or feature unavailable on your plan/visibility combination |
 
 **JSON output** (`--json`):
 
@@ -308,7 +314,7 @@ Fix mode:
 3. Shows a plan table with `UPDATE` for changed settings and `SKIP` for settings already at the desired value (no-op detection — it never makes API calls that would change nothing)
 4. Prompts for confirmation before applying (skip with `--yes`)
 
-Settings that are already correct are silently skipped. Only real changes are shown and applied.
+Only real changes are applied — settings already at the desired value are shown as `SKIP` and generate no API calls.
 
 ---
 
@@ -330,9 +336,9 @@ gh-safe-repo create <owner/pub> --from <owner/priv> --public
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
 3. You review findings and confirm (or abort)
 4. A new repo is created (private by default, or public with `--public`)
-5. Safe defaults are applied (branch protection, security scanning, etc.)
+5. Actions permissions and security settings are applied (Dependabot, secret scanning, push protection)
 6. The full history is mirrored: `git clone --mirror` + `git push --mirror`
-7. Dependabot and secret scanning are configured
+7. Branch and tag protection are applied (after code push, so the target branch exists)
 
 If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
@@ -353,12 +359,12 @@ gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 
 1. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
 2. You review findings and confirm (or abort)
-3. A new repo is created with safe defaults applied
-4. Branch protection is applied **before any code is pushed** (when `--public`)
-5. Code is pushed:
+3. A new repo is created, and actions permissions and security settings are applied
+4. Code is pushed:
    - If `PATH` is a git repo: the full history is cloned locally and pushed with `push --all --tags` (all branches and tags)
    - If `PATH` is a plain directory: files are staged in a fresh repo and pushed as an initial commit
    - If `PATH` is an empty directory: nothing is pushed (silently skipped)
+5. Branch and tag protection are applied (after code push, so the target branch exists)
 6. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
 Both `--local` and `--from` work for private and public repos. They are mutually exclusive.

@@ -224,6 +224,22 @@ class SecurityScanner:
         except FileNotFoundError:
             return False
 
+    def _is_tracked(self, root_path: str, rel_path: str) -> bool:
+        """Return True if rel_path is tracked in git (in the index).
+
+        Untracked / gitignored files are not pushed by `git push`, so flagging
+        them as AI-context leaks would be a false positive for the publish
+        workflow. On any git error, return True (be conservative — flag).
+        """
+        try:
+            result = subprocess.run(
+                ["git", "-C", root_path, "ls-files", "--error-unmatch", "--", rel_path],
+                capture_output=True, text=True,
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            return True
+
     # --- Discovery ---
 
     def _detect_native(self) -> Optional[str]:
@@ -431,15 +447,20 @@ class SecurityScanner:
                         full_path = os.path.join(dirpath, d)
                         rel_path = os.path.relpath(full_path, root_path).replace(os.sep, "/")
                         dirs.remove(d)
-                        if not self._is_excluded(rel_path):
-                            findings.append(Finding(
-                                severity=Severity.CRITICAL,
-                                category=FindingCategory.AI_CONTEXT_FILE,
-                                file_path=rel_path,
-                                line_number=0,
-                                rule="AI context file",
-                                match=_ai_context_hint(rel_path),
-                            ))
+                        if self._is_excluded(rel_path):
+                            continue
+                        # In a git repo, only flag if something under the dir
+                        # is tracked — untracked/ignored files won't be pushed.
+                        if is_git_repo and not self._is_committed(root_path, rel_path):
+                            continue
+                        findings.append(Finding(
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.AI_CONTEXT_FILE,
+                            file_path=rel_path,
+                            line_number=0,
+                            rule="AI context file",
+                            match=_ai_context_hint(rel_path),
+                        ))
 
             for filename in files:
                 full_path = os.path.join(dirpath, filename)
@@ -453,14 +474,17 @@ class SecurityScanner:
                 if self._warn_ai_context_files:
                     if (filename.lower() in _AI_CONTEXT_BASENAMES
                             or rel_path.lower() in _AI_CONTEXT_REL_PATHS):
-                        findings.append(Finding(
-                            severity=Severity.CRITICAL,
-                            category=FindingCategory.AI_CONTEXT_FILE,
-                            file_path=rel_path,
-                            line_number=0,
-                            rule="AI context file",
-                            match=_ai_context_hint(rel_path),
-                        ))
+                        # In a git repo, only flag tracked files —
+                        # untracked/gitignored files won't be pushed.
+                        if not is_git_repo or self._is_tracked(root_path, rel_path):
+                            findings.append(Finding(
+                                severity=Severity.CRITICAL,
+                                category=FindingCategory.AI_CONTEXT_FILE,
+                                file_path=rel_path,
+                                line_number=0,
+                                rule="AI context file",
+                                match=_ai_context_hint(rel_path),
+                            ))
 
                 # Large file check
                 try:

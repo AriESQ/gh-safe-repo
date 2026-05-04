@@ -60,8 +60,6 @@ def run(args):
     json_mode = args.json
     _info = lambda msg: info(msg, json_mode=json_mode)
 
-    _info(f"\nAuditing {_BOLD}{owner}/{repo_name}{_RESET}...")
-
     # Verify repo exists and fetch its data
     try:
         repo_data = client.get_repo_data(owner, repo_name)
@@ -80,6 +78,14 @@ def run(args):
         full_name = repo_data.get("full_name", f"{owner}/{repo_name}")
         owner_type = repo_data.get("owner", {}).get("type", "unknown")
         print(f"[debug] repo: {full_name} (id={repo_id}, owner_type={owner_type})", file=sys.stderr)
+
+    # Use canonical casing from the API; `fix` accepts org/collaborator repos.
+    canonical_owner = repo_data.get("owner", {}).get("login")
+    canonical_name = repo_data.get("name")
+    if canonical_owner and canonical_name:
+        owner, repo_name = canonical_owner, canonical_name
+
+    _info(f"\nAuditing {_BOLD}{owner}/{repo_name}{_RESET}...")
 
     # Verify the authenticated user has admin access (required to change settings)
     if not repo_data.get("permissions", {}).get("admin", False):

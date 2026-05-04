@@ -90,6 +90,9 @@ def run(args):
     client = ctx.client
     is_paid_plan = ctx.is_paid_plan
 
+    # Git push URLs are case-sensitive; redirected pushes reject workflow files.
+    owner = ctx.owner
+
     # Apply CLI overrides
     overrides = {}
     if args.public:

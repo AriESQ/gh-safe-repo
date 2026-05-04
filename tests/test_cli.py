@@ -180,6 +180,91 @@ class TestCreateFlagValidation:
                 main()
         assert exc_info.value.code == 2
 
+    def test_push_local_called_with_canonical_owner(self, tmp_path):
+        """Direct coverage: client.push_local must receive ctx.owner, not the typed owner.
+
+        This was the actual bug — a typed lowercase owner produced a redirected
+        push URL, which GitHub rejects for repos containing workflow files.
+        """
+        mock_client = MagicMock()
+        mock_client.check_repo_exists.return_value = False
+        # Successful repo create response
+        mock_client.call_json.return_value = {"default_branch": "main"}
+
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "ariesq/my-repo", "--local", str(tmp_path), "--yes",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
+                 patch("gh_safe_repo.commands.create.run_preflight_scan_local", return_value=True), \
+                 patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
+                 patch("gh_safe_repo.commands.create.ActionsPlugin"), \
+                 patch("gh_safe_repo.commands.create.BranchProtectionPlugin"), \
+                 patch("gh_safe_repo.commands.create.SecurityPlugin"), \
+                 patch("gh_safe_repo.commands.create.TagProtectionPlugin"):
+                MockRepo.return_value = MagicMock(created_default_branch="main")
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="AriESQ", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+        mock_client.push_local.assert_called_once()
+        call_owner = mock_client.push_local.call_args[0][1]
+        assert call_owner == "AriESQ"
+
+    def test_plugins_constructed_with_canonical_owner(self, tmp_path):
+        """Plugin constructors must receive the canonical owner for API paths."""
+        mock_client = MagicMock()
+
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "ariesq/my-repo", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
+                 patch("gh_safe_repo.commands.create.ActionsPlugin") as MockActions, \
+                 patch("gh_safe_repo.commands.create.BranchProtectionPlugin") as MockBP, \
+                 patch("gh_safe_repo.commands.create.SecurityPlugin") as MockSec, \
+                 patch("gh_safe_repo.commands.create.TagProtectionPlugin") as MockTag:
+                for M in (MockRepo, MockActions, MockBP, MockSec, MockTag):
+                    M.return_value = MagicMock()
+                    M.return_value.plan.return_value = Plan()
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="AriESQ", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+        for M in (MockRepo, MockActions, MockBP, MockSec, MockTag):
+            assert M.call_args[0][1] == "AriESQ", \
+                f"{M} called with non-canonical owner: {M.call_args}"
+
+    def test_uses_canonical_owner_casing_in_plan(self, capsys):
+        """User types 'ariesq/repo' but ctx.owner is 'AriESQ' — plan must show canonical casing.
+
+        Git push URLs are case-sensitive; redirected pushes are rejected for workflow files.
+        """
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "ariesq/my-repo", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=MagicMock(), owner="AriESQ", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "AriESQ/my-repo" in out
+        assert "ariesq/my-repo" not in out
+
 
 class TestFixFlagValidation:
     def test_bare_repo_name_exits(self):
@@ -208,6 +293,78 @@ class TestFixFlagValidation:
                 with pytest.raises(SystemExit) as exc_info:
                     main()
                 assert exc_info.value.code == 1
+
+    def test_plugins_constructed_with_canonical_owner(self):
+        """fix plugins must receive the canonical owner derived from repo_data."""
+        with patch("sys.argv", [
+            "gh-safe-repo", "fix", "some-org/some-repo", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.fix.RepositoryPlugin") as MockRepo, \
+                 patch("gh_safe_repo.commands.fix.ActionsPlugin") as MockActions, \
+                 patch("gh_safe_repo.commands.fix.BranchProtectionPlugin") as MockBP, \
+                 patch("gh_safe_repo.commands.fix.SecurityPlugin") as MockSec, \
+                 patch("gh_safe_repo.commands.fix.TagProtectionPlugin") as MockTag:
+                for M in (MockRepo, MockActions, MockBP, MockSec, MockTag):
+                    M.return_value = MagicMock()
+                    M.return_value.plan.return_value = Plan()
+                    M.return_value.fetch_current_state.return_value = {}
+                mock_client = MagicMock()
+                mock_client.get_repo_data.return_value = {
+                    "id": 123,
+                    "full_name": "Some-Org/Some-Repo",
+                    "name": "Some-Repo",
+                    "owner": {"login": "Some-Org", "type": "Organization"},
+                    "private": False,
+                    "default_branch": "main",
+                    "permissions": {"admin": True, "push": True, "pull": True},
+                }
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="myuser", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+        for M in (MockRepo, MockActions, MockBP, MockSec, MockTag):
+            args_, _kw = M.call_args
+            assert args_[1] == "Some-Org" and args_[2] == "Some-Repo", \
+                f"{M} called with non-canonical owner/repo: {args_}"
+
+    def test_uses_canonical_owner_casing_from_repo_data(self, capsys):
+        """fix should canonicalize owner/repo casing from the GET /repos response.
+
+        `fix` accepts org/collaborator repos, so it cannot use ctx.owner — it must
+        derive canonical casing from repo_data['owner']['login'] and repo_data['name'].
+        """
+        with patch("sys.argv", [
+            "gh-safe-repo", "fix", "some-org/some-repo", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
+                mock_client = MagicMock()
+                mock_client.get_repo_data.return_value = {
+                    "id": 123,
+                    "full_name": "Some-Org/Some-Repo",
+                    "name": "Some-Repo",
+                    "owner": {"login": "Some-Org", "type": "Organization"},
+                    "private": False,
+                    "default_branch": "main",
+                    "permissions": {"admin": True, "push": True, "pull": True},
+                }
+                mock_client.call_api.return_value = (200, "{}")
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="myuser", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit:
+                    pass
+        out = capsys.readouterr().out
+        assert "Some-Org/Some-Repo" in out
+        assert "some-org/some-repo" not in out
 
     def test_admin_permission_proceeds(self):
         """fix should allow repos where the user has admin permissions (no exit at permission check)."""

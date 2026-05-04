@@ -12,7 +12,7 @@ requires-python = ">=3.8"
 gh-safe-repo = "gh_safe_repo.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=7"]
+dev = ["pytest>=8.4.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["gh_safe_repo"]

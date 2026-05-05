@@ -22,7 +22,69 @@ class GitHubClient:
         self._use_gh = False
         self._user_data = None
         self._repo_cache = {}
+        self._git_protocol = None
         self._authenticate()
+
+    def _get_git_protocol(self) -> str:
+        """Return 'ssh' or 'https' (default 'https'), cached."""
+        if self._git_protocol is not None:
+            return self._git_protocol
+        try:
+            result = subprocess.run(
+                ["gh", "config", "get", "git_protocol"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                value = result.stdout.strip().lower()
+                if value in ("ssh", "https"):
+                    self._git_protocol = value
+                    return value
+        except (subprocess.SubprocessError, FileNotFoundError):
+            pass
+        self._git_protocol = "https"
+        return "https"
+
+    def git_remote_url(self, owner: str, repo: str) -> str:
+        """Build a git remote URL using the user's configured protocol.
+
+        Uses the user's own credentials (SSH key or HTTPS credential helper)
+        rather than injecting the OAuth token, which avoids OAuth-App scope
+        restrictions (e.g. workflow scope) on `git push`.
+        """
+        if self._get_git_protocol() == "ssh":
+            return f"git@github.com:{owner}/{repo}.git"
+        return f"https://github.com/{owner}/{repo}.git"
+
+    def verify_git_credentials(self) -> None:
+        """Pre-flight check that the user can authenticate to github.com via git.
+
+        For SSH, runs `ssh -T git@github.com` (GitHub returns exit 1 with a
+        success banner on success; 255 on auth failure). For HTTPS, returns
+        without probing — credential-helper failures surface clearly on push.
+        Raises AuthError on a known SSH failure.
+        """
+        if self._get_git_protocol() != "ssh":
+            return
+        try:
+            result = subprocess.run(
+                ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                 "git@github.com"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
+            raise AuthError(
+                f"Could not run `ssh` to verify GitHub credentials: {e}. "
+                "Set `gh config set git_protocol https` or install OpenSSH."
+            )
+        # Exit 1 = authenticated (GitHub denies shell access). Anything else fails.
+        if result.returncode != 1 or "successfully authenticated" not in (result.stderr or ""):
+            stderr = (result.stderr or "").strip()
+            raise AuthError(
+                "SSH authentication to git@github.com failed. "
+                "Add your SSH key to GitHub and load it into ssh-agent, "
+                "or switch to HTTPS via `gh config set git_protocol https`.\n"
+                f"  ssh said: {stderr}"
+            )
 
     def _authenticate(self):
         # Try gh CLI first
@@ -152,14 +214,12 @@ class GitHubClient:
         """
         Mirror-clone source_repo and push all refs to dest_repo.
         Both repos must belong to owner.
-        Uses x-access-token HTTPS auth so no SSH setup is required.
+        Uses the user's git credentials (SSH or credential helper).
         """
-        source_url = f"https://x-access-token:{self._token}@github.com/{owner}/{source_repo}.git"
-        dest_url = f"https://x-access-token:{self._token}@github.com/{owner}/{dest_repo}.git"
-
-        # Sanitised versions for debug output (never log the real token)
-        source_display = f"https://github.com/{owner}/{source_repo}.git"
-        dest_display = f"https://github.com/{owner}/{dest_repo}.git"
+        source_url = self.git_remote_url(owner, source_repo)
+        dest_url = self.git_remote_url(owner, dest_repo)
+        source_display = source_url
+        dest_display = dest_url
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mirror_path = os.path.join(tmpdir, "mirror")
@@ -209,8 +269,8 @@ class GitHubClient:
         If local_path is a git repo, its full history is pushed.
         Otherwise files are staged in a fresh repo and pushed as an initial commit.
         """
-        dest_url = f"https://x-access-token:{self._token}@github.com/{owner}/{dest_repo}.git"
-        dest_display = f"https://github.com/{owner}/{dest_repo}.git"
+        dest_url = self.git_remote_url(owner, dest_repo)
+        dest_display = dest_url
         is_git_repo = os.path.isdir(os.path.join(local_path, ".git"))
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -313,8 +373,8 @@ class GitHubClient:
         A full clone (no --depth) is required so truffleHog can scan the
         complete git history for secrets, not just the working-tree snapshot.
         """
-        clone_url = f"https://x-access-token:{self._token}@github.com/{owner}/{repo}.git"
-        display_url = f"https://github.com/{owner}/{repo}.git"
+        clone_url = self.git_remote_url(owner, repo)
+        display_url = clone_url
         if self.debug:
             print(f"[debug] git clone {display_url} {dest_path}", file=sys.stderr)
         try:

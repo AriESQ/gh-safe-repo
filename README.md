@@ -120,6 +120,7 @@ Repository admins are on the bypass list (consistent with the branch protection 
 
 - Python 3.8+
 - [`gh` CLI](https://cli.github.com/) installed and authenticated (`gh auth login`), **or** `GITHUB_TOKEN` set in your environment
+- For `--local` / `--from` (which push or clone code): your usual git credentials must be set up — either an SSH key loaded into `ssh-agent` (when `gh config get git_protocol` is `ssh`) or an HTTPS credential helper (`gh auth setup-git` configures one automatically). The OAuth token is **not** used for git push, so workflow files (`.github/workflows/*`) push without needing the OAuth `workflow` scope.
 - [`uv`](https://docs.astral.sh/uv/) for installation from source (recommended)
 - `truffleHog` v3 (optional — used by the pre-flight scanner; auto-detected from PATH, or run via podman/docker; falls back to regex if neither is available)
 
@@ -332,13 +333,14 @@ gh-safe-repo create <owner/pub> --from <owner/priv> --public
 
 **What happens, in order:**
 
-1. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
-2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
-3. You review findings and confirm (or abort)
-4. A new repo is created (private by default, or public with `--public`)
-5. Actions permissions and security settings are applied (Dependabot, secret scanning, push protection)
-6. The full history is mirrored: `git clone --mirror` + `git push --mirror`
-7. Branch and tag protection are applied (after code push, so the target branch exists)
+1. Your git credentials for `github.com` are verified up front (SSH probe when `gh config get git_protocol` is `ssh`; HTTPS is trusted), so a missing key fails fast before any repo is created
+2. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the full commit history)
+3. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local clone
+4. You review findings and confirm (or abort)
+5. A new repo is created (private by default, or public with `--public`)
+6. Actions permissions and security settings are applied (Dependabot, secret scanning, push protection)
+7. The full history is mirrored: `git clone --mirror` + `git push --mirror`
+8. Branch and tag protection are applied (after code push, so the target branch exists)
 
 If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
@@ -357,15 +359,16 @@ gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 
 **What happens, in order:**
 
-1. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
-2. You review findings and confirm (or abort)
-3. A new repo is created, and actions permissions and security settings are applied
-4. Code is pushed:
+1. Your git credentials for `github.com` are verified up front (SSH probe when `gh config get git_protocol` is `ssh`; HTTPS is trusted), so a missing key fails fast before any repo is created
+2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
+3. You review findings and confirm (or abort)
+4. A new repo is created, and actions permissions and security settings are applied
+5. Code is pushed:
    - If `PATH` is a git repo: the full history is cloned locally and pushed with `push --all --tags` (all branches and tags)
    - If `PATH` is a plain directory: files are staged in a fresh repo and pushed as an initial commit
    - If `PATH` is an empty directory: nothing is pushed (silently skipped)
-5. Branch and tag protection are applied (after code push, so the target branch exists)
-6. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
+6. Branch and tag protection are applied (after code push, so the target branch exists)
+7. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
 Both `--local` and `--from` work for private and public repos. They are mutually exclusive.
 

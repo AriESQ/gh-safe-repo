@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gh_safe_repo.errors import AuthError
 from gh_safe_repo.commands._common import (
     _resolve_branches,
     build_context,
@@ -179,6 +180,65 @@ class TestCreateFlagValidation:
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == 2
+
+    def test_credential_failure_aborts_before_repo_creation(self, tmp_path):
+        """When --local is set and git creds are missing, create must fail
+        BEFORE any API call — otherwise we leave an empty repo behind."""
+        mock_client = MagicMock()
+        mock_client.verify_git_credentials.side_effect = AuthError(
+            "SSH authentication to git@github.com failed."
+        )
+
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), "--yes",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+
+        assert exc_info.value.code == 1
+        mock_client.verify_git_credentials.assert_called_once()
+        # Critical: no repo creation API call was made
+        mock_client.call_json.assert_not_called()
+        mock_client.push_local.assert_not_called()
+
+    def test_credential_check_skipped_when_no_push_needed(self):
+        """Plain create (no --local/--from) doesn't push, so don't probe creds."""
+        mock_client = MagicMock()
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "alice/my-repo", "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit:
+                    pass
+        mock_client.verify_git_credentials.assert_not_called()
+
+    def test_credential_check_skipped_in_dry_run(self, tmp_path):
+        """--dry-run makes zero external calls; credential probe is also skipped."""
+        mock_client = MagicMock()
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit:
+                    pass
+        mock_client.verify_git_credentials.assert_not_called()
 
     def test_push_local_called_with_canonical_owner(self, tmp_path):
         """Direct coverage: client.push_local must receive ctx.owner, not the typed owner.

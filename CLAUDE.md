@@ -30,7 +30,12 @@ API and tool quirks that affect future work. For full context on any of these, s
 **`gh api` subprocess pattern:**
 - JSON bodies passed via `--input -` (stdin), not `--field` — nested objects require it
 - Status code parsed from stderr via regex (`HTTP (\d{3})`); fragile if `gh` changes format
-- Token injected as `GH_TOKEN` in child process env; HTTPS auth uses `x-access-token:{token}@github.com`
+- Token injected as `GH_TOKEN` in child process env for API calls only
+
+**Git transport (push/clone) auth:**
+- Uses the user's own git credentials, NOT the OAuth token; URLs follow `gh config get git_protocol` (`ssh` → `git@github.com:owner/repo.git`, else plain HTTPS via credential helper)
+- Token injection (`x-access-token`) was removed because OAuth App tokens require the `workflow` scope to push `.github/workflows/*`, even when the user's SSH key has no such restriction
+- `verify_git_credentials()` runs `ssh -T git@github.com` (SSH only) before any API call when `--local`/`--from` is used, so credential failures abort before the repo is created
 
 **truffleHog v3:**
 - Exit code 1 = findings found (not error); any other non-zero = failure → fall back to regex

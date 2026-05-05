@@ -130,6 +130,7 @@ class TestCopyRepo:
             mock_run.return_value = make_completed_process(stdout="ghp_token\n")
             client = GitHubClient()
             client._token = "ghp_testtoken"
+            client._git_protocol = "https"  # bypass `gh config get` lookup
             return client
 
     def test_copy_repo_calls_git_clone_mirror(self):
@@ -144,7 +145,9 @@ class TestCopyRepo:
         assert cmd[0] == "git"
         assert "--mirror" in cmd
         assert any("private-repo.git" in arg for arg in cmd)
-        assert any("x-access-token:" in arg for arg in cmd)
+        # Never inject the OAuth token into git URLs — use the user's git creds.
+        assert not any("x-access-token" in arg for arg in cmd)
+        assert not any("ghp_testtoken" in arg for arg in cmd)
 
     def test_copy_repo_calls_git_push_mirror(self):
         client = self._make_client()
@@ -200,6 +203,7 @@ class TestPushLocal:
             mock_run.return_value = make_completed_process(stdout="ghp_token\n")
             client = GitHubClient()
             client._token = "ghp_testtoken"
+            client._git_protocol = "https"  # bypass `gh config get` lookup
             return client
 
     def test_push_local_git_repo_clones_then_pushes(self):
@@ -293,6 +297,7 @@ class TestCloneForScan:
             mock_run.return_value = make_completed_process(stdout="ghp_token\n")
             client = GitHubClient()
             client._token = "ghp_testtoken"
+            client._git_protocol = "https"  # bypass `gh config get` lookup
             return client
 
     def test_clone_for_scan_is_full_clone(self):
@@ -322,6 +327,114 @@ class TestCloneForScan:
             with pytest.raises(APIError) as exc_info:
                 client.clone_for_scan("alice", "private-repo", "/tmp/scan")
         assert "clone" in str(exc_info.value).lower()
+
+
+class TestGitRemoteUrl:
+    """Verify URL construction respects gh's git_protocol setting and never
+    injects the OAuth token (which would import OAuth-App scope restrictions
+    such as the workflow scope)."""
+
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            client = GitHubClient()
+            client._token = "ghp_testtoken"
+            return client
+
+    def test_ssh_url_when_protocol_is_ssh(self):
+        client = self._make_client()
+        client._git_protocol = "ssh"
+        assert client.git_remote_url("alice", "myrepo") == "git@github.com:alice/myrepo.git"
+
+    def test_https_url_when_protocol_is_https(self):
+        client = self._make_client()
+        client._git_protocol = "https"
+        assert client.git_remote_url("alice", "myrepo") == "https://github.com/alice/myrepo.git"
+
+    def test_no_token_in_url_for_either_protocol(self):
+        client = self._make_client()
+        for proto in ("ssh", "https"):
+            client._git_protocol = proto
+            url = client.git_remote_url("alice", "myrepo")
+            assert "x-access-token" not in url
+            assert "ghp_testtoken" not in url
+
+    def test_get_git_protocol_defaults_to_https_on_failure(self):
+        client = self._make_client()
+        client._git_protocol = None
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(returncode=1)
+            assert client._get_git_protocol() == "https"
+
+    def test_get_git_protocol_reads_gh_config(self):
+        client = self._make_client()
+        client._git_protocol = None
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ssh\n")
+            assert client._get_git_protocol() == "ssh"
+
+    def test_copy_repo_uses_ssh_when_configured(self):
+        client = self._make_client()
+        client._git_protocol = "ssh"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            client.copy_repo("alice", "src", "dst")
+        urls_in_calls = [
+            arg for call in mock_run.call_args_list for arg in call.args[0]
+            if "github.com" in str(arg)
+        ]
+        assert all(u.startswith("git@github.com:") for u in urls_in_calls)
+        assert not any("x-access-token" in u for u in urls_in_calls)
+
+
+class TestVerifyGitCredentials:
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            client = GitHubClient()
+            client._token = "ghp_testtoken"
+            return client
+
+    def test_https_skips_probe(self):
+        client = self._make_client()
+        client._git_protocol = "https"
+        with patch("subprocess.run") as mock_run:
+            client.verify_git_credentials()
+        assert not mock_run.called  # no ssh probe for HTTPS
+
+    def test_ssh_success_when_github_responds_authenticated(self):
+        client = self._make_client()
+        client._git_protocol = "ssh"
+        # GitHub's SSH endpoint returns exit 1 with success banner on success.
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                returncode=1,
+                stderr="Hi alice! You've successfully authenticated, "
+                       "but GitHub does not provide shell access.\n",
+            )
+            client.verify_git_credentials()  # should not raise
+
+    def test_ssh_failure_when_no_key(self):
+        client = self._make_client()
+        client._git_protocol = "ssh"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                returncode=255,
+                stderr="git@github.com: Permission denied (publickey).\n",
+            )
+            with pytest.raises(AuthError) as exc_info:
+                client.verify_git_credentials()
+        msg = str(exc_info.value)
+        assert "SSH" in msg
+        assert "git_protocol https" in msg  # remediation hint present
+
+    def test_ssh_failure_when_ssh_binary_missing(self):
+        client = self._make_client()
+        client._git_protocol = "ssh"
+        with patch("subprocess.run", side_effect=FileNotFoundError("ssh")):
+            with pytest.raises(AuthError) as exc_info:
+                client.verify_git_credentials()
+        assert "ssh" in str(exc_info.value).lower()
 
 
 class TestGetRepoData:

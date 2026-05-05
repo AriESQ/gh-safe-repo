@@ -34,7 +34,7 @@ uv run pytest tests/ -x
 | `test_config_manager.py` | `ConfigManager` defaults, INI file parsing, `apply_overrides()`, validation errors |
 | `test_config_consistency.py` | `SAFE_DEFAULTS` ↔ `gh-safe-repo.ini.example` parity (sections, keys, values), config file pickup for every key, CLI override precedence, static analysis that all consumed config keys have defaults |
 | `test_diff.py` | `Change` and `Plan` dataclasses, `count_by_type()`, `format_plan_json()` |
-| `test_github_client.py` | `GitHubClient` — `call_api()`, auth token resolution, `copy_repo()`, `push_local()`, status-code parsing |
+| `test_github_client.py` | `GitHubClient` — `call_api()`, auth token resolution, `copy_repo()`, `push_local()`, status-code parsing, `git_remote_url()` protocol selection, `verify_git_credentials()` SSH probe |
 | `test_plugins.py` | All four plugins (`RepositoryPlugin`, `ActionsPlugin`, `BranchProtectionPlugin`, `SecurityPlugin`) — plan generation, apply calls, no-op detection, plan-limit skips |
 | `test_cli.py` | `main()` argument validation, `build_context()` owner check and `require_owner_match`, `fix` admin permissions check, `_resolve_branches()`, `format_plan_json()`, mutually-exclusive flag errors |
 | `test_security_scanner.py` | `SecurityScanner` — real tempfiles on disk; truffleHog dispatch, regex fallback, `_unified_walk()`, AI context file detection, git history check |

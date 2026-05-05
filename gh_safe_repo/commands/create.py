@@ -6,7 +6,7 @@ import sys
 from typing import Optional
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
-from ..errors import APIError, RepoExistsError, SafeRepoError
+from ..errors import APIError, AuthError, RepoExistsError, SafeRepoError
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
 from ..plugins.repository import RepositoryPlugin
@@ -92,6 +92,17 @@ def run(args):
 
     # Git push URLs are case-sensitive; redirected pushes reject workflow files.
     owner = ctx.owner
+
+    # Pre-flight git credential check for paths that push or clone.
+    # The OAuth token used for API calls cannot push workflow files without the
+    # `workflow` scope, so we use the user's own git credentials instead. Verify
+    # they work before creating the repo, so we don't leave an empty repo behind.
+    if (args.local_path or args.from_repo) and not args.dry_run:
+        try:
+            client.verify_git_credentials()
+        except AuthError as e:
+            error(str(e))
+            sys.exit(1)
 
     # Apply CLI overrides
     overrides = {}

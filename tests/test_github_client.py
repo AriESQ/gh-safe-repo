@@ -380,9 +380,10 @@ class TestGitRemoteUrl:
             mock_run.return_value = make_completed_process()
             client.copy_repo("alice", "src", "dst")
         urls_in_calls = [
-            arg for call in mock_run.call_args_list for arg in call.args[0]
-            if "github.com" in str(arg)
+            str(arg) for call_ in mock_run.call_args_list for arg in call_.args[0]
+            if str(arg).startswith(("git@github.com:", "https://github.com/"))
         ]
+        assert urls_in_calls, "expected at least one github.com URL in subprocess calls"
         assert all(u.startswith("git@github.com:") for u in urls_in_calls)
         assert not any("x-access-token" in u for u in urls_in_calls)
 

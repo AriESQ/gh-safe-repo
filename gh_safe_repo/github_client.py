@@ -26,21 +26,30 @@ class GitHubClient:
         self._authenticate()
 
     def _get_git_protocol(self) -> str:
-        """Return 'ssh' or 'https' (default 'https'), cached."""
+        """Return 'ssh' or 'https' (default 'https'), cached.
+
+        Reads the github.com-specific setting first (`gh config get -h
+        github.com git_protocol`), then falls back to the global default.
+        `gh auth setup-git` writes the host-specific value, which is what
+        `gh auth status` reports — the global key may still be the default.
+        """
         if self._git_protocol is not None:
             return self._git_protocol
-        try:
-            result = subprocess.run(
-                ["gh", "config", "get", "git_protocol"],
-                capture_output=True, text=True, timeout=5,
-            )
+        for cmd in (
+            ["gh", "config", "get", "-h", "github.com", "git_protocol"],
+            ["gh", "config", "get", "git_protocol"],
+        ):
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=5,
+                )
+            except (subprocess.SubprocessError, FileNotFoundError):
+                continue
             if result.returncode == 0:
                 value = result.stdout.strip().lower()
                 if value in ("ssh", "https"):
                     self._git_protocol = value
                     return value
-        except (subprocess.SubprocessError, FileNotFoundError):
-            pass
         self._git_protocol = "https"
         return "https"
 

@@ -373,6 +373,38 @@ class TestGitRemoteUrl:
             mock_run.return_value = make_completed_process(stdout="ssh\n")
             assert client._get_git_protocol() == "ssh"
 
+    def test_get_git_protocol_prefers_host_specific(self):
+        """`gh` stores git_protocol per host; the global key may still be the
+        default (`https`) while the github.com-specific value is `ssh`. We must
+        check the host-specific setting first or we'll silently use HTTPS."""
+        client = self._make_client()
+        client._git_protocol = None
+        calls = []
+
+        def side_effect(cmd, **kwargs):
+            calls.append(cmd)
+            if "-h" in cmd:
+                return make_completed_process(stdout="ssh\n")
+            return make_completed_process(stdout="https\n")
+
+        with patch("subprocess.run", side_effect=side_effect):
+            assert client._get_git_protocol() == "ssh"
+        # First lookup must include the -h github.com flag
+        assert "-h" in calls[0] and "github.com" in calls[0]
+
+    def test_get_git_protocol_falls_back_to_global_when_host_unset(self):
+        client = self._make_client()
+        client._git_protocol = None
+
+        def side_effect(cmd, **kwargs):
+            if "-h" in cmd:
+                # gh exits non-zero or returns empty when key is unset
+                return make_completed_process(returncode=1)
+            return make_completed_process(stdout="ssh\n")
+
+        with patch("subprocess.run", side_effect=side_effect):
+            assert client._get_git_protocol() == "ssh"
+
     def test_copy_repo_uses_ssh_when_configured(self):
         client = self._make_client()
         client._git_protocol = "ssh"

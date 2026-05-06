@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "gh-safe-repo"
 version = "0.1.0"
 description = "Create GitHub repositories with safe defaults applied"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 
 [project.scripts]
 gh-safe-repo = "gh_safe_repo.cli:main"

@@ -185,14 +185,17 @@ class TestCreateFlagValidation:
         """When --local is set and git creds are missing, create must fail
         BEFORE any API call — otherwise we leave an empty repo behind."""
         mock_client = MagicMock()
-        mock_client.verify_git_credentials.side_effect = AuthError(
+        mock_transport = MagicMock()
+        mock_transport.preflight.side_effect = AuthError(
             "SSH authentication to git@github.com failed."
         )
 
         with patch("sys.argv", [
             "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), "--yes",
         ]):
-            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.create.discover_transport",
+                       return_value=mock_transport) as mock_discover:
                 mock_ctx.return_value = MagicMock(
                     client=mock_client, owner="alice", plan_name="free",
                     is_paid_plan=False, config=make_config(),
@@ -201,7 +204,8 @@ class TestCreateFlagValidation:
                     main()
 
         assert exc_info.value.code == 1
-        mock_client.verify_git_credentials.assert_called_once()
+        mock_discover.assert_called_once()
+        mock_transport.preflight.assert_called_once()
         # Critical: no repo creation API call was made
         mock_client.call_json.assert_not_called()
         mock_client.push_local.assert_not_called()
@@ -212,7 +216,8 @@ class TestCreateFlagValidation:
         with patch("sys.argv", [
             "gh-safe-repo", "create", "alice/my-repo", "--dry-run",
         ]):
-            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.create.discover_transport") as mock_discover:
                 mock_ctx.return_value = MagicMock(
                     client=mock_client, owner="alice", plan_name="free",
                     is_paid_plan=False, config=make_config(),
@@ -221,7 +226,7 @@ class TestCreateFlagValidation:
                     main()
                 except SystemExit:
                     pass
-        mock_client.verify_git_credentials.assert_not_called()
+        mock_discover.assert_not_called()
 
     def test_credential_check_skipped_in_dry_run(self, tmp_path):
         """--dry-run makes zero external calls; credential probe is also skipped."""
@@ -229,7 +234,8 @@ class TestCreateFlagValidation:
         with patch("sys.argv", [
             "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), "--dry-run",
         ]):
-            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.create.discover_transport") as mock_discover:
                 mock_ctx.return_value = MagicMock(
                     client=mock_client, owner="alice", plan_name="free",
                     is_paid_plan=False, config=make_config(),
@@ -238,7 +244,7 @@ class TestCreateFlagValidation:
                     main()
                 except SystemExit:
                     pass
-        mock_client.verify_git_credentials.assert_not_called()
+        mock_discover.assert_not_called()
 
     def test_push_local_called_with_canonical_owner(self, tmp_path):
         """Direct coverage: client.push_local must receive ctx.owner, not the typed owner.
@@ -255,6 +261,7 @@ class TestCreateFlagValidation:
             "gh-safe-repo", "create", "ariesq/my-repo", "--local", str(tmp_path), "--yes",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+                 patch("gh_safe_repo.commands.create.discover_transport"), \
                  patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
                  patch("gh_safe_repo.commands.create.run_preflight_scan_local", return_value=True), \
                  patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \

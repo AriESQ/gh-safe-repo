@@ -1,7 +1,10 @@
 """
 GitHub API client wrapping `gh api` via subprocess.
 Auth priority: gh auth token > GITHUB_TOKEN env var > error.
-Pattern adapted from gh-repo-settings/internal/infra/github/client.go.
+
+Git transport (push/clone/preflight) lives in git_transport.GitTransport.
+Callers must assign `self.transport` before invoking copy_repo / push_local /
+clone_for_scan. See commands/create.py for the wiring.
 """
 
 import json
@@ -11,8 +14,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Optional
 
 from .errors import APIError, AuthError
+from .git_transport import GitTransport
 
 
 class GitHubClient:
@@ -22,78 +27,16 @@ class GitHubClient:
         self._use_gh = False
         self._user_data = None
         self._repo_cache = {}
-        self._git_protocol = None
+        self.transport: Optional[GitTransport] = None
         self._authenticate()
 
-    def _get_git_protocol(self) -> str:
-        """Return 'ssh' or 'https' (default 'https'), cached.
-
-        Reads the github.com-specific setting first (`gh config get -h
-        github.com git_protocol`), then falls back to the global default.
-        `gh auth setup-git` writes the host-specific value, which is what
-        `gh auth status` reports — the global key may still be the default.
-        """
-        if self._git_protocol is not None:
-            return self._git_protocol
-        for cmd in (
-            ["gh", "config", "get", "-h", "github.com", "git_protocol"],
-            ["gh", "config", "get", "git_protocol"],
-        ):
-            try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=5,
-                )
-            except (subprocess.SubprocessError, FileNotFoundError):
-                continue
-            if result.returncode == 0:
-                value = result.stdout.strip().lower()
-                if value in ("ssh", "https"):
-                    self._git_protocol = value
-                    return value
-        self._git_protocol = "https"
-        return "https"
-
-    def git_remote_url(self, owner: str, repo: str) -> str:
-        """Build a git remote URL using the user's configured protocol.
-
-        Uses the user's own credentials (SSH key or HTTPS credential helper)
-        rather than injecting the OAuth token, which avoids OAuth-App scope
-        restrictions (e.g. workflow scope) on `git push`.
-        """
-        if self._get_git_protocol() == "ssh":
-            return f"git@github.com:{owner}/{repo}.git"
-        return f"https://github.com/{owner}/{repo}.git"
-
-    def verify_git_credentials(self) -> None:
-        """Pre-flight check that the user can authenticate to github.com via git.
-
-        For SSH, runs `ssh -T git@github.com` (GitHub returns exit 1 with a
-        success banner on success; 255 on auth failure). For HTTPS, returns
-        without probing — credential-helper failures surface clearly on push.
-        Raises AuthError on a known SSH failure.
-        """
-        if self._get_git_protocol() != "ssh":
-            return
-        try:
-            result = subprocess.run(
-                ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-                 "git@github.com"],
-                capture_output=True, text=True, timeout=10,
+    def _require_transport(self) -> GitTransport:
+        if self.transport is None:
+            raise RuntimeError(
+                "GitHubClient.transport is not set. "
+                "Assign a GitTransport before calling git operations."
             )
-        except (subprocess.SubprocessError, FileNotFoundError) as e:
-            raise AuthError(
-                f"Could not run `ssh` to verify GitHub credentials: {e}. "
-                "Set `gh config set git_protocol https` or install OpenSSH."
-            )
-        # Exit 1 = authenticated (GitHub denies shell access). Anything else fails.
-        if result.returncode != 1 or "successfully authenticated" not in (result.stderr or ""):
-            stderr = (result.stderr or "").strip()
-            raise AuthError(
-                "SSH authentication to git@github.com failed. "
-                "Add your SSH key to GitHub and load it into ssh-agent, "
-                "or switch to HTTPS via `gh config set git_protocol https`.\n"
-                f"  ssh said: {stderr}"
-            )
+        return self.transport
 
     def _authenticate(self):
         # Try gh CLI first
@@ -223,53 +166,31 @@ class GitHubClient:
         """
         Mirror-clone source_repo and push all refs to dest_repo.
         Both repos must belong to owner.
-        Uses the user's git credentials (SSH or credential helper).
+        Uses the user's git credentials via self.transport.
         """
-        source_url = self.git_remote_url(owner, source_repo)
-        dest_url = self.git_remote_url(owner, dest_repo)
-        source_display = source_url
-        dest_display = dest_url
+        transport = self._require_transport()
+        source_url = transport.remote_url(owner, source_repo)
+        dest_url = transport.remote_url(owner, dest_repo)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mirror_path = os.path.join(tmpdir, "mirror")
 
-            if self.debug:
-                print(f"[debug] git clone --mirror {source_display}", file=sys.stderr)
-
             try:
-                subprocess.run(
-                    ["git", "clone", "--mirror", source_url, mirror_path],
-                    check=True,
-                    capture_output=not self.debug,
-                    text=True,
-                )
+                transport.run(["git", "clone", "--mirror", source_url, mirror_path])
             except subprocess.CalledProcessError as e:
                 raise APIError(
-                    f"git clone failed for {source_display}: {(e.stderr or '').strip()}"
+                    f"git clone failed for {source_url}: {(e.stderr or '').strip()}"
                 )
 
-            if self.debug:
-                print(f"[debug] git remote set-url --push origin {dest_display}", file=sys.stderr)
-
-            subprocess.run(
+            transport.run(
                 ["git", "-C", mirror_path, "remote", "set-url", "--push", "origin", dest_url],
-                check=True,
-                capture_output=True,
             )
 
-            if self.debug:
-                print(f"[debug] git push --mirror origin -> {dest_display}", file=sys.stderr)
-
             try:
-                subprocess.run(
-                    ["git", "-C", mirror_path, "push", "--mirror", "origin"],
-                    check=True,
-                    capture_output=not self.debug,
-                    text=True,
-                )
+                transport.run(["git", "-C", mirror_path, "push", "--mirror", "origin"])
             except subprocess.CalledProcessError as e:
                 raise APIError(
-                    f"git push failed to {dest_display}: {(e.stderr or '').strip()}"
+                    f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
                 )
 
     def push_local(self, local_path: str, owner: str, dest_repo: str) -> None:
@@ -278,44 +199,33 @@ class GitHubClient:
         If local_path is a git repo, its full history is pushed.
         Otherwise files are staged in a fresh repo and pushed as an initial commit.
         """
-        dest_url = self.git_remote_url(owner, dest_repo)
-        dest_display = dest_url
+        transport = self._require_transport()
+        dest_url = transport.remote_url(owner, dest_repo)
         is_git_repo = os.path.isdir(os.path.join(local_path, ".git"))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             work_path = os.path.join(tmpdir, "work")
 
             if is_git_repo:
-                if self.debug:
-                    print(f"[debug] git clone {local_path} {work_path}", file=sys.stderr)
                 try:
-                    subprocess.run(
-                        ["git", "clone", local_path, work_path],
-                        check=True, capture_output=not self.debug, text=True,
-                    )
+                    transport.run(["git", "clone", local_path, work_path])
                 except subprocess.CalledProcessError as e:
                     raise APIError(f"git clone (local) failed: {(e.stderr or '').strip()}")
             else:
-                # Not a git repo — copy files and create an initial commit
+                # Not a git repo — copy files and create an initial commit.
+                # These local-only ops don't need transport env; using it for
+                # consistency keeps a single subprocess path.
                 shutil.copytree(local_path, work_path)
                 try:
-                    subprocess.run(
-                        ["git", "init", work_path],
-                        check=True, capture_output=True, text=True,
-                    )
-                    subprocess.run(
-                        ["git", "-C", work_path, "add", "-A"],
-                        check=True, capture_output=True, text=True,
-                    )
-                    # Check whether there is anything to commit
-                    staged = subprocess.run(
+                    transport.run(["git", "init", work_path])
+                    transport.run(["git", "-C", work_path, "add", "-A"])
+                    staged = transport.run(
                         ["git", "-C", work_path, "diff", "--cached", "--quiet"],
-                        capture_output=True,
+                        check=False,
                     )
                     if staged.returncode != 0:  # has staged changes
-                        subprocess.run(
+                        transport.run(
                             ["git", "-C", work_path, "commit", "-m", "Initial commit"],
-                            check=True, capture_output=True, text=True,
                         )
                     else:
                         # Empty directory — nothing to push
@@ -325,53 +235,42 @@ class GitHubClient:
                         f"Failed to create initial git commit: {(e.stderr or '').strip()}"
                     )
 
-            if self.debug:
-                print(f"[debug] git push --all --tags -> {dest_display}", file=sys.stderr)
-
             try:
                 # git clone sets up origin pointing to local_path; update it.
                 # For fresh git init there is no origin yet; add it.
                 if is_git_repo:
-                    subprocess.run(
+                    transport.run(
                         ["git", "-C", work_path, "remote", "set-url", "origin", dest_url],
-                        check=True, capture_output=True,
                     )
                 else:
-                    subprocess.run(
+                    transport.run(
                         ["git", "-C", work_path, "remote", "add", "origin", dest_url],
-                        check=True, capture_output=True,
                     )
-                subprocess.run(
-                    ["git", "-C", work_path, "push", "origin", "--all"],
-                    check=True, capture_output=not self.debug, text=True,
-                )
-                subprocess.run(
-                    ["git", "-C", work_path, "push", "origin", "--tags"],
-                    check=True, capture_output=not self.debug, text=True,
-                )
+                transport.run(["git", "-C", work_path, "push", "origin", "--all"])
+                transport.run(["git", "-C", work_path, "push", "origin", "--tags"])
             except subprocess.CalledProcessError as e:
                 raise APIError(
-                    f"git push failed to {dest_display}: {(e.stderr or '').strip()}"
+                    f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
                 )
 
         # Wire up the original local repo to the newly created remote so
         # future `git push` / `git pull` work without extra configuration.
+        # Local-only ops; safe to use the transport for the env consistency.
         if is_git_repo:
             try:
-                subprocess.run(
-                    ["git", "-C", local_path, "remote", "add", "origin", dest_display],
-                    check=True, capture_output=True,
+                transport.run(
+                    ["git", "-C", local_path, "remote", "add", "origin", dest_url],
                 )
-                result = subprocess.run(
+                result = transport.run(
                     ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
-                    capture_output=True, text=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     branch = result.stdout.strip()
-                    subprocess.run(
+                    transport.run(
                         ["git", "-C", local_path, "branch", "--set-upstream-to",
                          f"origin/{branch}", branch],
-                        capture_output=True,
+                        check=False,
                     )
             except subprocess.CalledProcessError:
                 pass  # non-fatal: remote wiring is a convenience
@@ -382,19 +281,12 @@ class GitHubClient:
         A full clone (no --depth) is required so truffleHog can scan the
         complete git history for secrets, not just the working-tree snapshot.
         """
-        clone_url = self.git_remote_url(owner, repo)
-        display_url = clone_url
-        if self.debug:
-            print(f"[debug] git clone {display_url} {dest_path}", file=sys.stderr)
+        transport = self._require_transport()
+        clone_url = transport.remote_url(owner, repo)
         try:
-            subprocess.run(
-                ["git", "clone", clone_url, dest_path],
-                check=True,
-                capture_output=not self.debug,
-                text=True,
-            )
+            transport.run(["git", "clone", clone_url, dest_path])
         except subprocess.CalledProcessError as e:
-            raise APIError(f"git clone (scan) failed for {display_url}: {(e.stderr or '').strip()}")
+            raise APIError(f"git clone (scan) failed for {clone_url}: {(e.stderr or '').strip()}")
 
     def _parse_status(self, stderr):
         """Extract HTTP status code from gh stderr output."""

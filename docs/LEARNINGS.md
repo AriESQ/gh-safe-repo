@@ -189,3 +189,33 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 **`fix` skips the `build_context()` owner check and verifies admin permissions from the repo API response instead.** The original owner check (`actual_owner.lower() != expected_owner.lower()`) was a UX guard for multi-account systems, not a security mechanism. For `fix`, requiring ownership is too strict — users need to fix org repos and repos where they are collaborators with admin access. The `permissions.admin` field from `GET /repos/{owner}/{repo}` is the correct check because admin access is what's actually needed to modify repo settings.
 
 **`fix --debug` emits the resolved repo identity (id, full_name, owner_type) after fetching repo data.** When multiple repos share the same name under different owners (e.g. `user/quest` and `org/quest`), the standard debug output (`[debug] GET /repos/{owner}/{repo}`) doesn't confirm which concrete repo was resolved. The identity line (`[debug] repo: owner/repo (id=N, owner_type=User|Organization)`) makes this immediately visible.
+
+## Git Transport Refactor (Rec A + Rec B)
+
+**Background:** Nine commits between March and May 2026 patched git transport bugs in `github_client.py`. Each was correct in isolation but each new user setup (per-directory `core.sshCommand`, HTTPS without a credential helper, SAML SSO orgs, GCM browser hangs) produced a new patch. The design review at `docs/2026-05-06_auth-architecture-review.md` traced 13 user personas and found 5 structural gaps. This refactor implements Rec A (introduce `GitTransport`) and Rec B (unify preflight). Rec C (CI/token escape hatch) and Rec D (persona test matrix) are deferred.
+
+**`gh_safe_repo/git_transport.py` is now the single owner of git transport state.** `GitTransport` is a frozen dataclass holding `protocol`, `source_dir`, `ssh_command`, `has_credential_helper`, and `host`. `discover_transport(source_dir)` constructs one by inspecting `gh config get -h <host> git_protocol` and the source dir's `git config core.sshCommand` / `credential.helper`. `GitHubClient.transport` is set by the caller (currently only `commands/create.py`) and used by `copy_repo` / `push_local` / `clone_for_scan`.
+
+**`transport.env()` is what fixes P1.** The user's per-directory `core.sshCommand` (set via `includeIf "gitdir:..."`) is captured at discovery time from the source dir, then propagated as `GIT_SSH_COMMAND` into every git subprocess — including those that run in a temp dir under `/var/folders/...`, where the original `includeIf` would no longer match.
+
+**HTTPS preflight env vars are non-obvious but correct.**
+- `GIT_TERMINAL_PROMPT=0` (Git 2.3+) makes git fail fast with "could not read Username" instead of blocking on a TTY username prompt.
+- `GCM_INTERACTIVE=false` (modern GCM; legacy `never` still works) blocks Git Credential Manager from showing GUI/TTY prompts.
+- `GCM_GUI_PROMPT=false` blocks just the browser/window even if interactive prompts are otherwise enabled.
+
+Without these, an HTTPS preflight against a GCM-using machine with an expired token would launch a browser and hang the subprocess. The transport sets all three on every HTTPS subprocess.
+
+**`transport.preflight()` runs the same transport as the real push.** Probes `git ls-remote git@github.com:gh-safe-repo-preflight/nonexistent.git` (or HTTPS equivalent). Maps "Repository not found" → success, "Permission denied / publickey" → SSH AuthError, "could not read Username / Authentication failed" → HTTPS AuthError with hint that varies based on whether `credential.helper` is configured.
+
+**`source_dir` for `--from` is `os.getcwd()`, not the to-be-cloned remote.** The user has no local checkout yet, but their shell-CWD `includeIf` would match the same way it does for any other git command they run from that shell. This is the semantically-correct mapping.
+
+**Tests:** `tests/test_git_transport.py` covers URL construction, env propagation, run cwd semantics, preflight error parsing for SSH and HTTPS, and `discover_transport` factory behavior. The existing `test_github_client.py` push/clone tests continue working unchanged because `transport.run()` internally calls `subprocess.run` — `mock_run.call_args_list` inspection still sees the same git commands. Only `TestVerifyGitCredentials` and `TestGitRemoteUrl` were deleted (their concerns moved to `test_git_transport.py`).
+
+**What this does NOT fix (deferred to follow-ups):**
+- P4 / P6 (CI / GitHub App with token but no SSH key / no helper) — requires Rec C
+- P7 (GHES) — `host` field is plumbed through but not exposed
+- P8 (identity-mismatch warning) — flagged as a one-line follow-up
+- P9 (multi-account `gh auth` with different protocols per account)
+- The persona test matrix (Rec D)
+
+Each of these is a self-contained follow-up branch off `master` once `GitTransport` is merged.

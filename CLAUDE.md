@@ -33,9 +33,12 @@ API and tool quirks that affect future work. For full context on any of these, s
 - Token injected as `GH_TOKEN` in child process env for API calls only
 
 **Git transport (push/clone) auth:**
-- Uses the user's own git credentials, NOT the OAuth token; URLs follow `gh config get git_protocol` (`ssh` → `git@github.com:owner/repo.git`, else plain HTTPS via credential helper)
-- Token injection (`x-access-token`) was removed because OAuth App tokens require the `workflow` scope to push `.github/workflows/*`, even when the user's SSH key has no such restriction
-- `verify_git_credentials()` runs `ssh -T git@github.com` (SSH only) before any API call when `--local`/`--from` is used, so credential failures abort before the repo is created
+- All git transport state lives in `gh_safe_repo/git_transport.py` as a frozen `GitTransport` dataclass; `GitHubClient` calls `self.transport.run([...])` and `self.transport.preflight()` instead of inline `subprocess.run`
+- `discover_transport(source_dir)` is the factory — captures protocol (from `gh config get -h github.com git_protocol`), `core.sshCommand` from the source dir's git config, and credential-helper presence
+- Uses the user's own git credentials, NOT the OAuth token; URLs follow `git_protocol` (`ssh` → `git@github.com:owner/repo.git`, else plain HTTPS via credential helper). Token injection (`x-access-token`) was removed because OAuth App tokens require the `workflow` scope to push `.github/workflows/*`, even when the user's SSH key has no such restriction
+- `transport.env()` propagates `GIT_SSH_COMMAND` (so per-directory `core.sshCommand` set via `includeIf` still applies when push runs from a temp dir — fixes the P1 multi-account YubiKey case) and on HTTPS sets `GIT_TERMINAL_PROMPT=0` + `GCM_INTERACTIVE=false` + `GCM_GUI_PROMPT=false` so preflight never hangs on a username prompt or browser launch
+- `transport.preflight()` runs `git ls-remote` against `gh-safe-repo-preflight/nonexistent.git` using the same env/protocol the real push will use; "Repository not found" is the success signal. Called from `commands/create.py` only when `--local`/`--from` is set, only when not `--dry-run`
+- `source_dir` is `os.path.abspath(args.local_path)` for `--local`, `os.getcwd()` for `--from` (no local clone yet, but the user's shell-CWD `includeIf` still applies)
 
 **truffleHog v3:**
 - Exit code 1 = findings found (not error); any other non-zero = failure → fall back to regex

@@ -7,6 +7,7 @@ from typing import Optional
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, RepoExistsError, SafeRepoError
+from ..git_transport import discover_transport
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
 from ..plugins.repository import RepositoryPlugin
@@ -97,9 +98,18 @@ def run(args):
     # The OAuth token used for API calls cannot push workflow files without the
     # `workflow` scope, so we use the user's own git credentials instead. Verify
     # they work before creating the repo, so we don't leave an empty repo behind.
+    #
+    # source_dir for `--local PATH` is PATH itself (so per-directory git config
+    # like includeIf-set core.sshCommand is honored). For `--from`, no local
+    # clone exists yet — use os.getcwd() since that's what the user's shell-CWD
+    # includeIf would have matched for any other git command they ran.
     if (args.local_path or args.from_repo) and not args.dry_run:
+        source_dir = (
+            os.path.abspath(args.local_path) if args.local_path else os.getcwd()
+        )
+        client.transport = discover_transport(source_dir, debug=args.debug)
         try:
-            client.verify_git_credentials()
+            client.transport.preflight()
         except AuthError as e:
             error(str(e))
             sys.exit(1)

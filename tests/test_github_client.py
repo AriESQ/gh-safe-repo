@@ -32,20 +32,22 @@ def make_completed_process(stdout="", stderr="", returncode=0):
 
 
 class TestAuthentication:
-    def test_uses_gh_cli_token(self):
+    def test_env_var_takes_priority_over_gh_cli(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "env_token_abc")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_cli_token\n")
+            client = GitHubClient()
+            assert client._use_gh is False
+            assert client._token == "env_token_abc"
+            mock_run.assert_not_called()
+
+    def test_uses_gh_cli_token_when_no_env_var(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process(stdout="ghp_token123\n")
             client = GitHubClient()
             assert client._use_gh is True
             assert client._token == "ghp_token123"
-
-    def test_falls_back_to_env_var(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "env_token_abc")
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_completed_process(returncode=1, stdout="")
-            client = GitHubClient()
-            assert client._use_gh is False
-            assert client._token == "env_token_abc"
 
     def test_raises_auth_error_with_no_credentials(self, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)

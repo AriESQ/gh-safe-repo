@@ -231,17 +231,26 @@ def format_plan_json(plan):
     )
 
 
-def print_success(owner, repo):
+def print_success(owner, repo, local_push=False):
     url = f"https://github.com/{owner}/{repo}"
     https_url = f"https://github.com/{owner}/{repo}.git"
     ssh_url = f"git@github.com:{owner}/{repo}.git"
-    inner = (
-        f"  Repository created successfully!  \n"
-        f"  {url}  \n"
-        f"  \n"
-        f"  HTTPS: git remote add origin {https_url}  \n"
-        f"  SSH:   git remote add origin {ssh_url}  "
-    )
+    if local_push:
+        inner = (
+            f"  Repository created successfully!  \n"
+            f"  {url}  \n"
+            f"  \n"
+            f"  Set your tracking branch:  \n"
+            f"  git branch --set-upstream-to=origin/<branch> <branch>  "
+        )
+    else:
+        inner = (
+            f"  Repository created successfully!  \n"
+            f"  {url}  \n"
+            f"  \n"
+            f"  HTTPS: git remote add origin {https_url}  \n"
+            f"  SSH:   git remote add origin {ssh_url}  "
+        )
     width = max(len(line) for line in inner.splitlines()) + 2
     top    = "╭─ Done " + "─" * (width - 7) + "╮"
     bottom = "╰" + "─" * (width + 1) + "╯"

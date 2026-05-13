@@ -1,6 +1,6 @@
 """
 GitHub API client wrapping `gh api` via subprocess.
-Auth priority: gh auth token > GITHUB_TOKEN env var > error.
+Auth priority: GITHUB_TOKEN env var > gh auth token > error.
 
 Git transport (push/clone/preflight) lives in git_transport.GitTransport.
 Callers must assign `self.transport` before invoking copy_repo / push_local /
@@ -39,7 +39,14 @@ class GitHubClient:
         return self.transport
 
     def _authenticate(self):
-        # Try gh CLI first
+        # GITHUB_TOKEN env var takes priority — lets callers target a specific
+        # account without switching the active gh session.
+        token = os.environ.get("GITHUB_TOKEN", "")
+        if token:
+            self._token = token
+            return
+
+        # Fall back to the active gh CLI session.
         result = subprocess.run(
             ["gh", "auth", "token"],
             capture_output=True,
@@ -51,12 +58,6 @@ class GitHubClient:
                 self._token = token
                 self._use_gh = True
                 return
-
-        # Fall back to GITHUB_TOKEN env var
-        token = os.environ.get("GITHUB_TOKEN", "")
-        if token:
-            self._token = token
-            return
 
         raise AuthError(
             "No GitHub credentials found. "

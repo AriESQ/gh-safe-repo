@@ -367,4 +367,4 @@ def run(args):
     except APIError as e:
         warn(f"Tag protection failed: {e}")
 
-    print_success(owner, repo_name)
+    print_success(owner, repo_name, local_push=bool(args.local_path))

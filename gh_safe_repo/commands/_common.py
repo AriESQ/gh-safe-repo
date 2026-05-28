@@ -248,8 +248,13 @@ def print_success(owner, repo, local_push=False):
             f"  Repository created successfully!  \n"
             f"  {url}  \n"
             f"  \n"
+            f"  Add remote to existing repo:  \n"
             f"  HTTPS: git remote add origin {https_url}  \n"
-            f"  SSH:   git remote add origin {ssh_url}  "
+            f"  SSH:   git remote add origin {ssh_url}  \n"
+            f"  \n"
+            f"  Clone fresh:  \n"
+            f"  HTTPS: git clone {https_url}  \n"
+            f"  SSH:   git clone {ssh_url}  "
         )
     width = max(len(line) for line in inner.splitlines()) + 2
     top    = "╭─ Done " + "─" * (width - 7) + "╮"

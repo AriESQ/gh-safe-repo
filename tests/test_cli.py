@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gh_safe_repo.errors import AuthError
+from gh_safe_repo.errors import APIError, AuthError
 from gh_safe_repo.commands._common import (
     _resolve_branches,
     build_context,
@@ -340,7 +340,7 @@ class TestFixFlagValidation:
                 main()
         assert exc_info.value.code == 2
 
-    def test_no_admin_permission_exits(self):
+    def test_no_admin_permission_exits(self, capsys):
         """fix should reject repos where the user lacks admin permissions."""
         with patch("sys.argv", ["gh-safe-repo", "fix", "some-org/some-repo", "--dry-run"]):
             with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
@@ -354,12 +354,37 @@ class TestFixFlagValidation:
                     "permissions": {"admin": False, "push": True, "pull": True},
                 }
                 mock_ctx.return_value = MagicMock(
-                    client=mock_client, owner="myuser", plan_name="free",
+                    client=mock_client, owner="rootnotez", plan_name="free",
                     is_paid_plan=False, config=MagicMock(),
                 )
                 with pytest.raises(SystemExit) as exc_info:
                     main()
                 assert exc_info.value.code == 1
+        # The clarified message names the active account and covers read-only use.
+        err = capsys.readouterr().err
+        assert "rootnotez" in err
+        assert "read or modify" in err
+
+    def test_404_reports_access_ambiguity(self, capsys):
+        """A 404 should not be reported as a flat 'does not exist'; it must also
+        name the active account and flag the private/not-visible possibility."""
+        with patch("sys.argv", ["gh-safe-repo", "fix", "ariesq/private-repo", "--dry-run"]):
+            with patch("gh_safe_repo.commands.fix.build_context") as mock_ctx:
+                mock_client = MagicMock()
+                mock_client.get_repo_data.side_effect = APIError(
+                    "GET /repos/ariesq/private-repo returned 404", status_code=404
+                )
+                mock_ctx.return_value = MagicMock(
+                    client=mock_client, owner="rootnotez", plan_name="free",
+                    is_paid_plan=False, config=MagicMock(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "does not exist" in err   # e2e contract preserved
+        assert "not visible" in err
+        assert "rootnotez" in err
 
     def test_plugins_constructed_with_canonical_owner(self):
         """fix plugins must receive the canonical owner derived from repo_data."""

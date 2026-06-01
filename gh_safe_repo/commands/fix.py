@@ -66,8 +66,12 @@ def run(args):
     except APIError as e:
         if e.status_code == 404:
             error(
-                f"Repository '{owner}/{repo_name}' does not exist. "
-                "Use `gh-safe-repo create` to create it."
+                f"Repository '{owner}/{repo_name}' does not exist, or it is "
+                f"private and not visible to your active GitHub account "
+                f"('{ctx.owner}').\n"
+                "  - If it exists under a different account, you may be "
+                "authenticated as the wrong GitHub account.\n"
+                "  - To create it, use `gh-safe-repo create`."
             )
         else:
             error(f"Failed to fetch repository info: {e}")
@@ -90,8 +94,10 @@ def run(args):
     # Verify the authenticated user has admin access (required to change settings)
     if not repo_data.get("permissions", {}).get("admin", False):
         error(
-            f"You do not have admin permissions on '{owner}/{repo_name}'. "
-            "Admin access is required to modify repository settings."
+            f"You do not have admin permissions on '{owner}/{repo_name}' as "
+            f"GitHub account '{ctx.owner}'. Admin access is required to read or "
+            "modify repository settings — you may be authenticated as the wrong "
+            "account."
         )
         sys.exit(1)
 

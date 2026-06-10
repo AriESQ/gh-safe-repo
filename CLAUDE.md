@@ -60,7 +60,7 @@ API and tool quirks that affect future work. For full context on any of these, s
 **Key design invariants:**
 - CLI uses subcommands: `create`, `fix`, `scan` — all GitHub-targeting commands require `owner/repo` format
 - `create` validates `owner` case-insensitively against the authenticated user (UX guard for multi-account systems)
-- `fix` skips the owner check and instead verifies admin permissions on the target repo (supports org repos and collaborator access); `--debug` emits the resolved repo identity (id, full_name, owner_type) to help confirm the correct repo is targeted
+- `fix` skips the owner check and instead verifies admin permissions on the target repo (supports org repos and collaborator access); `--debug` emits the resolved repo identity (id, full_name, owner_type) to help confirm the correct repo is targeted. Admin is required even to *read* settings (most endpoints 403/404 without it), so non-owned public repos can't be audited — this is intentional, not a bug. A 404 from `GET /repos` is ambiguous (missing vs. private-and-invisible-to-active-account); the error names the active account and hints at a possible wrong-account mismatch rather than flatly claiming the repo doesn't exist
 - `fix` has no secret scanning (settings-only); `create --local/--from` has automatic pre-flight scan
 - `create` and `fix` both prompt for confirmation before applying; `--yes`/`-y` skips the prompt for scripted/batch use
 - `enforce_admins = false` is intentional (owner bypass for tooling)

@@ -19,9 +19,6 @@ CONFIG_FILENAME = "gh-safe-repo.ini"
 SAFE_DEFAULTS = {
     "repo": {
         "private": "true",
-        "has_wiki": "false",
-        "has_projects": "false",
-        "has_issues": "true",
         "delete_branch_on_merge": "false",
         "allow_squash_merge": "true",
         "allow_merge_commit": "true",

@@ -37,10 +37,16 @@ class TestRepositoryPlugin:
         adds = [c for c in plan.changes if c.type == ChangeType.ADD]
         assert any(c.key == "repository" for c in adds)
 
-    def test_plan_includes_update_for_has_wiki(self):
+    def test_plan_does_not_manage_has_wiki_by_default(self):
         client = make_mock_client()
-        # Default is has_wiki=false, GitHub default is true → should be UPDATE
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        assert not any(c.key == "has_wiki" for c in plan.changes)
+
+    def test_plan_manages_has_wiki_when_opted_in(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo",
+                                  make_config({("repo", "has_wiki"): "false"}))
         plan = plugin.plan()
         updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
         wiki_change = next((c for c in updates if c.key == "has_wiki"), None)
@@ -71,10 +77,10 @@ class TestRepositoryPlugin:
     def test_apply_patches_settings(self):
         client = make_mock_client()
         client.call_json.return_value = {}
-        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        config = make_config({("repo", "has_wiki"): "false"})
+        plugin = RepositoryPlugin(client, "alice", "my-repo", config)
         plan = plugin.plan()
         plugin.apply(plan)
-        # Should have a PATCH call
         patch_calls = [
             c for c in client.call_json.call_args_list if c.args[0] == "PATCH"
         ]
@@ -166,7 +172,8 @@ class TestRepositoryPlugin:
             APIError("Not Found", status_code=404),  # PATCH attempt 1
             {},                                      # PATCH attempt 2
         ]
-        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        config = make_config({("repo", "has_wiki"): "false"})
+        plugin = RepositoryPlugin(client, "alice", "my-repo", config)
         plan = plugin.plan()
         plugin.apply(plan)
         patch_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PATCH"]
@@ -184,7 +191,8 @@ class TestRepositoryPlugin:
             APIError("Not Found", status_code=404),
             APIError("Not Found", status_code=404),
         ]
-        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        config = make_config({("repo", "has_wiki"): "false"})
+        plugin = RepositoryPlugin(client, "alice", "my-repo", config)
         plan = plugin.plan()
         with pytest.raises(APIError):
             plugin.apply(plan)
@@ -781,7 +789,6 @@ class TestRepositoryPluginAudit:
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         state = plugin.fetch_current_state()
         client.get_repo_data.assert_called_once_with("alice", "my-repo")
-        assert state["has_wiki"] is False
         assert state["delete_branch_on_merge"] is True
 
     def test_plan_audit_no_create_entry(self):
@@ -803,33 +810,28 @@ class TestRepositoryPluginAudit:
 
     def test_plan_audit_emits_update_for_diff(self):
         client = make_mock_client()
-        # has_wiki differs: current=True, desired=False
+        # allow_merge_commit differs: current=True, desired=True (default) — use
+        # allow_rebase_merge which differs from safe default (True vs True is same,
+        # so use allow_merge_commit=True desired vs current=False to force UPDATE)
         current_state = {
             "private": True,
-            "has_wiki": True,
-            "has_issues": True,
-            "has_projects": False,
             "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": True,
+            "allow_merge_commit": False,  # differs from safe default (true)
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         updates = [c for c in plan.changes if c.type == ChangeType.UPDATE]
-        wiki_change = next((c for c in updates if c.key == "has_wiki"), None)
-        assert wiki_change is not None
-        assert wiki_change.old is True
-        assert wiki_change.new is False
+        change = next((c for c in updates if c.key == "allow_merge_commit"), None)
+        assert change is not None
+        assert change.old is False
+        assert change.new is True
 
     def test_plan_audit_emits_skip_for_match(self):
         client = make_mock_client()
-        # has_wiki already False (matches desired)
         current_state = {
             "private": True,
-            "has_wiki": False,
-            "has_issues": True,
-            "has_projects": False,
             "delete_branch_on_merge": False,
             "allow_squash_merge": True,
             "allow_merge_commit": True,
@@ -838,8 +840,8 @@ class TestRepositoryPluginAudit:
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
         plan = plugin.plan(current_state=current_state)
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
-        assert any(c.key == "has_wiki" for c in skips)
-        skip = next(c for c in skips if c.key == "has_wiki")
+        assert any(c.key == "allow_merge_commit" for c in skips)
+        skip = next(c for c in skips if c.key == "allow_merge_commit")
         assert skip.reason == "Already at desired value"
 
     def test_apply_audit_skips_post(self):
@@ -848,12 +850,9 @@ class TestRepositoryPluginAudit:
         # In audit mode plan has no CREATE entry → POST should be skipped
         current_state = {
             "private": True,
-            "has_wiki": True,  # differs → UPDATE
-            "has_issues": True,
-            "has_projects": False,
             "delete_branch_on_merge": False,
             "allow_squash_merge": True,
-            "allow_merge_commit": True,
+            "allow_merge_commit": False,  # differs → UPDATE
             "allow_rebase_merge": True,
         }
         plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())

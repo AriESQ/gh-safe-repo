@@ -7,13 +7,6 @@
 # Whether new repos are private by default
 private = true
 
-# Disable features that create clutter if unused
-has_wiki = false
-has_projects = false
-
-# Issues are usually wanted
-has_issues = true
-
 # Auto-delete head branches after merge (GitHub default: off)
 # Set to true if you want automatic cleanup after merging PRs
 delete_branch_on_merge = false

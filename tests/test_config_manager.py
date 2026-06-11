@@ -14,12 +14,6 @@ class TestConfigManagerDefaults:
         # Use a non-existent path so only defaults are loaded
         self.config = ConfigManager(config_path="/tmp/nonexistent-gh-safe-repo.ini")
 
-    def test_has_wiki_default_false(self):
-        assert self.config.getbool("repo", "has_wiki") is False
-
-    def test_has_projects_default_false(self):
-        assert self.config.getbool("repo", "has_projects") is False
-
     def test_delete_branch_on_merge_default_false(self):
         assert self.config.getbool("repo", "delete_branch_on_merge") is False
 
@@ -36,9 +30,9 @@ class TestConfigManagerDefaults:
 class TestConfigManagerOverrides:
     def test_apply_overrides_bool(self):
         config = ConfigManager(config_path="/tmp/nonexistent-gh-safe-repo.ini")
-        assert config.getbool("repo", "has_wiki") is False
-        config.apply_overrides({("repo", "has_wiki"): "true"})
-        assert config.getbool("repo", "has_wiki") is True
+        assert config.getbool("repo", "delete_branch_on_merge") is False
+        config.apply_overrides({("repo", "delete_branch_on_merge"): "true"})
+        assert config.getbool("repo", "delete_branch_on_merge") is True
 
     def test_apply_overrides_string(self):
         config = ConfigManager(config_path="/tmp/nonexistent-gh-safe-repo.ini")
@@ -59,8 +53,6 @@ class TestConfigManagerFileLoading:
         config = ConfigManager(config_path=path)
         assert config.getbool("repo", "has_wiki") is True
         assert config.getbool("repo", "delete_branch_on_merge") is True
-        # Other defaults remain
-        assert config.getbool("repo", "has_projects") is False
 
     def test_invalid_config_raises(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".ini", delete=False) as f:
@@ -78,7 +70,7 @@ class TestConfigManagerSettings:
     def test_repo_settings_returns_dict(self):
         settings = self.config.repo_settings()
         assert isinstance(settings, dict)
-        assert "has_wiki" in settings
+        assert "delete_branch_on_merge" in settings
 
     def test_actions_settings_returns_dict(self):
         settings = self.config.actions_settings()

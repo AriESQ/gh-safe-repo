@@ -70,6 +70,11 @@ SAFE_DEFAULTS = {
         "warn_ai_context_files": "true",
         "scan_exclude_paths":    "",
     },
+    # Tool-run behavior, never repo state — must stay out of any future
+    # fix-enforcement / settings-tier logic (same category as pre_flight_scan).
+    "git_transport": {
+        "mode": "auto",
+    },
 }
 
 

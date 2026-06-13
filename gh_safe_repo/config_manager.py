@@ -45,7 +45,9 @@ SAFE_DEFAULTS = {
         "enforce_admins": "false",
         "allow_force_pushes": "false",
         "allow_deletions": "false",
-        "use_rulesets": "false",
+        # Rulesets API is the default; set false for the legacy classic
+        # branch-protection path (kept for one release cycle).
+        "use_rulesets": "true",
     },
     "tag_protection": {
         "protected_tags": "*",

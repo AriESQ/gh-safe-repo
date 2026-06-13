@@ -174,6 +174,22 @@ class TestCreateFlagValidation:
                     main()
         assert exc_info.value.code == 2
 
+    def test_local_not_a_git_repo_exits_with_error(self, tmp_path, capsys):
+        """--local PATH must be a git repository; plain directories are rejected."""
+        with patch("sys.argv", [
+            "gh-safe-repo", "create", "alice/my-repo",
+            "--local", str(tmp_path), "--dry-run",
+        ]):
+            with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
+                mock_ctx.return_value = MagicMock(
+                    client=MagicMock(), owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+        assert exc_info.value.code == 2
+        assert "not a git repository" in capsys.readouterr().err
+
     def test_bare_repo_name_exits(self):
         """create my-repo (no owner/) should exit with error."""
         with patch("sys.argv", ["gh-safe-repo", "create", "my-repo"]):
@@ -230,6 +246,7 @@ class TestCreateFlagValidation:
 
     def test_credential_check_skipped_in_dry_run(self, tmp_path):
         """--dry-run makes zero external calls; credential probe is also skipped."""
+        (tmp_path / ".git").mkdir()
         mock_client = MagicMock()
         with patch("sys.argv", [
             "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), "--dry-run",
@@ -252,6 +269,7 @@ class TestCreateFlagValidation:
         This was the actual bug — a typed lowercase owner produced a redirected
         push URL, which GitHub rejects for repos containing workflow files.
         """
+        (tmp_path / ".git").mkdir()
         mock_client = MagicMock()
         mock_client.check_repo_exists.return_value = False
         # Successful repo create response

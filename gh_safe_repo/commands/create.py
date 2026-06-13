@@ -53,7 +53,7 @@ def add_arguments(parser):
         "--local",
         dest="local_path",
         metavar="PATH",
-        help="Push code from a local directory into the new repo",
+        help="Push code from a local git repository into the new repo",
     )
     parser.add_argument(
         "--from",
@@ -151,6 +151,9 @@ def run(args):
         local_path = os.path.abspath(args.local_path)
         if not os.path.isdir(local_path):
             error(f"--local: '{args.local_path}' is not a directory")
+            sys.exit(2)
+        if not os.path.exists(os.path.join(local_path, ".git")):
+            error(f"--local: '{args.local_path}' is not a git repository (run 'git init' first)")
             sys.exit(2)
 
     # Validate source repo exists (--from workflow) and capture metadata

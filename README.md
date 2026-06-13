@@ -228,7 +228,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | Option | Description |
 |---|---|
 | `--public` | Create as a public repo (default: private) |
-| `--local PATH` | Push code from a local directory into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
+| `--local PATH` | Push code from a local git repository into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
 | `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Print the plan without making any changes |
@@ -368,7 +368,7 @@ If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 
 ## Creating a Repo from a Local Directory (`--local`)
 
-`--local PATH` is the local-to-GitHub counterpart to `--from`. It creates a new GitHub repo and pushes code from a directory on your machine.
+`--local PATH` is the local-to-GitHub counterpart to `--from`. It creates a new GitHub repo and pushes code from a local git repository. `PATH` must be an initialized git repository (`git init` or a clone).
 
 ```bash
 gh-safe-repo create <owner/repo> --local ~/projects/myapp
@@ -381,16 +381,13 @@ gh-safe-repo create <owner/repo> --local ~/projects/myapp --public
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
 3. You review findings and confirm (or abort)
 4. A new repo is created, and actions permissions and security settings are applied
-5. Code is pushed:
-   - If `PATH` is a git repo: the full history is cloned locally and pushed with `push --all --tags` (all branches and tags)
-   - If `PATH` is a plain directory: files are staged in a fresh repo and pushed as an initial commit
-   - If `PATH` is an empty directory: nothing is pushed (silently skipped)
+5. The full history is pushed with `push --all --tags` (all branches and tags)
 6. Branch and tag protection are applied (after code push, so the target branch exists)
-7. If `PATH` is a git repo, `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
+7. `origin` is added to the **original** local repo pointing at the new GitHub URL, and the current branch's upstream tracking is configured — so `git push` and `git pull` work immediately without extra setup.
 
 Both `--local` and `--from` work for private and public repos. They are mutually exclusive.
 
-When `PATH` is a git repo, the local default branch (via `git -C PATH symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
+The local default branch (via `git -C PATH symbolic-ref HEAD`) is used to target branch protection rules, so protection lands on the right branch even if it isn't `main`.
 
 > **Tip:** Run `gh-safe-repo scan PATH` first if you want to inspect findings without creating anything.
 

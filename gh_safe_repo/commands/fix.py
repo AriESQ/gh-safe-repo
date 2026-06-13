@@ -46,6 +46,16 @@ def add_arguments(parser):
         action="store_true",
         help="Show settings diff without applying changes",
     )
+    parser.add_argument(
+        "--migrate-branch-protection",
+        action="store_true",
+        help=(
+            "Migrate an existing classic branch protection to a ruleset. "
+            "Classic-only rules (required_status_checks, push restrictions) have "
+            "no ruleset equivalent and will be dropped; the classic protection is "
+            "deleted once the ruleset is in place."
+        ),
+    )
     add_common_args(parser)
 
 
@@ -117,6 +127,7 @@ def run(args):
             client, owner, repo_name, config,
             is_public=is_public, is_paid_plan=is_paid_plan,
             branches=audit_branches,
+            migrate=args.migrate_branch_protection,
         ),
         SecurityPlugin(
             client, owner, repo_name, config,

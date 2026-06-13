@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file was introduced with 0.2.0; the 0.2.0 entry backfills notable changes
 since the initial release.
 
+## [0.4.0] - 2026-06-13
+
+### Changed
+- `create --local PATH` now requires `PATH` to be a git repository. Plain
+  directories (non-git) are rejected with a clear error message suggesting
+  `git init`. This ensures SSH transport discovery (via `core.sshCommand` /
+  `includeIf`) works correctly for multi-account setups. (#59)
+
 ## [0.3.0] - 2026-06-12
 
 ### Changed

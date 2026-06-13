@@ -196,7 +196,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 ## Git Transport Refactor (Rec A + Rec B)
 
-**Background:** Nine commits between March and May 2026 patched git transport bugs in `github_client.py`. Each was correct in isolation but each new user setup (per-directory `core.sshCommand`, HTTPS without a credential helper, SAML SSO orgs, GCM browser hangs) produced a new patch. The design review at `docs/2026-05-06_auth-architecture-review.md` traced 13 user personas and found 5 structural gaps. This refactor implements Rec A (introduce `GitTransport`) and Rec B (unify preflight). Rec C (CI/token escape hatch) and Rec D (persona test matrix) are deferred.
+**Background:** Nine commits between March and May 2026 patched git transport bugs in `github_client.py`. Each was correct in isolation but each new user setup (per-directory `core.sshCommand`, HTTPS without a credential helper, SAML SSO orgs, GCM browser hangs) produced a new patch. The design review at `docs/2026-05-06_auth-architecture-review.md` traced 13 user personas and found 5 structural gaps. This refactor implements Rec A (introduce `GitTransport`) and Rec B (unify preflight). Rec C (CI/token escape hatch) was implemented as a follow-up (see "Git Transport Mode" below); Rec D (persona test matrix) is deferred.
 
 **`gh_safe_repo/git_transport.py` is now the single owner of git transport state.** `GitTransport` is a frozen dataclass holding `protocol`, `source_dir`, `ssh_command`, `has_credential_helper`, and `host`. `discover_transport(source_dir)` constructs one by inspecting `gh config get -h <host> git_protocol` and the source dir's `git config core.sshCommand` / `credential.helper`. `GitHubClient.transport` is set by the caller (currently only `commands/create.py`) and used by `copy_repo` / `push_local` / `clone_for_scan`.
 
@@ -216,8 +216,27 @@ Without these, an HTTPS preflight against a GCM-using machine with an expired to
 **Tests:** `tests/test_git_transport.py` covers URL construction, env propagation, run cwd semantics, preflight error parsing for SSH and HTTPS, and `discover_transport` factory behavior. The existing `test_github_client.py` push/clone tests continue working unchanged because `transport.run()` internally calls `subprocess.run` — `mock_run.call_args_list` inspection still sees the same git commands. Only `TestVerifyGitCredentials` and `TestGitRemoteUrl` were deleted (their concerns moved to `test_git_transport.py`).
 
 **What this does NOT fix (deferred to follow-ups):**
-- P4 / P6 (CI / GitHub App with token but no SSH key / no helper) — requires Rec C
+- P4 / P6 (CI / GitHub App with token but no SSH key / no helper) — requires Rec C (since implemented, see below)
 - P7 (GHES) — `host` field is plumbed through but not exposed
+
+## Git Transport Mode (Rec C)
+
+**`[git_transport] mode = auto | user_creds | token`** restores a push path for CI/headless environments (P4, P6) without re-introducing the P2 workflow-scope bug that got token injection removed in commit b822e9c.
+
+**The `auto` fallback heuristic is deliberately narrow.** Token-in-URL injection only happens when *all* of: mode is `auto`, protocol is HTTPS, no `credential.helper` is configured (any scope), and a token is available. SSH users (P1, P2, P10) can never be switched to token injection — `gh config git_protocol = ssh` short-circuits the fallback entirely. This is what protects P2: their push stays on their own SSH key, which has no workflow-scope restriction. The design review suggested probing `git credential fill` for detection; we deliberately don't — invoking helpers can itself prompt or hang, while checking config presence is inert.
+
+**`mode = token` skips discovery entirely.** No `gh config` / `git config` subprocess calls; protocol is forced to HTTPS. Errors if no token is available. CI sets `GITHUB_TOKEN` and either relies on `auto` (no helper present on runners → fallback fires) or pins `mode = token` for explicitness.
+
+**`mode = user_creds` is the P2 pin.** Guarantees the API token never touches git, even on HTTPS with no helper — push fails fast at preflight instead, with the credential-helper hint.
+
+**Token redaction is a hard requirement once tokens can appear in URLs.** Three leak paths were closed:
+1. `transport.run()` debug output prints the full git command — redacted via `transport.redact()`.
+2. `APIError` messages in `copy_repo`/`push_local`/`clone_for_scan` embed remote URLs and git stderr (git echoes the full URL in "unable to access" errors) — all pass through `redact()`.
+3. **`push_local`'s convenience step writes `origin` into the user's long-lived `.git/config`** — this must use `transport.persistent_url()` (clean URL), never `remote_url()` (token-injected). A token in the user's repo config would outlive the process and the token's own validity.
+
+**Preflight in token mode names the scopes.** The P4/P6 friction (per the user-stories doc, story #14) is that token scope requirements are trial-and-error. The token-mode auth failure explicitly names `repo` and `workflow` scopes.
+
+**`[git_transport]` is tool-run behavior, not repo state.** Like `[pre_flight_scan]`, it must stay out of any future fix-enforcement / settings-tier logic (the three-way-merge design in `docs/2026-03-28-user-stories.md` on the `user-stories-design` branch).
 - P8 (identity-mismatch warning) — flagged as a one-line follow-up
 - P9 (multi-account `gh auth` with different protocols per account)
 - The persona test matrix (Rec D)

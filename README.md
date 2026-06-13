@@ -696,6 +696,19 @@ max_file_size_mb = 100
 # Suppress email findings for specific addresses or entire domains (case-insensitive).
 # Entries starting with @ match all emails at that domain; otherwise exact address match.
 # exclude_emails = action@github.com, noreply@github.com, @example.com
+
+[git_transport]
+# How git push/clone authenticates when using --local or --from: auto | user_creds | token
+#   auto       — use your own git credentials (SSH key or credential helper) when a
+#                path exists; fall back to pushing over HTTPS with the API token in
+#                the URL only when there is no SSH setup and no credential helper
+#                (e.g. CI with just GITHUB_TOKEN). (default)
+#   user_creds — never use the API token for git. Pushes with your own credentials
+#                only; this avoids needing the `workflow` token scope to push
+#                .github/workflows files.
+#   token      — always push over HTTPS with the API token in the URL. For CI where
+#                the token was granted the `workflow` scope intentionally.
+# mode = auto
 ```
 
 ---
@@ -768,11 +781,15 @@ This means audit mode and create mode use the same plan/apply path. The only dif
 
 ### Authentication
 
-1. `gh auth token` — preferred; uses whatever `gh auth login` set up
-2. `GITHUB_TOKEN` environment variable — CI/CD fallback
+API calls resolve a token in this order:
+
+1. `GITHUB_TOKEN` environment variable — lets you target a specific account without switching the active `gh` session (and is the only credential needed in CI)
+2. `gh auth token` — whatever `gh auth login` set up
 3. Error if neither is available
 
 Tokens are passed to child `gh api` processes as `GH_TOKEN` in the subprocess environment and are never logged.
+
+Git operations (`--local` / `--from` push and clone) use your own git credentials — SSH key or credential helper — by default, not the API token. In environments with neither (e.g. CI with only `GITHUB_TOKEN`), the tool falls back to pushing over HTTPS with the token in the URL; the `[git_transport] mode` config setting controls this (see the configuration reference). Token-bearing URLs are never written to your repo's `.git/config` and are redacted from all output.
 
 ### API approach
 

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file was introduced with 0.2.0; the 0.2.0 entry backfills notable changes
 since the initial release.
 
+## [0.3.0] - 2026-06-12
+
+### Changed
+- Branch protection now uses the **Rulesets API by default** (`use_rulesets =
+  true`). A single `gh-safe-repo defaults` ruleset covers all configured branches
+  and expresses admin bypass via a bypass actor. The classic per-branch path is
+  kept for one release cycle behind `use_rulesets = false`. (#43)
+
+### Fixed
+- Rulesets read path: `fix`/`scan` now read existing branch rulesets via
+  `GET /repos/{owner}/{repo}/rulesets` instead of always reading the classic
+  endpoint, so a ruleset-configured repo no longer shows a false "all settings
+  missing" diff. (#43)
+- Idempotent upsert: `apply()` now `PATCH`es an existing `gh-safe-repo defaults`
+  ruleset instead of always `POST`ing, so re-running no longer creates duplicate
+  rulesets. (#43)
+
+### Added
+- `fix --migrate-branch-protection`: required to convert a repo that still has
+  classic branch protection over to a ruleset. Without it, `fix` reports the
+  classic protection and skips rather than silently dropping classic-only rules
+  (`required_status_checks`, push `restrictions`). With it, the ruleset is created
+  and the classic protection is deleted. (#43)
+
 ## [0.2.0] - 2026-06-12
 
 ### Added

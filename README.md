@@ -86,6 +86,24 @@ Fixing all of this manually takes minutes per repo and is easy to forget. `gh-sa
 | Allow branch deletion | No |
 | Enforce on admins | No (allows owner tooling to push) |
 
+Branch protection is applied via the **Rulesets API** by default (`use_rulesets =
+true`): a single `gh-safe-repo defaults` ruleset covers every configured branch
+and expresses "admins can bypass" through a bypass actor rather than the classic
+`enforce_admins` flag. Set `use_rulesets = false` for the legacy classic
+per-branch path (kept for one release cycle).
+
+**Migrating an existing repo from classic protection:** if `fix` finds classic
+branch protection on a repo, it refuses to convert it to a ruleset unless you pass
+`--migrate-branch-protection`. Classic-only rules have no equivalent in the ruleset
+this tool builds and would be dropped silently otherwise — known gaps:
+
+- `required_status_checks` — required CI checks are not modelled in the ruleset body.
+- `restrictions` (push restrictions by user/team) — Rulesets model this differently via bypass actors; not a 1:1 map.
+- Per-branch divergence — a single shared-condition ruleset can't express different rules for `master` vs `main`.
+
+With the flag, `fix` creates/updates the ruleset and then deletes the classic
+protection on each branch so the two layers don't stack.
+
 ### Tag protection (public repos, or any repo on a paid plan)
 
 Tag protection creates a GitHub Ruleset targeting all tags (`*` by default, configurable via `protected_tags`). The following rules are enforced:
@@ -624,9 +642,11 @@ allow_force_pushes = false
 # Block branch deletion
 allow_deletions = false
 
-# Use the Rulesets API instead of classic branch protection
-# Same rules, but supports bypass actors and is the modern GitHub API
-# use_rulesets = false
+# Use the Rulesets API (default) instead of the legacy classic branch-protection
+# path. A single ruleset covers all configured branches, supports bypass actors,
+# and is GitHub's forward direction (new rule types are Rulesets-only). Set false
+# to fall back to the classic per-branch API, which is kept for one release cycle.
+use_rulesets = true
 
 
 [tag_protection]
@@ -746,7 +766,7 @@ gh-safe-repo create <owner/repo>
       ├─ Build plan (each plugin compares desired vs. current state)
       │   ├─ RepositoryPlugin  → repo creation + basic settings
       │   ├─ ActionsPlugin     → allowed actions, workflow permissions, SHA pinning
-      │   ├─ BranchProtectionPlugin → classic or Rulesets API
+      │   ├─ BranchProtectionPlugin → Rulesets API (default; classic if use_rulesets = false)
       │   ├─ SecurityPlugin    → Dependabot, secret scanning, push protection, private vuln reporting
       │   └─ TagProtectionPlugin → immutable tags via Rulesets API
       │
@@ -756,8 +776,8 @@ gh-safe-repo create <owner/repo>
           ├─ POST /user/repos
           ├─ PATCH /repos/{owner}/{repo}       (settings)
           ├─ PUT  /repos/{owner}/{repo}/actions/permissions/workflow
-          ├─ PUT  /repos/{owner}/{repo}/branches/main/protection
-          │   or POST /repos/{owner}/{repo}/rulesets (if use_rulesets = true)
+          ├─ POST/PATCH /repos/{owner}/{repo}/rulesets  (branch protection; default)
+          │   or PUT /repos/{owner}/{repo}/branches/main/protection (if use_rulesets = false)
           ├─ PUT  /repos/{owner}/{repo}/vulnerability-alerts
           ├─ PUT  /repos/{owner}/{repo}/automated-security-fixes
           ├─ PUT  /repos/{owner}/{repo}/private-vulnerability-reporting

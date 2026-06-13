@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gh_safe_repo.errors import AuthError
+from gh_safe_repo.errors import AuthError, ConfigError
 from gh_safe_repo.git_transport import (
     GitTransport,
     discover_transport,
@@ -28,6 +28,7 @@ def make_transport(
     ssh_command=None,
     has_credential_helper=False,
     host="github.com",
+    token=None,
 ):
     return GitTransport(
         protocol=protocol,
@@ -35,6 +36,7 @@ def make_transport(
         ssh_command=ssh_command,
         has_credential_helper=has_credential_helper,
         host=host,
+        token=token,
     )
 
 
@@ -236,6 +238,167 @@ class TestPreflightHttps:
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert env["GCM_INTERACTIVE"] == "false"
         assert env["GCM_GUI_PROMPT"] == "false"
+
+
+class TestTokenInjection:
+    def test_token_injected_into_https_url(self):
+        t = make_transport(protocol="https", token="ghp_secret123")
+        assert (
+            t.remote_url("alice", "myrepo")
+            == "https://x-access-token:ghp_secret123@github.com/alice/myrepo.git"
+        )
+
+    def test_token_never_in_ssh_url(self):
+        t = make_transport(protocol="ssh", token="ghp_secret123")
+        assert "ghp_secret123" not in t.remote_url("alice", "myrepo")
+
+    def test_persistent_url_never_embeds_token(self):
+        """The remote written into the user's long-lived .git/config must be
+        clean even when the push itself used token injection."""
+        t = make_transport(protocol="https", token="ghp_secret123")
+        url = t.persistent_url("alice", "myrepo")
+        assert url == "https://github.com/alice/myrepo.git"
+        assert "ghp_secret123" not in url
+
+    def test_redact_strips_token(self):
+        t = make_transport(protocol="https", token="ghp_secret123")
+        assert t.redact("push to https://x-access-token:ghp_secret123@x failed") \
+            == "push to https://x-access-token:***@x failed"
+
+    def test_redact_noop_without_token(self):
+        t = make_transport(protocol="https")
+        assert t.redact("hello ghp_secret123") == "hello ghp_secret123"
+
+    def test_debug_output_redacts_token(self, capsys):
+        t = GitTransport(
+            protocol="https", source_dir="/tmp/x",
+            token="ghp_secret123", debug=True,
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process()
+            t.run(["git", "push", t.remote_url("alice", "myrepo")])
+        captured = capsys.readouterr()
+        assert "ghp_secret123" not in captured.err
+        assert "***" in captured.err
+
+    def test_preflight_error_never_contains_token(self):
+        t = make_transport(protocol="https", token="ghp_secret123")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                returncode=128,
+                stderr="fatal: Authentication failed for "
+                       "'https://x-access-token:ghp_secret123@github.com/x.git'",
+            )
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight()
+        assert "ghp_secret123" not in str(exc_info.value)
+
+    def test_preflight_token_failure_names_scopes(self):
+        """P4/P6 friction is trial-and-error token scopes — the error must
+        name them explicitly."""
+        t = make_transport(protocol="https", token="ghp_secret123")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                returncode=128,
+                stderr="fatal: Authentication failed for 'https://github.com/x.git'",
+            )
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight()
+        msg = str(exc_info.value)
+        assert "token" in msg.lower()
+        assert "`repo`" in msg
+        assert "`workflow`" in msg
+
+    def test_preflight_token_not_found_is_still_success(self):
+        t = make_transport(protocol="https", token="ghp_secret123")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                returncode=128, stderr="remote: Repository not found.",
+            )
+            t.preflight()  # should not raise
+
+
+class TestDiscoverTransportMode:
+    @staticmethod
+    def _gh_https_no_helper(cmd, **kwargs):
+        if cmd[:3] == ["gh", "config", "get"]:
+            return make_completed_process(stdout="https\n")
+        return make_completed_process(returncode=1)
+
+    @staticmethod
+    def _gh_ssh(cmd, **kwargs):
+        if cmd[:3] == ["gh", "config", "get"]:
+            return make_completed_process(stdout="ssh\n")
+        return make_completed_process(returncode=1)
+
+    def test_invalid_mode_raises_config_error(self):
+        with pytest.raises(ConfigError) as exc_info:
+            discover_transport("/tmp/x", mode="yolo", token="tok")
+        assert "yolo" in str(exc_info.value)
+        assert "[git_transport]" in str(exc_info.value)
+
+    def test_token_mode_requires_token(self):
+        with pytest.raises(AuthError) as exc_info:
+            discover_transport("/tmp/x", mode="token", token=None)
+        assert "GITHUB_TOKEN" in str(exc_info.value)
+
+    def test_token_mode_forces_https_and_skips_discovery(self):
+        """mode=token needs no gh/git config inspection at all."""
+        with patch("subprocess.run") as mock_run:
+            t = discover_transport("/tmp/x", mode="token", token="tok")
+        assert t.protocol == "https"
+        assert t.token == "tok"
+        mock_run.assert_not_called()
+
+    def test_user_creds_mode_never_attaches_token(self):
+        """P2 guard: pinning user_creds guarantees the workflow-scope-free
+        push even when HTTPS has no helper and a token is available."""
+        with patch("subprocess.run", side_effect=self._gh_https_no_helper):
+            t = discover_transport("/tmp/x", mode="user_creds", token="tok")
+        assert t.token is None
+
+    def test_auto_falls_back_to_token_when_https_no_helper(self):
+        """P4/P6: CI with only GITHUB_TOKEN gets a push path."""
+        with patch("subprocess.run", side_effect=self._gh_https_no_helper):
+            t = discover_transport("/tmp/x", mode="auto", token="tok")
+        assert t.protocol == "https"
+        assert t.token == "tok"
+
+    def test_auto_prefers_credential_helper_when_present(self):
+        """P3/P12: a configured helper means the user has their own path."""
+        def side_effect(cmd, **kwargs):
+            if cmd[:3] == ["gh", "config", "get"]:
+                return make_completed_process(stdout="https\n")
+            if "credential.helper" in cmd:
+                return make_completed_process(stdout="manager\n")
+            return make_completed_process(returncode=1)
+
+        with patch("subprocess.run", side_effect=side_effect):
+            t = discover_transport("/tmp/x", mode="auto", token="tok")
+        assert t.token is None
+        assert t.has_credential_helper is True
+
+    def test_auto_never_injects_token_for_ssh(self):
+        """P1/P2/P10 guard: SSH users keep their own credentials."""
+        with patch("subprocess.run", side_effect=self._gh_ssh):
+            t = discover_transport("/tmp/x", mode="auto", token="tok")
+        assert t.protocol == "ssh"
+        assert t.token is None
+
+    def test_auto_without_token_behaves_as_before(self):
+        with patch("subprocess.run", side_effect=self._gh_https_no_helper):
+            t = discover_transport("/tmp/x", mode="auto", token=None)
+        assert t.token is None
+
+    def test_mode_is_case_insensitive_and_stripped(self):
+        with patch("subprocess.run", side_effect=self._gh_ssh):
+            t = discover_transport("/tmp/x", mode=" AUTO ", token=None)
+        assert t.protocol == "ssh"
+
+    def test_empty_token_treated_as_absent(self):
+        with patch("subprocess.run", side_effect=self._gh_https_no_helper):
+            t = discover_transport("/tmp/x", mode="auto", token="")
+        assert t.token is None
 
 
 class TestDiscoverTransport:

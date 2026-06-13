@@ -149,3 +149,16 @@ warn_ai_context_files = true
 # Regex patterns for files/directories to skip during scan.
 # Comma-separated, or one per line with continuation indentation.
 scan_exclude_paths =
+
+[git_transport]
+# How git push/clone authenticates when using --local or --from: auto | user_creds | token
+#   auto       — use your own git credentials (SSH key or credential helper) when a
+#                path exists; fall back to pushing over HTTPS with the API token in
+#                the URL only when there is no SSH setup and no credential helper
+#                (e.g. CI with just GITHUB_TOKEN). (default)
+#   user_creds — never use the API token for git. Pushes with your own credentials
+#                only; this avoids needing the `workflow` token scope to push
+#                .github/workflows files.
+#   token      — always push over HTTPS with the API token in the URL. For CI where
+#                the token was granted the `workflow` scope intentionally.
+mode = auto

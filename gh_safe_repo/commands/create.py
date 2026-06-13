@@ -6,7 +6,7 @@ import sys
 from typing import Optional
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
-from ..errors import APIError, AuthError, RepoExistsError, SafeRepoError
+from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
 from ..git_transport import discover_transport
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
@@ -107,10 +107,15 @@ def run(args):
         source_dir = (
             os.path.abspath(args.local_path) if args.local_path else os.getcwd()
         )
-        client.transport = discover_transport(source_dir, debug=args.debug)
         try:
+            client.transport = discover_transport(
+                source_dir,
+                debug=args.debug,
+                mode=config.get("git_transport", "mode", fallback="auto"),
+                token=client.token,
+            )
             client.transport.preflight()
-        except AuthError as e:
+        except (AuthError, ConfigError) as e:
             error(str(e))
             sys.exit(1)
 

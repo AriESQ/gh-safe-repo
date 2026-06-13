@@ -30,6 +30,11 @@ class GitHubClient:
         self.transport: Optional[GitTransport] = None
         self._authenticate()
 
+    @property
+    def token(self) -> str:
+        """The API token (GITHUB_TOKEN env or gh auth). For transport wiring."""
+        return self._token
+
     def _require_transport(self) -> GitTransport:
         if self.transport is None:
             raise RuntimeError(
@@ -179,9 +184,9 @@ class GitHubClient:
             try:
                 transport.run(["git", "clone", "--mirror", source_url, mirror_path])
             except subprocess.CalledProcessError as e:
-                raise APIError(
+                raise APIError(transport.redact(
                     f"git clone failed for {source_url}: {(e.stderr or '').strip()}"
-                )
+                ))
 
             transport.run(
                 ["git", "-C", mirror_path, "remote", "set-url", "--push", "origin", dest_url],
@@ -190,9 +195,9 @@ class GitHubClient:
             try:
                 transport.run(["git", "-C", mirror_path, "push", "--mirror", "origin"])
             except subprocess.CalledProcessError as e:
-                raise APIError(
+                raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
-                )
+                ))
 
     def push_local(self, local_path: str, owner: str, dest_repo: str) -> None:
         """
@@ -250,17 +255,20 @@ class GitHubClient:
                 transport.run(["git", "-C", work_path, "push", "origin", "--all"])
                 transport.run(["git", "-C", work_path, "push", "origin", "--tags"])
             except subprocess.CalledProcessError as e:
-                raise APIError(
+                raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
-                )
+                ))
 
         # Wire up the original local repo to the newly created remote so
         # future `git push` / `git pull` work without extra configuration.
         # Local-only ops; safe to use the transport for the env consistency.
+        # persistent_url, not dest_url: a token-injected URL must never be
+        # written into the user's long-lived .git/config.
         if is_git_repo:
             try:
                 transport.run(
-                    ["git", "-C", local_path, "remote", "add", "origin", dest_url],
+                    ["git", "-C", local_path, "remote", "add", "origin",
+                     transport.persistent_url(owner, dest_repo)],
                 )
                 result = transport.run(
                     ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
@@ -287,7 +295,9 @@ class GitHubClient:
         try:
             transport.run(["git", "clone", clone_url, dest_path])
         except subprocess.CalledProcessError as e:
-            raise APIError(f"git clone (scan) failed for {clone_url}: {(e.stderr or '').strip()}")
+            raise APIError(transport.redact(
+                f"git clone (scan) failed for {clone_url}: {(e.stderr or '').strip()}"
+            ))
 
     def _parse_status(self, stderr):
         """Extract HTTP status code from gh stderr output."""

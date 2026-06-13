@@ -33,7 +33,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `plugins/base.py` | Abstract `BasePlugin` — defines the `plan()` / `apply()` interface |
 | `plugins/repository.py` | Repo creation (`POST /user/repos`) and basic repo settings (`PATCH`) |
 | `plugins/actions.py` | GitHub Actions permissions (allowed actions, workflow perms, SHA pinning) |
-| `plugins/branch_protection.py` | Classic branch protection + Rulesets API |
+| `plugins/branch_protection.py` | Branch protection via Rulesets API (default; classic per-branch path behind `use_rulesets = false`) |
 | `plugins/security.py` | Dependabot alerts/security updates, secret scanning/push protection, private vuln reporting |
 | `plugins/tag_protection.py` | Immutable tags via Rulesets API (prevent deletion/rewriting of release tags) |
 | `templates/` | File templates (currently empty) |

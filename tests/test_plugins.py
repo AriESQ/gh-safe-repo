@@ -406,7 +406,8 @@ class TestBranchProtectionPlugin:
     def test_apply_public_repo_puts_branch_protection(self):
         client = make_mock_client()
         client.call_json.return_value = {}
-        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
         plan = plugin.plan()
         plugin.apply(plan)
         assert client.call_json.called
@@ -417,7 +418,8 @@ class TestBranchProtectionPlugin:
     def test_apply_public_repo_body_has_correct_fields(self):
         client = make_mock_client()
         client.call_json.return_value = {}
-        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
         plan = plugin.plan()
         plugin.apply(plan)
         body = client.call_json.call_args.args[2]
@@ -430,7 +432,8 @@ class TestBranchProtectionPlugin:
     def test_apply_public_repo_uses_explicit_branches(self):
         client = make_mock_client()
         client.call_json.return_value = {}
-        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True, branches=["master"])
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True, branches=["master"])
         plan = plugin.plan()
         plugin.apply(plan)
         assert "branches/master/protection" in client.call_json.call_args.args[1]
@@ -438,8 +441,9 @@ class TestBranchProtectionPlugin:
     def test_apply_multi_branch_calls_put_for_each(self):
         client = make_mock_client()
         client.call_json.return_value = {}
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
         plugin = BranchProtectionPlugin(
-            client, "alice", "my-repo", make_config(), is_public=True, branches=["master", "main"]
+            client, "alice", "my-repo", config, is_public=True, branches=["master", "main"]
         )
         plan = plugin.plan()
         plugin.apply(plan)
@@ -457,8 +461,9 @@ class TestBranchProtectionPlugin:
                 raise _APIError("not found", status_code=404)
             return {}
         client.call_json.side_effect = side_effect
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
         plugin = BranchProtectionPlugin(
-            client, "alice", "my-repo", make_config(), is_public=True, branches=["master", "main"]
+            client, "alice", "my-repo", config, is_public=True, branches=["master", "main"]
         )
         plan = plugin.plan()
         plugin.apply(plan)  # should not raise
@@ -500,22 +505,49 @@ class TestBranchProtectionPlugin:
 
     # --- Rulesets API ---
 
-    def test_apply_uses_rulesets_endpoint_when_configured(self):
+    def test_apply_rulesets_is_default(self):
         client = make_mock_client()
+        client.call_api.return_value = (200, "[]")  # no existing ruleset
+        client.call_json.return_value = {}
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        call = client.call_json.call_args
+        assert call.args[0] == "POST"
+        assert call.args[1].endswith("/rulesets")
+
+    def test_apply_posts_new_ruleset_when_absent(self):
+        client = make_mock_client()
+        client.call_api.return_value = (200, "[]")  # no existing ruleset
         client.call_json.return_value = {}
         config = make_config({("branch_protection", "use_rulesets"): "true"})
         plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
         plan = plugin.plan()
         plugin.apply(plan)
-        assert client.call_json.called
         call = client.call_json.call_args
         assert call.args[0] == "POST"
         assert call.args[1].endswith("/rulesets")
 
-    def test_apply_uses_classic_endpoint_by_default(self):
+    def test_apply_patches_existing_ruleset(self):
         client = make_mock_client()
+        # Existing ruleset present → upsert should PATCH, not POST.
+        existing = json.dumps([
+            {"id": 99, "name": "gh-safe-repo defaults", "target": "branch"},
+        ])
+        client.call_api.return_value = (200, existing)
         client.call_json.return_value = {}
         plugin = BranchProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        plan = plugin.plan()
+        plugin.apply(plan)
+        call = client.call_json.call_args
+        assert call.args[0] == "PATCH"
+        assert call.args[1].endswith("/rulesets/99")
+
+    def test_apply_uses_classic_endpoint_when_disabled(self):
+        client = make_mock_client()
+        client.call_json.return_value = {}
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
+        plugin = BranchProtectionPlugin(client, "alice", "my-repo", config, is_public=True)
         plan = plugin.plan()
         plugin.apply(plan)
         assert client.call_json.called
@@ -1023,8 +1055,9 @@ class TestBranchProtectionPluginAudit:
             "required_conversation_resolution": {"enabled": True},
         }
         client.call_api.return_value = (200, _json.dumps(api_response))
+        config = make_config({("branch_protection", "use_rulesets"): "false"})
         plugin = BranchProtectionPlugin(
-            client, "alice", "my-repo", make_config(), is_public=True
+            client, "alice", "my-repo", config, is_public=True
         )
         state = plugin.fetch_current_state()
         assert state["require_pull_request"] is True
@@ -1090,6 +1123,125 @@ class TestBranchProtectionPluginAudit:
         )
         plan = plugin.plan(current_state=current_state)
         assert all(c.type == ChangeType.SKIP for c in plan.changes)
+
+
+class TestBranchProtectionRulesetAudit:
+    """Rulesets-mode read path (default) and idempotent upsert."""
+
+    def _ruleset_detail(self):
+        return json.dumps({
+            "id": 7,
+            "name": "gh-safe-repo defaults",
+            "target": "branch",
+            "rules": [
+                {"type": "non_fast_forward"},
+                {"type": "deletion"},
+                {"type": "pull_request", "parameters": {
+                    "required_approving_review_count": 1,
+                    "dismiss_stale_reviews_on_push": True,
+                    "required_review_thread_resolution": True,
+                }},
+            ],
+            "bypass_actors": [
+                {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+            ],
+        })
+
+    def test_fetch_current_state_reads_ruleset(self):
+        client = make_mock_client()
+        ruleset_list = json.dumps([
+            {"id": 7, "name": "gh-safe-repo defaults", "target": "branch"},
+        ])
+        # 1) classic-present probe → 404 (none), 2) find ruleset list, 3) detail
+        client.call_api.side_effect = [
+            (404, ""),
+            (200, ruleset_list),
+            (200, self._ruleset_detail()),
+        ]
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["main"],
+        )
+        state = plugin.fetch_current_state()
+        assert state["require_pull_request"] is True
+        assert state["required_approving_reviews"] == 1
+        assert state["dismiss_stale_reviews"] is True
+        assert state["require_conversation_resolution"] is True
+        assert state["allow_force_pushes"] is False
+        assert state["allow_deletions"] is False
+        assert state["enforce_admins"] is False  # admin bypass present
+
+    def test_fetch_current_state_no_ruleset_returns_defaults(self):
+        client = make_mock_client()
+        # classic probe → 404; ruleset list → empty
+        client.call_api.side_effect = [(404, ""), (200, "[]")]
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["main"],
+        )
+        state = plugin.fetch_current_state()
+        assert state["require_pull_request"] is False
+        assert state["allow_force_pushes"] is True
+        assert state["allow_deletions"] is True
+
+    def test_fetch_current_state_enforce_admins_true_without_bypass(self):
+        client = make_mock_client()
+        ruleset_list = json.dumps([
+            {"id": 7, "name": "gh-safe-repo defaults", "target": "branch"},
+        ])
+        detail = json.dumps({
+            "id": 7, "name": "gh-safe-repo defaults", "target": "branch",
+            "rules": [{"type": "non_fast_forward"}],
+            "bypass_actors": [],
+        })
+        client.call_api.side_effect = [(404, ""), (200, ruleset_list), (200, detail)]
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["main"],
+        )
+        state = plugin.fetch_current_state()
+        assert state["enforce_admins"] is True  # no bypass actor → admins enforced
+
+    def test_plan_gates_migration_when_classic_present(self):
+        client = make_mock_client()
+        # classic probe returns 200 (classic protection exists)
+        client.call_api.side_effect = [(200, "{}"), (200, "[]")]
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+            branches=["main"], migrate=False,
+        )
+        state = plugin.fetch_current_state()
+        plan = plugin.plan(current_state=state)
+        # Single blocking SKIP, no actionable changes
+        assert len(plan.changes) == 1
+        skip = plan.changes[0]
+        assert skip.type == ChangeType.SKIP
+        assert "migrate-branch-protection" in skip.reason
+
+    def test_plan_proceeds_with_migrate_flag(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(200, "{}"), (200, "[]")]
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+            branches=["main"], migrate=True,
+        )
+        state = plugin.fetch_current_state()
+        plan = plugin.plan(current_state=state)
+        assert any(c.type != ChangeType.SKIP for c in plan.changes)
+
+    def test_apply_migrate_deletes_classic_protection(self):
+        client = make_mock_client()
+        # fetch: classic probe → 200, ruleset list → empty
+        # apply: find ruleset → empty (POST), then DELETE classic
+        client.call_api.side_effect = [(200, "{}"), (200, "[]"), (200, "[]")]
+        client.call_json.return_value = {}
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True,
+            branches=["main"], migrate=True,
+        )
+        state = plugin.fetch_current_state()
+        plan = plugin.plan(current_state=state)
+        plugin.apply(plan)
+        methods = [(c.args[0], c.args[1]) for c in client.call_json.call_args_list]
+        assert ("POST", "/repos/alice/my-repo/rulesets") in methods
+        assert any(m == "DELETE" and "branches/main/protection" in u for m, u in methods)
 
 
 class TestSecurityPluginAudit:

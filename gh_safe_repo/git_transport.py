@@ -253,6 +253,15 @@ def _gh_get_protocol(host: str = "github.com") -> str:
     return "https"
 
 
+def git_protocol_preference(host: str = "github.com") -> str:
+    """Public: the user's preferred git protocol ("ssh" or "https").
+
+    Wraps the gh-config lookup so callers (e.g. the success banner) can order
+    remote suggestions by preference without constructing a full GitTransport.
+    """
+    return _gh_get_protocol(host)
+
+
 def _git_config_get(source_dir: str, key: str) -> Optional[str]:
     """Return `git -C source_dir config --get <key>` value, or None."""
     try:

@@ -231,10 +231,15 @@ def format_plan_json(plan):
     )
 
 
-def print_success(owner, repo, local_push=False):
+def print_success(owner, repo, local_push=False, protocol="https"):
     url = f"https://github.com/{owner}/{repo}"
     https_url = f"https://github.com/{owner}/{repo}.git"
     ssh_url = f"git@github.com:{owner}/{repo}.git"
+    # Order remote suggestions by the user's preferred git protocol (#19),
+    # so the line they're most likely to use is listed first.
+    https = ("HTTPS", https_url)
+    ssh = ("SSH  ", ssh_url)
+    ordered = (ssh, https) if protocol == "ssh" else (https, ssh)
     if local_push:
         inner = (
             f"  Repository created successfully!  \n"
@@ -249,12 +254,12 @@ def print_success(owner, repo, local_push=False):
             f"  {url}  \n"
             f"  \n"
             f"  Add remote to existing repo:  \n"
-            f"  HTTPS: git remote add origin {https_url}  \n"
-            f"  SSH:   git remote add origin {ssh_url}  \n"
+            f"  {ordered[0][0]}: git remote add origin {ordered[0][1]}  \n"
+            f"  {ordered[1][0]}: git remote add origin {ordered[1][1]}  \n"
             f"  \n"
             f"  Clone fresh:  \n"
-            f"  HTTPS: git clone {https_url}  \n"
-            f"  SSH:   git clone {ssh_url}  "
+            f"  {ordered[0][0]}: git clone {ordered[0][1]}  \n"
+            f"  {ordered[1][0]}: git clone {ordered[1][1]}  "
         )
     width = max(len(line) for line in inner.splitlines()) + 2
     top    = "╭─ Done " + "─" * (width - 7) + "╮"

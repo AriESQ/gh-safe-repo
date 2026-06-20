@@ -7,7 +7,7 @@ from typing import Optional
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
-from ..git_transport import discover_transport
+from ..git_transport import discover_transport, git_protocol_preference
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
 from ..plugins.repository import RepositoryPlugin
@@ -375,4 +375,11 @@ def run(args):
     except APIError as e:
         warn(f"Tag protection failed: {e}")
 
-    print_success(owner, repo_name, local_push=bool(args.local_path))
+    protocol = (
+        client.transport.protocol
+        if getattr(client, "transport", None) is not None
+        else git_protocol_preference()
+    )
+    print_success(
+        owner, repo_name, local_push=bool(args.local_path), protocol=protocol
+    )

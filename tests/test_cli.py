@@ -12,6 +12,7 @@ from gh_safe_repo.commands._common import (
     build_context,
     format_plan_json,
     parse_repo_arg,
+    print_success,
 )
 from gh_safe_repo.cli import main
 from gh_safe_repo.commands import create, fix, scan
@@ -677,3 +678,28 @@ class TestScanSkippedDirsWarning:
 
         captured = capsys.readouterr()
         assert "skipped during scan" not in captured.out
+
+
+class TestPrintSuccessProtocolOrdering:
+    """Success banner orders remote suggestions by the user's git protocol (#19)."""
+
+    def test_https_preference_lists_https_first(self, capsys):
+        print_success("octocat", "demo", protocol="https")
+        out = capsys.readouterr().out
+        assert out.index("HTTPS: git remote add") < out.index("SSH  : git remote add")
+
+    def test_ssh_preference_lists_ssh_first(self, capsys):
+        print_success("octocat", "demo", protocol="ssh")
+        out = capsys.readouterr().out
+        assert out.index("SSH  : git remote add") < out.index("HTTPS: git remote add")
+
+    def test_default_protocol_is_https_first(self, capsys):
+        print_success("octocat", "demo")
+        out = capsys.readouterr().out
+        assert out.index("HTTPS: git remote add") < out.index("SSH  : git remote add")
+
+    def test_local_push_banner_has_no_remote_lines(self, capsys):
+        print_success("octocat", "demo", local_push=True, protocol="ssh")
+        out = capsys.readouterr().out
+        assert "git remote add origin" not in out
+        assert "Set your tracking branch" in out

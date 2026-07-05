@@ -94,7 +94,9 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **Remote wiring on the original `local_path` is a separate, post-push step.** Non-fatal (wrapped in `try/except CalledProcessError`) so a pre-existing `origin` doesn't abort the workflow. The public URL (no token) is used.
 
-**`auto_init` must be `false` when `--local` or `--from` is used.** The config default is `auto_init = true`, which makes GitHub create an initial commit. When code is pushed immediately afterward, the push is rejected. Fix: `RepositoryPlugin` accepts an `auto_init: bool = None` constructor parameter.
+**`auto_init` must be `false` when `--local` or `--from` is used.** With `auto_init = true` GitHub creates an initial commit; when code is pushed immediately afterward, the push is rejected. Fix: `RepositoryPlugin` accepts an `auto_init: bool = None` constructor parameter, and `create.py` forces `False` for the `--local`/`--from` paths.
+
+**Plain `create` removes the README that `auto_init` creates (issue #54, Option D).** A branch cannot exist without a commit, and a commit needs content — so to get a default branch at create time (branch protection needs one, and GitHub assigns the account's preferred branch name from the initial commit) we must POST `auto_init=true`, which creates a `README.md`. To keep the repo clean, `create.py` computes `suppress_readme = is_plain_create and not config.getbool("repo", "auto_init")` and passes it to `RepositoryPlugin`; `remove_readme()` does a `GET .../contents/README.md` (404-retry backoff for post-create eventual consistency) then `DELETE` on the captured `created_default_branch`. It's best-effort — `create.py` wraps it and `warn()`s on failure so a delete hiccup doesn't fail the whole create. The `auto_init` config key (default `false`) now gates whether the README survives; alternatives (`.gitkeep` via Contents API, low-level git-data empty-tree commit, or local `git commit --allow-empty`) were rejected because the file-less ones force *us* to name the branch, losing the account's default-branch-name preference, and drag git transport onto the API-only plain-create path.
 
 ## `--json` Output
 

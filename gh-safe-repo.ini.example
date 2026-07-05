@@ -17,7 +17,11 @@ allow_squash_merge = true
 allow_merge_commit = true
 allow_rebase_merge = true
 
-# Do not initialize with a README — keeps the remote empty so pushing is seamless
+# Whether a plain `create` leaves an initialized README in the new repo.
+# false (default): the repo still gets a default branch (needed for branch
+#   protection), but the auto-generated README.md is removed afterward.
+# true: keep the initialized README.
+# (Ignored for --local/--from, which always push your own history instead.)
 auto_init = false
 
 [actions]

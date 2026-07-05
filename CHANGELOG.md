@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file was introduced with 0.2.0; the 0.2.0 entry backfills notable changes
 since the initial release.
 
+## [0.5.0] - 2026-07-05
+
+### Changed
+- Plain `create owner/repo` no longer leaves an auto-generated `README.md` in the
+  new repo by default. The repo still gets a default branch (still POSTs
+  `auto_init=true`, so branch protection works at create time and GitHub assigns
+  the account's preferred default-branch name), but the generated `README.md` is
+  removed via the Contents API afterward. The previously-ignored `auto_init`
+  config key now controls this: set `auto_init = true` to keep the initialized
+  README. `--local`/`--from` are unaffected (they always push your own history and
+  never create a README). (#54)
+
 ## [0.4.0] - 2026-06-13
 
 ### Changed

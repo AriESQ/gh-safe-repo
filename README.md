@@ -236,6 +236,11 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | Print every API call and response |
 
+A plain `create` (no `--local`/`--from`) initializes the repo so a default branch
+exists for branch protection, then removes the auto-generated `README.md` so the
+new repo starts clean. Set `auto_init = true` in config to keep the README instead.
+`--local`/`--from` push your own history and never create a README.
+
 ### `fix` — Audit and fix an existing repo
 
 | Option | Description |
@@ -587,7 +592,11 @@ allow_squash_merge = true
 allow_merge_commit = true
 allow_rebase_merge = true
 
-# Do not initialize with a README — keeps the remote empty so pushing is seamless
+# Whether a plain `create` leaves an initialized README in the new repo.
+# false (default): the repo still gets a default branch (needed for branch
+#   protection), but the auto-generated README.md is removed afterward.
+# true: keep the initialized README.
+# (Ignored for --local/--from, which always push your own history instead.)
 auto_init = false
 
 

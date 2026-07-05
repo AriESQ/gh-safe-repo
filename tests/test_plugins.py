@@ -162,6 +162,77 @@ class TestRepositoryPlugin:
         ]
         assert len(topics_puts) == 0
 
+    def test_plan_includes_readme_delete_when_suppress(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  suppress_readme=True)
+        plan = plugin.plan()
+        readme = next(
+            (c for c in plan.changes
+             if c.type == ChangeType.DELETE
+             and c.category == ChangeCategory.FILE
+             and c.key == "readme"),
+            None,
+        )
+        assert readme is not None
+        assert readme.old == "README.md"
+
+    def test_plan_no_readme_delete_by_default(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan()
+        assert not any(c.key == "readme" for c in plan.changes)
+
+    def test_remove_readme_gets_sha_then_deletes(self):
+        client = make_mock_client()
+        client.get_json.return_value = {"sha": "abc123"}
+        client.call_json.return_value = {}
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  suppress_readme=True)
+        plugin.created_default_branch = "main"
+        plugin.remove_readme()
+        client.get_json.assert_called_once_with("/repos/alice/my-repo/contents/README.md")
+        delete_calls = [c for c in client.call_json.call_args_list if c.args[0] == "DELETE"]
+        assert len(delete_calls) == 1
+        assert delete_calls[0].args[1] == "/repos/alice/my-repo/contents/README.md"
+        body = delete_calls[0].args[2]
+        assert body["sha"] == "abc123"
+        assert body["branch"] == "main"
+
+    def test_remove_readme_omits_branch_when_unknown(self):
+        client = make_mock_client()
+        client.get_json.return_value = {"sha": "abc123"}
+        client.call_json.return_value = {}
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  suppress_readme=True)
+        plugin.remove_readme()  # created_default_branch defaults to None
+        delete_calls = [c for c in client.call_json.call_args_list if c.args[0] == "DELETE"]
+        assert "branch" not in delete_calls[0].args[2]
+
+    def test_remove_readme_noop_when_not_suppress(self):
+        client = make_mock_client()
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config())
+        plugin.remove_readme()
+        client.get_json.assert_not_called()
+        assert not any(
+            c.args[0] == "DELETE" for c in client.call_json.call_args_list
+        )
+
+    @patch("gh_safe_repo.plugins.repository.time.sleep")
+    def test_remove_readme_retries_get_on_404(self, mock_sleep):
+        client = make_mock_client()
+        client.get_json.side_effect = [
+            APIError("not found", status_code=404),
+            {"sha": "abc123"},
+        ]
+        client.call_json.return_value = {}
+        plugin = RepositoryPlugin(client, "alice", "my-repo", make_config(),
+                                  suppress_readme=True)
+        plugin.remove_readme()
+        assert client.get_json.call_count == 2
+        delete_calls = [c for c in client.call_json.call_args_list if c.args[0] == "DELETE"]
+        assert len(delete_calls) == 1
+
     @patch("gh_safe_repo.plugins.repository.time.sleep")
     def test_apply_retries_patch_on_404_after_create(self, mock_sleep):
         """After POST /user/repos, a 404 on PATCH should be retried."""

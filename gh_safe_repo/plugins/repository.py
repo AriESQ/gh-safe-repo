@@ -45,11 +45,13 @@ def _parse_bool(value):
 
 class RepositoryPlugin(BasePlugin):
     def __init__(self, client, owner, repo, config, auto_init: bool = None,
-                 source_description="", source_topics=None):
+                 source_description="", source_topics=None, suppress_readme: bool = False):
         super().__init__(client, owner, repo, config)
         self._auto_init_override = auto_init
         self._source_description = source_description or ""
         self._source_topics = source_topics or []
+        self._suppress_readme = suppress_readme
+        self.created_default_branch = None
 
     def fetch_current_state(self) -> dict:
         data = self.client.get_repo_data(self.owner, self.repo)
@@ -127,6 +129,16 @@ class RepositoryPlugin(BasePlugin):
                 )
             )
 
+        if not is_audit and self._suppress_readme:
+            plan.add(
+                Change(
+                    type=ChangeType.DELETE,
+                    category=ChangeCategory.FILE,
+                    key="readme",
+                    old="README.md",
+                )
+            )
+
         return plan
 
     def apply(self, plan: Plan) -> None:
@@ -188,3 +200,39 @@ class RepositoryPlugin(BasePlugin):
         if topics_change:
             path = self.client.repo_path(self.owner, self.repo)
             self.client.call_json("PUT", f"{path}/topics", {"names": self._source_topics})
+
+    def remove_readme(self) -> None:
+        """
+        Delete the README.md that ``auto_init=true`` created.
+
+        Plain create uses ``auto_init=true`` purely so a default branch exists
+        (branch protection needs one) and so GitHub assigns the account's
+        preferred branch name.  When the user has not opted into an initialized
+        README (``auto_init = false``, the default), remove the generated file
+        so the new repo is left clean.  Best-effort: callers wrap this and warn
+        on failure rather than failing the whole create.
+        """
+        if not self._suppress_readme:
+            return
+
+        path = self.client.repo_path(self.owner, self.repo, "contents/README.md")
+
+        # The repo may not be immediately readable after POST (GitHub eventual
+        # consistency), same as the PATCH block above.  Retry the sha lookup.
+        sha = None
+        for attempt in range(4):
+            try:
+                sha = self.client.get_json(path).get("sha")
+                break
+            except APIError as e:
+                if e.status_code == 404 and attempt < 3:
+                    time.sleep(1 << attempt)  # 1s, 2s, 4s
+                    continue
+                raise
+        if not sha:
+            return
+
+        body = {"message": "Remove auto-generated README", "sha": sha}
+        if self.created_default_branch:
+            body["branch"] = self.created_default_branch
+        self.client.call_json("DELETE", path, body)

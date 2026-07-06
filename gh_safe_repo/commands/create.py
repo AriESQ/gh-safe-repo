@@ -225,10 +225,18 @@ def run(args):
 
     # Plain create: auto_init=True so the repo has a branch for protection.
     # --local / --from: auto_init=False to avoid push rejection.
-    repo_auto_init = True if (not local_path and not args.from_repo) else False
+    is_plain_create = not local_path and not args.from_repo
+    repo_auto_init = True if is_plain_create else False
+    # The README auto_init creates is only a side-effect of needing a branch.
+    # Unless the user opts into an initialized README (auto_init = true), remove
+    # it after creation so the new repo is left clean.
+    suppress_readme = is_plain_create and not config.getbool(
+        "repo", "auto_init", fallback=False
+    )
     plugins = [
         RepositoryPlugin(client, owner, repo_name, config, auto_init=repo_auto_init,
-                         source_description=source_description, source_topics=source_topics),
+                         source_description=source_description, source_topics=source_topics,
+                         suppress_readme=suppress_readme),
         ActionsPlugin(client, owner, repo_name, config, is_public=is_public),
         BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
@@ -332,6 +340,13 @@ def run(args):
     post_default = repo_plugin.created_default_branch
     if post_default:
         bp_plugin.branches = [post_default]
+
+    # Remove the auto_init README (before branch protection) unless the user
+    # opted into an initialized README via auto_init = true.
+    try:
+        repo_plugin.remove_readme()
+    except APIError as e:
+        warn(f"Repository created but README removal failed: {e}")
 
     # Apply Actions settings
     try:

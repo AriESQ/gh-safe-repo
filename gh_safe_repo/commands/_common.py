@@ -39,7 +39,16 @@ class CLIContext:
 
 
 def parse_repo_arg(arg):
-    """Parse 'owner/repo' string. Returns (owner, repo). Exits on bad format."""
+    """Parse 'owner/repo' or GitHub URL. Returns (owner, repo). Exits on bad format."""
+    arg = arg.rstrip("/")
+    if arg.endswith(".git"):
+        arg = arg[:-4]
+
+    # Support https://github.com/owner/repo and git@github.com:owner/repo
+    m = re.match(r"(?:https?://github\.com/|git@github\.com:)([^/]+)/([^/]+)", arg)
+    if m:
+        return m.group(1), m.group(2)
+
     if "/" not in arg:
         print(
             f"{_c(_BOLD + _RED, 'Error:')} Use owner/repo format "

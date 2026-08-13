@@ -54,6 +54,69 @@ class TestParseRepoArg:
         assert owner == "alice"
         assert repo == "my/repo"
 
+    def test_trailing_git_suffix_stripped(self):
+        owner, repo = parse_repo_arg("alice/my-repo.git")
+        assert (owner, repo) == ("alice", "my-repo")
+
+
+class TestParseRepoArgURLs:
+    """URL forms accepted by parse_repo_arg (#65)."""
+
+    @pytest.mark.parametrize("arg", [
+        "https://github.com/alice/my-repo",
+        "http://github.com/alice/my-repo",
+        "https://github.com/alice/my-repo/",
+        "https://github.com/alice/my-repo.git",
+        "https://www.github.com/alice/my-repo",
+        "github.com/alice/my-repo",
+        "HTTPS://GitHub.com/alice/my-repo",
+        "git@github.com:alice/my-repo.git",
+        "git@github.com:alice/my-repo",
+        "ssh://git@github.com/alice/my-repo.git",
+    ])
+    def test_url_forms(self, arg):
+        assert parse_repo_arg(arg) == ("alice", "my-repo")
+
+    @pytest.mark.parametrize("arg", [
+        # A URL copied from the browser address bar carries a query string or
+        # fragment; neither belongs in the repo name.
+        "https://github.com/alice/my-repo?tab=readme-ov-file",
+        "https://github.com/alice/my-repo#readme",
+        "https://github.com/alice/my-repo/?tab=stars",
+        # Deep links resolve to the repo they point into.
+        "https://github.com/alice/my-repo/issues/65",
+        "https://github.com/alice/my-repo/tree/main/src",
+        "https://github.com/alice/my-repo/blob/main/README.md#install",
+    ])
+    def test_url_extras_stripped(self, arg):
+        assert parse_repo_arg(arg) == ("alice", "my-repo")
+
+    @pytest.mark.parametrize("arg", [
+        "https://gitlab.com/alice/my-repo",      # not GitHub
+        "https://github.com.evil.test/alice/x",  # host only looks like GitHub
+        "https://github.com/alice",              # owner, no repo
+        "https://github.com//my-repo",           # empty owner
+        "https://github.com/../..",              # would traverse in /repos/...
+        "https://github.com/alice/..",
+        "ssh://git@gitlab.com/alice/my-repo",
+    ])
+    def test_urlish_but_unusable_exits(self, arg):
+        """URL-shaped input must not fall through to the "/" splitter.
+
+        Splitting these would yield a nonsense owner ("https:") and an error
+        message describing the wrong problem.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    def test_rejection_message_names_the_url(self, capsys):
+        with pytest.raises(SystemExit):
+            parse_repo_arg("https://gitlab.com/alice/my-repo")
+        err = capsys.readouterr().err
+        assert "Not a GitHub repository URL" in err
+        assert "https://gitlab.com/alice/my-repo" in err
+
 
 class TestBuildContext:
     def _make_args(self):

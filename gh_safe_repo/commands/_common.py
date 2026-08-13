@@ -38,16 +38,60 @@ class CLIContext:
     config: ConfigManager
 
 
-def parse_repo_arg(arg):
-    """Parse 'owner/repo' or GitHub URL. Returns (owner, repo). Exits on bad format."""
-    arg = arg.rstrip("/")
-    if arg.endswith(".git"):
-        arg = arg[:-4]
+# GitHub repo URLs, in the forms people actually paste:
+#   https://github.com/owner/repo      https://www.github.com/owner/repo
+#   git@github.com:owner/repo.git      ssh://git@github.com/owner/repo
+#   github.com/owner/repo              (scheme dropped when copying from prose)
+# The scheme is optional because owner names cannot contain ".", so a leading
+# "github.com/" is never ambiguous with a real owner. The trailing group
+# resolves deep links (.../issues/65, .../tree/main/src) to their repo, and —
+# because it also matches on ? and # — stops the repo name at a query string or
+# fragment, which a URL copied from the browser address bar carries (github.com's
+# own copy gives ?tab=readme-ov-file).
+_GITHUB_URL_RE = re.compile(
+    r"(?:(?:https?://)?(?:www\.)?github\.com/|(?:ssh://)?git@github\.com[:/])"
+    r"(?P<owner>[A-Za-z0-9._-]+)/(?P<repo>[A-Za-z0-9._-]+?)(?:\.git)?"
+    r"(?:[/?#].*)?$",
+    re.IGNORECASE,
+)
 
-    # Support https://github.com/owner/repo and git@github.com:owner/repo
-    m = re.match(r"(?:https?://github\.com/|git@github\.com:)([^/]+)/([^/]+)", arg)
-    if m:
-        return m.group(1), m.group(2)
+# Substrings that mark an argument as URL-shaped. Anything matching these but
+# not _GITHUB_URL_RE is rejected outright rather than split on "/", which would
+# otherwise yield a nonsense owner ("https:") and a misleading downstream error.
+_URL_LIKE = ("://", "git@", "github.com/")
+
+_ACCEPTED_FORMS = (
+    "owner/repo, https://github.com/owner/repo, or git@github.com:owner/repo"
+)
+
+
+def _is_valid_name(name):
+    """True if name is usable as a GitHub owner or repo name.
+
+    "." and ".." are excluded: neither is a real name, and both would traverse
+    in the API paths built from them (e.g. /repos/../..).
+    """
+    return bool(re.fullmatch(r"[A-Za-z0-9._-]+", name)) and name.strip(".") != ""
+
+
+def parse_repo_arg(arg):
+    """Parse 'owner/repo' or a GitHub URL. Returns (owner, repo). Exits on bad format."""
+    arg = arg.rstrip("/")
+
+    m = _GITHUB_URL_RE.match(arg)
+    if m and _is_valid_name(m["owner"]) and _is_valid_name(m["repo"]):
+        return m["owner"], m["repo"]
+
+    if any(token in arg.lower() for token in _URL_LIKE):
+        print(
+            f"{_c(_BOLD + _RED, 'Error:')} Not a GitHub repository URL: {arg}\n"
+            f"  Use {_ACCEPTED_FORMS}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if arg.endswith(".git"):
+        arg = arg[: -len(".git")]
 
     if "/" not in arg:
         print(

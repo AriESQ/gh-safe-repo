@@ -100,9 +100,13 @@ def parse_repo_arg(arg):
             file=sys.stderr,
         )
         sys.exit(2)
-    parts = arg.split("/", 1)
-    owner, repo = parts[0], parts[1]
-    if not owner or not repo:
+    # Exactly two segments. A bare argument carrying extra path segments
+    # ("alice/my/repo") is a typo, not a deep link — GitHub emits no such form
+    # without a host, and repo names cannot contain "/", so folding the tail
+    # into the name only ever produces a guaranteed 404. Rejecting also keeps
+    # "." and ".." out of the API paths built from these values.
+    owner, _, repo = arg.partition("/")
+    if not _is_valid_name(owner) or not _is_valid_name(repo):
         print(
             f"{_c(_BOLD + _RED, 'Error:')} Use owner/repo format "
             f"(e.g. myuser/my-repo)",

@@ -49,10 +49,23 @@ class TestParseRepoArg:
             parse_repo_arg("alice/")
         assert exc_info.value.code == 2
 
-    def test_owner_with_nested_slash(self):
-        owner, repo = parse_repo_arg("alice/my/repo")
-        assert owner == "alice"
-        assert repo == "my/repo"
+    @pytest.mark.parametrize("arg", [
+        "alice/my/repo",     # extra segment — a typo, not a deep link
+        "alice/my/repo/x",
+        "../..",             # would traverse in /repos/{owner}/{repo}
+        "alice/..",
+        "./repo",
+    ])
+    def test_extra_or_traversing_segments_rejected(self, arg):
+        """A bare argument must be exactly owner/repo.
+
+        Repo names cannot contain "/", so folding a trailing path into the name
+        only ever yields a guaranteed 404. Deep links are resolved for URL
+        arguments, where a host makes the trailing segments unambiguous.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
 
     def test_trailing_git_suffix_stripped(self):
         owner, repo = parse_repo_arg("alice/my-repo.git")

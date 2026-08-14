@@ -193,6 +193,8 @@ gh-safe-repo fix git@github.com:myuser/my-repo.git
 
 Deep links work too — `https://github.com/myuser/my-repo/issues/65` resolves to `myuser/my-repo` — as do trailing `.git`, `?`-query strings and `#`-fragments. A URL that isn't a GitHub repository URL is rejected rather than guessed at.
 
+Without a URL, the argument must be exactly two segments: `myuser/my-repo/extra` is rejected rather than treated as a deep link, since repo names cannot contain `/` and there is no hostless form GitHub emits.
+
 For `create`, the owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems. For `fix`, admin permissions on the target repo are required instead, allowing you to fix repos owned by organizations or other accounts where you have admin access.
 
 #### `create` — create a new repo

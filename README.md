@@ -183,7 +183,17 @@ gh-safe-repo fix <owner/repo> [OPTIONS]
 gh-safe-repo scan <path> [OPTIONS]
 ```
 
-All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). For `create`, the owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems. For `fix`, admin permissions on the target repo are required instead, allowing you to fix repos owned by organizations or other accounts where you have admin access.
+All commands that interact with GitHub take the repository as `owner/repo` (e.g. `myuser/my-repo`) or as a GitHub URL, so you can paste straight from your browser or a `git clone` line:
+
+```
+gh-safe-repo fix https://github.com/myuser/my-repo
+gh-safe-repo fix github.com/myuser/my-repo
+gh-safe-repo fix git@github.com:myuser/my-repo.git
+```
+
+Deep links work too — `https://github.com/myuser/my-repo/issues/65` resolves to `myuser/my-repo` — as do trailing `.git`, `?`-query strings and `#`-fragments. A URL that isn't a GitHub repository URL is rejected rather than guessed at.
+
+For `create`, the owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems. For `fix`, admin permissions on the target repo are required instead, allowing you to fix repos owned by organizations or other accounts where you have admin access.
 
 #### `create` — create a new repo
 

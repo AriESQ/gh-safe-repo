@@ -64,6 +64,18 @@ _ACCEPTED_FORMS = (
     "owner/repo, https://github.com/owner/repo, or git@github.com:owner/repo"
 )
 
+# github.com paths that are site features rather than repositories, e.g.
+# https://github.com/orgs/acme/repositories would otherwise parse as the repo
+# "orgs/acme". GitHub reserves all of these as account names, so refusing them
+# cannot shadow a real owner.
+_RESERVED_OWNERS = frozenset({
+    "about", "account", "apps", "blog", "codespaces", "collections", "contact",
+    "dashboard", "enterprise", "events", "explore", "features", "issues",
+    "login", "logout", "marketplace", "new", "notifications", "organizations",
+    "orgs", "pricing", "pulls", "search", "security", "sessions", "settings",
+    "signup", "sponsors", "stars", "topics", "trending", "users", "watching",
+})
+
 
 def _is_valid_name(name):
     """True if name is usable as a GitHub owner or repo name.
@@ -76,10 +88,16 @@ def _is_valid_name(name):
 
 def parse_repo_arg(arg):
     """Parse 'owner/repo' or a GitHub URL. Returns (owner, repo). Exits on bad format."""
-    arg = arg.rstrip("/")
+    # Surrounding whitespace and newlines survive a copy-paste more often than not.
+    arg = arg.strip().rstrip("/")
 
     m = _GITHUB_URL_RE.match(arg)
-    if m and _is_valid_name(m["owner"]) and _is_valid_name(m["repo"]):
+    if (
+        m
+        and _is_valid_name(m["owner"])
+        and _is_valid_name(m["repo"])
+        and m["owner"].lower() not in _RESERVED_OWNERS
+    ):
         return m["owner"], m["repo"]
 
     if any(token in arg.lower() for token in _URL_LIKE):

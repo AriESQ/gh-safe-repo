@@ -123,6 +123,85 @@ class TestParseRepoArgURLs:
             parse_repo_arg(arg)
         assert exc_info.value.code == 2
 
+    @pytest.mark.parametrize("arg", [
+        # Every page a user is plausibly looking at when they decide to run
+        # this tool, copied straight from the browser address bar.
+        "https://github.com/AriESQ/gh-safe-repo",
+        "https://github.com/AriESQ/gh-safe-repo?tab=readme-ov-file",
+        "https://github.com/AriESQ/gh-safe-repo/pull/67/changes",
+        "https://github.com/AriESQ/gh-safe-repo/pull/67/files",
+        "https://github.com/AriESQ/gh-safe-repo/issues/65",
+        "https://github.com/AriESQ/gh-safe-repo/blob/master/README.md?plain=1#L10",
+        "https://github.com/AriESQ/gh-safe-repo/compare/master...feat",
+        "https://github.com/AriESQ/gh-safe-repo/releases/tag/v0.2.0",
+        "https://github.com/AriESQ/gh-safe-repo/actions/runs/123",
+        "https://github.com/AriESQ/gh-safe-repo/settings",
+        "https://github.com/AriESQ/gh-safe-repo/tree/master/gh_safe_repo",
+        # Clone and remote lines.
+        "git@github.com:AriESQ/gh-safe-repo.git",
+        "https://github.com/AriESQ/gh-safe-repo.git",
+        # Paste artifacts: shell quoting and trailing newlines preserve these.
+        " AriESQ/gh-safe-repo ",
+        "\tAriESQ/gh-safe-repo\n",
+        "https://github.com/AriESQ/gh-safe-repo\n",
+        # Plain form.
+        "AriESQ/gh-safe-repo",
+    ])
+    def test_paste_matrix_resolves_to_repo(self, arg):
+        """Forms a user is likely to paste all resolve to the same repo."""
+        assert parse_repo_arg(arg) == ("AriESQ", "gh-safe-repo")
+
+    @pytest.mark.parametrize("arg", [
+        "https://github.com/orgs/myorg/repositories",
+        "https://github.com/settings/tokens",
+        "https://github.com/topics/python",
+        "https://github.com/sponsors/AriESQ",
+        "https://github.com/users/AriESQ/projects",
+        "https://github.com/apps/dependabot",
+        "https://github.com/marketplace/actions/checkout",
+        "https://github.com/notifications",
+        "https://github.com/search?q=gh-safe-repo",
+    ])
+    def test_reserved_github_paths_rejected(self, arg):
+        """github.com site pages are not repositories.
+
+        Without this, /orgs/myorg/repositories parses as the repo "orgs/myorg"
+        and fails later with an error describing the wrong problem.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    @pytest.mark.parametrize("arg", [
+        "git+https://github.com/AriESQ/gh-safe-repo.git",  # pip requirement syntax
+        "<https://github.com/AriESQ/gh-safe-repo>",        # Markdown/Slack autolink
+    ])
+    def test_wrapped_url_syntaxes_rejected(self, arg):
+        """Rejected by design: the URL is recognisable but the wrapper is not.
+
+        Rejecting is safe — the user gets the accepted-forms message. Change
+        this test if either becomes worth unwrapping.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    def test_case_is_preserved(self):
+        """Push URLs are case-sensitive; casing must survive parsing."""
+        assert parse_repo_arg("https://github.com/AriESQ/GH-Safe-Repo") == (
+            "AriESQ", "GH-Safe-Repo",
+        )
+
+    @pytest.mark.parametrize("arg,expected", [
+        ("owner/my.repo", ("owner", "my.repo")),
+        ("owner/my_repo", ("owner", "my_repo")),
+        ("owner/repo.js", ("owner", "repo.js")),
+        ("https://github.com/owner/dot.net.sdk", ("owner", "dot.net.sdk")),
+    ])
+    def test_punctuation_in_repo_names(self, arg, expected):
+        """Dots and underscores are legal in repo names and must survive."""
+        assert parse_repo_arg(arg) == expected
+
     def test_rejection_message_names_the_url(self, capsys):
         with pytest.raises(SystemExit):
             parse_repo_arg("https://gitlab.com/alice/my-repo")

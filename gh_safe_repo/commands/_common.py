@@ -38,8 +38,79 @@ class CLIContext:
     config: ConfigManager
 
 
+# GitHub repo URLs, in the forms people actually paste:
+#   https://github.com/owner/repo      https://www.github.com/owner/repo
+#   git@github.com:owner/repo.git      ssh://git@github.com/owner/repo
+#   github.com/owner/repo              (scheme dropped when copying from prose)
+# The scheme is optional because owner names cannot contain ".", so a leading
+# "github.com/" is never ambiguous with a real owner. The trailing group
+# resolves deep links (.../issues/65, .../tree/main/src) to their repo, and —
+# because it also matches on ? and # — stops the repo name at a query string or
+# fragment, which a URL copied from the browser address bar carries (github.com's
+# own copy gives ?tab=readme-ov-file).
+_GITHUB_URL_RE = re.compile(
+    r"(?:(?:https?://)?(?:www\.)?github\.com/|(?:ssh://)?git@github\.com[:/])"
+    r"(?P<owner>[A-Za-z0-9._-]+)/(?P<repo>[A-Za-z0-9._-]+?)(?:\.git)?"
+    r"(?:[/?#].*)?$",
+    re.IGNORECASE,
+)
+
+# Substrings that mark an argument as URL-shaped. Anything matching these but
+# not _GITHUB_URL_RE is rejected outright rather than split on "/", which would
+# otherwise yield a nonsense owner ("https:") and a misleading downstream error.
+_URL_LIKE = ("://", "git@", "github.com/")
+
+_ACCEPTED_FORMS = (
+    "owner/repo, https://github.com/owner/repo, or git@github.com:owner/repo"
+)
+
+# github.com paths that are site features rather than repositories, e.g.
+# https://github.com/orgs/acme/repositories would otherwise parse as the repo
+# "orgs/acme". GitHub reserves all of these as account names, so refusing them
+# cannot shadow a real owner.
+_RESERVED_OWNERS = frozenset({
+    "about", "account", "apps", "blog", "codespaces", "collections", "contact",
+    "dashboard", "enterprise", "events", "explore", "features", "issues",
+    "login", "logout", "marketplace", "new", "notifications", "organizations",
+    "orgs", "pricing", "pulls", "search", "security", "sessions", "settings",
+    "signup", "sponsors", "stars", "topics", "trending", "users", "watching",
+})
+
+
+def _is_valid_name(name):
+    """True if name is usable as a GitHub owner or repo name.
+
+    "." and ".." are excluded: neither is a real name, and both would traverse
+    in the API paths built from them (e.g. /repos/../..).
+    """
+    return bool(re.fullmatch(r"[A-Za-z0-9._-]+", name)) and name.strip(".") != ""
+
+
 def parse_repo_arg(arg):
-    """Parse 'owner/repo' string. Returns (owner, repo). Exits on bad format."""
+    """Parse 'owner/repo' or a GitHub URL. Returns (owner, repo). Exits on bad format."""
+    # Surrounding whitespace and newlines survive a copy-paste more often than not.
+    arg = arg.strip().rstrip("/")
+
+    m = _GITHUB_URL_RE.match(arg)
+    if (
+        m
+        and _is_valid_name(m["owner"])
+        and _is_valid_name(m["repo"])
+        and m["owner"].lower() not in _RESERVED_OWNERS
+    ):
+        return m["owner"], m["repo"]
+
+    if any(token in arg.lower() for token in _URL_LIKE):
+        print(
+            f"{_c(_BOLD + _RED, 'Error:')} Not a GitHub repository URL: {arg}\n"
+            f"  Use {_ACCEPTED_FORMS}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if arg.endswith(".git"):
+        arg = arg[: -len(".git")]
+
     if "/" not in arg:
         print(
             f"{_c(_BOLD + _RED, 'Error:')} Use owner/repo format "
@@ -47,9 +118,13 @@ def parse_repo_arg(arg):
             file=sys.stderr,
         )
         sys.exit(2)
-    parts = arg.split("/", 1)
-    owner, repo = parts[0], parts[1]
-    if not owner or not repo:
+    # Exactly two segments. A bare argument carrying extra path segments
+    # ("alice/my/repo") is a typo, not a deep link — GitHub emits no such form
+    # without a host, and repo names cannot contain "/", so folding the tail
+    # into the name only ever produces a guaranteed 404. Rejecting also keeps
+    # "." and ".." out of the API paths built from these values.
+    owner, _, repo = arg.partition("/")
+    if not _is_valid_name(owner) or not _is_valid_name(repo):
         print(
             f"{_c(_BOLD + _RED, 'Error:')} Use owner/repo format "
             f"(e.g. myuser/my-repo)",

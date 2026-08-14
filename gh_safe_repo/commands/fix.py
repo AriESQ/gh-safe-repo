@@ -34,7 +34,8 @@ HELP = "Audit an existing repo and apply safe defaults"
 def add_arguments(parser):
     parser.add_argument(
         "repo",
-        help="Existing GitHub repository as owner/repo (e.g. myuser/my-repo or my-org/my-repo); requires admin access",
+        help="Existing GitHub repository as owner/repo (e.g. myuser/my-repo or my-org/my-repo) "
+             "or a GitHub URL (e.g. https://github.com/my-org/my-repo); requires admin access",
     )
     parser.add_argument(
         "--yes", "-y",

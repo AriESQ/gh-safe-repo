@@ -49,10 +49,165 @@ class TestParseRepoArg:
             parse_repo_arg("alice/")
         assert exc_info.value.code == 2
 
-    def test_owner_with_nested_slash(self):
-        owner, repo = parse_repo_arg("alice/my/repo")
-        assert owner == "alice"
-        assert repo == "my/repo"
+    @pytest.mark.parametrize("arg", [
+        "alice/my/repo",     # extra segment — a typo, not a deep link
+        "alice/my/repo/x",
+        "../..",             # would traverse in /repos/{owner}/{repo}
+        "alice/..",
+        "./repo",
+    ])
+    def test_extra_or_traversing_segments_rejected(self, arg):
+        """A bare argument must be exactly owner/repo.
+
+        Repo names cannot contain "/", so folding a trailing path into the name
+        only ever yields a guaranteed 404. Deep links are resolved for URL
+        arguments, where a host makes the trailing segments unambiguous.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    def test_trailing_git_suffix_stripped(self):
+        owner, repo = parse_repo_arg("alice/my-repo.git")
+        assert (owner, repo) == ("alice", "my-repo")
+
+
+class TestParseRepoArgURLs:
+    """URL forms accepted by parse_repo_arg (#65)."""
+
+    @pytest.mark.parametrize("arg", [
+        "https://github.com/alice/my-repo",
+        "http://github.com/alice/my-repo",
+        "https://github.com/alice/my-repo/",
+        "https://github.com/alice/my-repo.git",
+        "https://www.github.com/alice/my-repo",
+        "github.com/alice/my-repo",
+        "HTTPS://GitHub.com/alice/my-repo",
+        "git@github.com:alice/my-repo.git",
+        "git@github.com:alice/my-repo",
+        "ssh://git@github.com/alice/my-repo.git",
+    ])
+    def test_url_forms(self, arg):
+        assert parse_repo_arg(arg) == ("alice", "my-repo")
+
+    @pytest.mark.parametrize("arg", [
+        # A URL copied from the browser address bar carries a query string or
+        # fragment; neither belongs in the repo name.
+        "https://github.com/alice/my-repo?tab=readme-ov-file",
+        "https://github.com/alice/my-repo#readme",
+        "https://github.com/alice/my-repo/?tab=stars",
+        # Deep links resolve to the repo they point into.
+        "https://github.com/alice/my-repo/issues/65",
+        "https://github.com/alice/my-repo/tree/main/src",
+        "https://github.com/alice/my-repo/blob/main/README.md#install",
+    ])
+    def test_url_extras_stripped(self, arg):
+        assert parse_repo_arg(arg) == ("alice", "my-repo")
+
+    @pytest.mark.parametrize("arg", [
+        "https://gitlab.com/alice/my-repo",      # not GitHub
+        "https://github.com.evil.test/alice/x",  # host only looks like GitHub
+        "https://github.com/alice",              # owner, no repo
+        "https://github.com//my-repo",           # empty owner
+        "https://github.com/../..",              # would traverse in /repos/...
+        "https://github.com/alice/..",
+        "ssh://git@gitlab.com/alice/my-repo",
+    ])
+    def test_urlish_but_unusable_exits(self, arg):
+        """URL-shaped input must not fall through to the "/" splitter.
+
+        Splitting these would yield a nonsense owner ("https:") and an error
+        message describing the wrong problem.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    @pytest.mark.parametrize("arg", [
+        # Every page a user is plausibly looking at when they decide to run
+        # this tool, copied straight from the browser address bar.
+        "https://github.com/AriESQ/gh-safe-repo",
+        "https://github.com/AriESQ/gh-safe-repo?tab=readme-ov-file",
+        "https://github.com/AriESQ/gh-safe-repo/pull/67/changes",
+        "https://github.com/AriESQ/gh-safe-repo/pull/67/files",
+        "https://github.com/AriESQ/gh-safe-repo/issues/65",
+        "https://github.com/AriESQ/gh-safe-repo/blob/master/README.md?plain=1#L10",
+        "https://github.com/AriESQ/gh-safe-repo/compare/master...feat",
+        "https://github.com/AriESQ/gh-safe-repo/releases/tag/v0.2.0",
+        "https://github.com/AriESQ/gh-safe-repo/actions/runs/123",
+        "https://github.com/AriESQ/gh-safe-repo/settings",
+        "https://github.com/AriESQ/gh-safe-repo/tree/master/gh_safe_repo",
+        # Clone and remote lines.
+        "git@github.com:AriESQ/gh-safe-repo.git",
+        "https://github.com/AriESQ/gh-safe-repo.git",
+        # Paste artifacts: shell quoting and trailing newlines preserve these.
+        " AriESQ/gh-safe-repo ",
+        "\tAriESQ/gh-safe-repo\n",
+        "https://github.com/AriESQ/gh-safe-repo\n",
+        # Plain form.
+        "AriESQ/gh-safe-repo",
+    ])
+    def test_paste_matrix_resolves_to_repo(self, arg):
+        """Forms a user is likely to paste all resolve to the same repo."""
+        assert parse_repo_arg(arg) == ("AriESQ", "gh-safe-repo")
+
+    @pytest.mark.parametrize("arg", [
+        "https://github.com/orgs/myorg/repositories",
+        "https://github.com/settings/tokens",
+        "https://github.com/topics/python",
+        "https://github.com/sponsors/AriESQ",
+        "https://github.com/users/AriESQ/projects",
+        "https://github.com/apps/dependabot",
+        "https://github.com/marketplace/actions/checkout",
+        "https://github.com/notifications",
+        "https://github.com/search?q=gh-safe-repo",
+    ])
+    def test_reserved_github_paths_rejected(self, arg):
+        """github.com site pages are not repositories.
+
+        Without this, /orgs/myorg/repositories parses as the repo "orgs/myorg"
+        and fails later with an error describing the wrong problem.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    @pytest.mark.parametrize("arg", [
+        "git+https://github.com/AriESQ/gh-safe-repo.git",  # pip requirement syntax
+        "<https://github.com/AriESQ/gh-safe-repo>",        # Markdown/Slack autolink
+    ])
+    def test_wrapped_url_syntaxes_rejected(self, arg):
+        """Rejected by design: the URL is recognisable but the wrapper is not.
+
+        Rejecting is safe — the user gets the accepted-forms message. Change
+        this test if either becomes worth unwrapping.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            parse_repo_arg(arg)
+        assert exc_info.value.code == 2
+
+    def test_case_is_preserved(self):
+        """Push URLs are case-sensitive; casing must survive parsing."""
+        assert parse_repo_arg("https://github.com/AriESQ/GH-Safe-Repo") == (
+            "AriESQ", "GH-Safe-Repo",
+        )
+
+    @pytest.mark.parametrize("arg,expected", [
+        ("owner/my.repo", ("owner", "my.repo")),
+        ("owner/my_repo", ("owner", "my_repo")),
+        ("owner/repo.js", ("owner", "repo.js")),
+        ("https://github.com/owner/dot.net.sdk", ("owner", "dot.net.sdk")),
+    ])
+    def test_punctuation_in_repo_names(self, arg, expected):
+        """Dots and underscores are legal in repo names and must survive."""
+        assert parse_repo_arg(arg) == expected
+
+    def test_rejection_message_names_the_url(self, capsys):
+        with pytest.raises(SystemExit):
+            parse_repo_arg("https://gitlab.com/alice/my-repo")
+        err = capsys.readouterr().err
+        assert "Not a GitHub repository URL" in err
+        assert "https://gitlab.com/alice/my-repo" in err
 
 
 class TestBuildContext:

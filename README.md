@@ -178,10 +178,17 @@ See [Pre-flight security scanner](#pre-flight-security-scanner).
 ### CLI reference
 
 ```
-gh-safe-repo create <owner/repo> [OPTIONS]
-gh-safe-repo fix <owner/repo> [OPTIONS]
-gh-safe-repo scan <path> [OPTIONS]
+gh-safe-repo [--config PATH] [--debug] create <owner/repo> [OPTIONS]
+gh-safe-repo [--config PATH] [--debug] fix <owner/repo> [OPTIONS]
+gh-safe-repo [--config PATH] [--debug] scan <path> [OPTIONS]
 ```
+
+`--config` and `--debug` are global: they may be given before or after the
+command (`gh-safe-repo --debug fix owner/repo` and
+`gh-safe-repo fix owner/repo --debug` are equivalent), and the later one wins
+if both are given. All other options are command-specific and must follow the
+command. Note that `--config` takes an optional value, so a bare `--config`
+should come last — `gh-safe-repo --config scan ./src` reads `scan` as the path.
 
 All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). For `create`, the owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems. For `fix`, admin permissions on the target repo are required instead, allowing you to fix repos owned by organizations or other accounts where you have admin access.
 
@@ -195,8 +202,8 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
-| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | Print every API call and response |
+| `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
+| `--debug` | *(global)* Print every API call and response |
 
 #### `fix` — audit and fix an existing repo
 
@@ -206,15 +213,15 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--dry-run` | Show settings diff without applying changes |
 | `--migrate-branch-protection` | Convert existing classic branch protection to a ruleset (see [Branch protection](#branch-protection-public-repos-or-any-repo-on-a-paid-plan)) |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
-| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | Print every API call and response, plus resolved repo identity (id, full name, owner type) |
+| `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
+| `--debug` | *(global)* Print every API call and response, plus resolved repo identity (id, full name, owner type) |
 
 #### `scan` — local secret scanning
 
 | Option | Description |
 |---|---|
-| `--config [PATH]` | Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | Show scanner details |
+| `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
+| `--debug` | *(global)* Show scanner details |
 
 Exit code is `0` if no critical findings, `1` if criticals are found.
 

@@ -14,7 +14,7 @@ from gh_safe_repo.commands._common import (
     parse_repo_arg,
     print_success,
 )
-from gh_safe_repo.cli import main
+from gh_safe_repo.cli import build_parser, main
 from gh_safe_repo.commands import create, fix, scan
 from gh_safe_repo.config_manager import ConfigManager
 from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
@@ -510,6 +510,51 @@ class TestNoSubcommand:
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == 2
+
+
+class TestGlobalOptionPosition:
+    """--config and --debug are accepted on either side of the command.
+
+    They are registered on the top-level parser *and* on every subparser; the
+    subparser copies use default=SUPPRESS so an unused default cannot wipe out
+    a value parsed before the command.
+    """
+
+    @pytest.mark.parametrize("argv", [
+        ["--debug", "scan", "./src"],
+        ["scan", "--debug", "./src"],
+        ["scan", "./src", "--debug"],
+    ])
+    def test_debug_accepted_in_any_position(self, argv):
+        args = build_parser().parse_args(argv)
+        assert args.debug is True
+
+    @pytest.mark.parametrize("argv", [
+        ["--config", "a.ini", "scan", "./src"],
+        ["scan", "--config", "a.ini", "./src"],
+    ])
+    def test_config_accepted_in_any_position(self, argv):
+        args = build_parser().parse_args(argv)
+        assert args.config == "a.ini"
+
+    @pytest.mark.parametrize("command,rest", [
+        ("create", ["alice/repo"]),
+        ("fix", ["alice/repo"]),
+        ("scan", ["./src"]),
+    ])
+    def test_defaults_present_for_every_command(self, command, rest):
+        """SUPPRESS on the subparsers must not leave the attributes missing."""
+        args = build_parser().parse_args([command, *rest])
+        assert args.debug is False
+        assert args.config is None
+
+    def test_bare_config_uses_defaults_sentinel(self):
+        args = build_parser().parse_args(["scan", "./src", "--config"])
+        assert args.config == ""
+
+    def test_command_side_value_wins_over_global(self):
+        args = build_parser().parse_args(["--config", "a.ini", "scan", "./src", "--config", "b.ini"])
+        assert args.config == "b.ini"
 
 
 class TestFormatPlanJson:

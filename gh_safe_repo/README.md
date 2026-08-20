@@ -21,7 +21,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | Module | Purpose |
 |---|---|
 | `cli.py` | `build_parser()` / `main()` — subparser dispatch to `create`, `fix`, `scan` commands |
-| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()`, plan formatting, ANSI output |
+| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()`, plan and findings formatting (`format_plan_json()`, `format_findings_json()`), the pre-flight `ScanDecision`, ANSI output (auto-disabled off a TTY / under `NO_COLOR`) |
 | `commands/create.py` | `create` subcommand — new repo with safe defaults |
 | `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections |
 | `commands/scan.py` | `scan` subcommand — local-only secret scanning |

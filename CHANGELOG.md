@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file was introduced with 0.2.0; the 0.2.0 entry backfills notable changes
 since the initial release.
 
+## [Unreleased]
+
+### Added
+- `scan --json` emits findings as JSON on stdout (progress and warnings move to
+  stderr), matching the `--json` convention already used by `create` and `fix`.
+  All three severity counts are always present in `summary`.
+- An agent skill at `.claude/skills/gh-safe-repo/` documenting the
+  non-interactive contract, exit codes, plan-limit skips, and the common
+  failure modes. Copy it to `~/.claude/skills/` to use it outside this repo.
+
+### Fixed
+- `--yes` no longer stops at the pre-flight scan prompt. Warnings are accepted
+  automatically (matching the prompt's `[Y/n]` default) and critical findings
+  stop the run. Previously an unattended `create --local --yes` on a repo with
+  any finding printed "Aborted by user." and **exited 0** without creating
+  anything, which callers could not distinguish from success. A blocked run now
+  exits `1`; a user declining at a real prompt still exits `0`.
+
+### Changed
+- ANSI colour is emitted only when the output stream is a terminal and
+  `NO_COLOR` is unset, so piped and captured output is plain text.
+
 ## [0.6.0] - 2026-08-20
 
 ### Changed

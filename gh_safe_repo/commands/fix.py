@@ -11,6 +11,7 @@ from ..plugins.security import SecurityPlugin
 from ..plugins.tag_protection import TagProtectionPlugin
 from ._common import (
     _BOLD,
+    _DIM,
     _GREEN,
     _RESET,
     _YELLOW,
@@ -158,7 +159,7 @@ def run(args):
     counts = full_plan.count_by_type()
     actionable_count = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
     skipped = counts.get(ChangeType.SKIP, 0)
-    _info(_c(_BOLD + "\033[2m", f"{actionable_count} change(s) to apply, {skipped} skipped"))
+    _info(_c(_BOLD + _DIM, f"{actionable_count} change(s) to apply, {skipped} skipped"))
 
     if args.dry_run:
         _info(_c(_YELLOW, "\nDry run — no changes made."))

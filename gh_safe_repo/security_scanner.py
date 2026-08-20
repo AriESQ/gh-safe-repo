@@ -23,6 +23,14 @@ from typing import List, Optional, Set, Tuple
 
 # --- Module-level constants ---
 
+# Warnings go to stderr; colour them only when that is a terminal and the user
+# has not opted out via NO_COLOR (commands/_common.py does the same for stdout).
+_WARN = (
+    "\033[33mWarning:\033[0m"
+    if not os.environ.get("NO_COLOR") and sys.stderr.isatty()
+    else "Warning:"
+)
+
 BINARY_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".tiff", ".webp",
     ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac", ".ogg",
@@ -261,7 +269,7 @@ class SecurityScanner:
         m = re.search(r"(\d+)\.(\d+)\.(\d+)", output)
         if not m:
             print(
-                "\033[33mWarning:\033[0m unrecognised truffleHog version output "
+                _WARN + " unrecognised truffleHog version output "
                 "— falling back to container or regex scanner",
                 file=sys.stderr,
             )
@@ -269,7 +277,7 @@ class SecurityScanner:
         major = int(m.group(1))
         if major != 3:
             print(
-                f"\033[33mWarning:\033[0m truffleHog v{m.group(0)} detected "
+                _WARN + f" truffleHog v{m.group(0)} detected "
                 f"(v3 required) — falling back to container or regex scanner",
                 file=sys.stderr,
             )
@@ -315,7 +323,7 @@ class SecurityScanner:
                 return self._discovery
             if mode == "native":
                 print(
-                    "\033[33mWarning:\033[0m truffleHog not found on PATH "
+                    _WARN + " truffleHog not found on PATH "
                     "(trufflehog_mode = native) — falling back to regex scanner",
                     file=sys.stderr,
                 )
@@ -335,7 +343,7 @@ class SecurityScanner:
                 return self._discovery
             if mode == "docker":
                 print(
-                    "\033[33mWarning:\033[0m trufflehog_mode = docker but no container runtime "
+                    _WARN + " trufflehog_mode = docker but no container runtime "
                     "(podman or docker) found — falling back to regex scanner",
                     file=sys.stderr,
                 )
@@ -344,7 +352,7 @@ class SecurityScanner:
 
         # Step 3: nothing available (auto mode exhausted all options)
         print(
-            "\033[33mWarning:\033[0m truffleHog not found and no container runtime available "
+            _WARN + " truffleHog not found and no container runtime available "
             "— using regex scanner\n"
             "         (install truffleHog v3 or podman/docker for better secret detection)",
             file=sys.stderr,

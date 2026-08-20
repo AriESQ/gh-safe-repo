@@ -15,13 +15,17 @@ from ..errors import APIError, AuthError, ConfigError
 from ..github_client import GitHubClient
 from ..security_scanner import FindingCategory, SecurityScanner, Severity, _view_hint
 
-# ANSI escape codes
-_RESET  = "\033[0m"
-_BOLD   = "\033[1m"
-_DIM    = "\033[2m"
-_RED    = "\033[31m"
-_GREEN  = "\033[32m"
-_YELLOW = "\033[33m"
+# ANSI escape codes. Blanked out when the output is not a terminal (piped into
+# a file, a script, or an AI agent) or when NO_COLOR is set, so consumers get
+# clean text instead of escape sequences.
+_COLOR = not os.environ.get("NO_COLOR") and sys.stdout.isatty()
+
+_RESET  = "\033[0m"  if _COLOR else ""
+_BOLD   = "\033[1m"  if _COLOR else ""
+_DIM    = "\033[2m"  if _COLOR else ""
+_RED    = "\033[31m" if _COLOR else ""
+_GREEN  = "\033[32m" if _COLOR else ""
+_YELLOW = "\033[33m" if _COLOR else ""
 
 
 def _c(code, text):
@@ -117,7 +121,7 @@ def build_context(args, expected_owner, require_owner_match=True):
     )
 
 
-def add_common_args(parser, *, json_flag=True, global_defaults=False):
+def add_common_args(parser, *, json_flag=True, json_help=None, global_defaults=False):
     """Add --debug and --config (and --json) to a parser.
 
     These two are global: `cli.main` also adds them to the top-level parser so
@@ -146,7 +150,7 @@ def add_common_args(parser, *, json_flag=True, global_defaults=False):
         parser.add_argument(
             "--json",
             action="store_true",
-            help="Emit the plan as JSON instead of the ANSI table",
+            help=json_help or "Emit the plan as JSON instead of the ANSI table",
         )
 
 
@@ -239,6 +243,37 @@ def format_plan_json(plan):
                 for c in plan.changes
             ],
             "summary": {t.value: n for t, n in counts.items()},
+        },
+        indent=2,
+    )
+
+
+def format_findings_json(findings, skipped_committed_dirs=()):
+    """Serialise scan findings to a JSON string for `scan --json`.
+
+    Severities are lower-cased so they match the casing of the change types in
+    `format_plan_json`; `summary` always carries all three keys.
+    """
+    counts = {"critical": 0, "warning": 0, "info": 0}
+    for f in findings:
+        counts[f.severity.value.lower()] += 1
+    return json.dumps(
+        {
+            "findings": [
+                {
+                    "severity": f.severity.value.lower(),
+                    "category": f.category.value,
+                    "file_path": f.file_path,
+                    "line_number": f.line_number,
+                    "rule": f.rule,
+                    "match": f.match,
+                    "commit": f.commit,
+                    "timestamp": f.timestamp,
+                }
+                for f in findings
+            ],
+            "summary": counts,
+            "skipped_committed_dirs": list(skipped_committed_dirs),
         },
         indent=2,
     )
@@ -354,8 +389,26 @@ def _print_findings(findings, config):
     return bool(criticals)
 
 
-def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=False):
-    """Display scan findings and prompt user. Returns True to continue, False to abort."""
+@dataclass
+class ScanDecision:
+    """Outcome of showing pre-flight scan findings to the user.
+
+    `blocked` distinguishes "we could not ask, or must not proceed unattended"
+    from "the user looked at the findings and said no". Callers exit 1 on the
+    former and 0 on the latter — an unattended run that silently exits 0 without
+    creating the repo is indistinguishable from success to a script or an agent.
+    """
+    proceed: bool
+    blocked: bool = False
+    reason: str = ""
+
+
+def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=False, yes=False):
+    """Display scan findings and prompt the user. Returns a ScanDecision.
+
+    With `yes` (or no TTY to prompt on), no prompt is issued: warnings and info
+    findings pass through, criticals block.
+    """
     if warn_skipped_committed_dirs and scanner.skipped_committed_dirs:
         print(_c(_YELLOW, "  Warning: the following directories are committed to the repo"))
         print(_c(_YELLOW, "  and were not fully scanned (secrets/large files may be missed):"))
@@ -366,7 +419,33 @@ def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs
     has_criticals = _print_findings(findings, config)
 
     if not findings:
-        return True
+        return ScanDecision(proceed=True)
+
+    interactive = sys.stdin.isatty()
+
+    if yes or not interactive:
+        if has_criticals:
+            why = (
+                "critical findings and --yes was given"
+                if yes
+                else "critical findings and there is no terminal to confirm on"
+            )
+            return ScanDecision(
+                proceed=False,
+                blocked=True,
+                reason=f"Pre-flight scan found {why}",
+            )
+        if yes:
+            # Warnings only: matches the [Y/n] default of the interactive prompt.
+            return ScanDecision(proceed=True)
+        return ScanDecision(
+            proceed=False,
+            blocked=True,
+            reason=(
+                "Pre-flight scan found issues and there is no terminal to "
+                "confirm on; re-run with --yes to accept warnings"
+            ),
+        )
 
     if has_criticals:
         prompt = _c(_BOLD + _RED, "Critical issues found. Continue anyway? [y/N]: ")
@@ -377,15 +456,16 @@ def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs
         answer = input(prompt).strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
-        return False
+        return ScanDecision(proceed=False)
 
-    return answer in ("y", "yes") if has_criticals else answer not in ("n", "no")
+    proceed = answer in ("y", "yes") if has_criticals else answer not in ("n", "no")
+    return ScanDecision(proceed=proceed)
 
 
-def run_preflight_scan(client, owner, from_repo, config, debug=False, scanner=None):
+def run_preflight_scan(client, owner, from_repo, config, debug=False, scanner=None, yes=False):
     """
     Clone from_repo, scan locally, display findings, prompt user.
-    Returns True to continue, False to abort. Raises APIError on clone failure.
+    Returns a ScanDecision. Raises APIError on clone failure.
     """
     if scanner is None:
         scanner = SecurityScanner(config, debug=debug)
@@ -396,16 +476,20 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False, scanner=No
         client.clone_for_scan(owner, from_repo, scan_dir)
         findings = scanner.scan(scan_dir)
 
-    return _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=True)
+    return _scan_findings_prompt(
+        scanner, findings, config, warn_skipped_committed_dirs=True, yes=yes
+    )
 
 
-def run_preflight_scan_local(scan_path, config, debug=False, scanner=None):
-    """Scan a local path directly (no clone). Returns True to continue, False to abort."""
+def run_preflight_scan_local(scan_path, config, debug=False, scanner=None, yes=False):
+    """Scan a local path directly (no clone). Returns a ScanDecision."""
     if scanner is None:
         scanner = SecurityScanner(config, debug=debug)
     print(f"\n{_c(_BOLD, f'Running pre-flight security scan... ({scanner.scanner_description})')}")
     findings = scanner.scan(scan_path)
-    return _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs=False)
+    return _scan_findings_prompt(
+        scanner, findings, config, warn_skipped_committed_dirs=False, yes=yes
+    )
 
 
 def check_repo_exists(client, owner, repo):

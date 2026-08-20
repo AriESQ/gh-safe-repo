@@ -8,10 +8,14 @@ import pytest
 
 from gh_safe_repo.errors import APIError, AuthError
 from gh_safe_repo.commands._common import (
+    ScanDecision,
     _resolve_branches,
+    _scan_findings_prompt,
     build_context,
+    format_findings_json,
     format_plan_json,
     parse_repo_arg,
+    print_plan,
     print_success,
 )
 from gh_safe_repo.cli import build_parser, main
@@ -282,7 +286,8 @@ class TestCreateFlagValidation:
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.discover_transport"), \
                  patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
-                 patch("gh_safe_repo.commands.create.run_preflight_scan_local", return_value=True), \
+                 patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                       return_value=ScanDecision(proceed=True)), \
                  patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
                  patch("gh_safe_repo.commands.create.ActionsPlugin"), \
                  patch("gh_safe_repo.commands.create.BranchProtectionPlugin"), \
@@ -723,6 +728,205 @@ class TestScanSkippedDirsWarning:
 
         captured = capsys.readouterr()
         assert "skipped during scan" not in captured.out
+
+
+class TestScanJson:
+    """`scan --json` emits machine-readable findings on stdout, prose on stderr."""
+
+    def test_clean_scan_emits_empty_findings_and_exits_zero(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+
+        with patch("sys.argv", ["gh-safe-repo", "scan", str(tmp_path), "--json"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["findings"] == []
+        assert payload["summary"] == {"critical": 0, "warning": 0, "info": 0}
+        assert payload["skipped_committed_dirs"] == []
+        # Human-facing progress must not pollute stdout.
+        assert "Scanning" not in captured.out
+        assert "Scanning" in captured.err
+
+    def test_critical_finding_is_serialised_and_exits_one(self, tmp_path, capsys):
+        (tmp_path / "CLAUDE.md").write_text("internal notes")
+
+        with patch("sys.argv", ["gh-safe-repo", "scan", str(tmp_path), "--json"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["summary"]["critical"] >= 1
+        finding = payload["findings"][0]
+        assert finding["severity"] == "critical"
+        assert set(finding) == {
+            "severity", "category", "file_path", "line_number",
+            "rule", "match", "commit", "timestamp",
+        }
+
+    def test_skipped_dirs_reported_in_json(self, tmp_path, capsys):
+        node_modules = tmp_path / "node_modules"
+        node_modules.mkdir()
+        (node_modules / "index.js").write_text("hello")
+
+        with patch("sys.argv", ["gh-safe-repo", "scan", str(tmp_path), "--json"]):
+            with pytest.raises(SystemExit):
+                main()
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert "node_modules" in payload["skipped_committed_dirs"]
+        assert "skipped during scan" in captured.err
+
+
+class TestFormatFindingsJson:
+    def _finding(self, severity):
+        from gh_safe_repo.security_scanner import Finding, FindingCategory
+        return Finding(
+            severity=severity,
+            category=FindingCategory.SECRET,
+            file_path="app/config.py",
+            line_number=12,
+            rule="AWS Access Key",
+            match="[redacted]",
+        )
+
+    def test_summary_always_has_all_three_keys(self):
+        from gh_safe_repo.security_scanner import Severity
+        payload = json.loads(format_findings_json([self._finding(Severity.WARNING)]))
+        assert payload["summary"] == {"critical": 0, "warning": 1, "info": 0}
+
+    def test_severity_is_lowercased(self):
+        from gh_safe_repo.security_scanner import Severity
+        payload = json.loads(format_findings_json([self._finding(Severity.CRITICAL)]))
+        assert payload["findings"][0]["severity"] == "critical"
+        assert payload["findings"][0]["category"] == "secret"
+
+
+class TestScanFindingsPrompt:
+    """Unattended runs must never silently succeed after aborting (#agent-safety)."""
+
+    def _findings(self, *severities):
+        from gh_safe_repo.security_scanner import Finding, FindingCategory
+        return [
+            Finding(
+                severity=s,
+                category=FindingCategory.SECRET,
+                file_path="a.py",
+                line_number=1,
+                rule="Generic Secret",
+                match="[redacted]",
+            )
+            for s in severities
+        ]
+
+    def _scanner(self):
+        scanner = MagicMock()
+        scanner.skipped_committed_dirs = []
+        return scanner
+
+    def test_no_findings_always_proceeds(self):
+        decision = _scan_findings_prompt(self._scanner(), [], make_config())
+        assert decision.proceed is True
+        assert decision.blocked is False
+
+    def test_yes_accepts_warnings(self):
+        from gh_safe_repo.security_scanner import Severity
+        decision = _scan_findings_prompt(
+            self._scanner(), self._findings(Severity.WARNING), make_config(), yes=True
+        )
+        assert decision.proceed is True
+
+    def test_yes_blocks_on_criticals(self):
+        from gh_safe_repo.security_scanner import Severity
+        decision = _scan_findings_prompt(
+            self._scanner(), self._findings(Severity.CRITICAL), make_config(), yes=True
+        )
+        assert decision.proceed is False
+        assert decision.blocked is True
+        assert "critical" in decision.reason.lower()
+
+    def test_no_tty_without_yes_is_blocked_not_declined(self):
+        from gh_safe_repo.security_scanner import Severity
+        with patch("sys.stdin.isatty", return_value=False):
+            decision = _scan_findings_prompt(
+                self._scanner(), self._findings(Severity.WARNING), make_config()
+            )
+        assert decision.proceed is False
+        assert decision.blocked is True
+
+    def test_tty_decline_is_not_blocked(self):
+        from gh_safe_repo.security_scanner import Severity
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", return_value="n"):
+            decision = _scan_findings_prompt(
+                self._scanner(), self._findings(Severity.CRITICAL), make_config()
+            )
+        assert decision.proceed is False
+        assert decision.blocked is False
+
+
+class TestCreateAbortsOnScan:
+    """create exits 1 (not 0) when a scan blocks it, so callers see the failure."""
+
+    def _run_create(self, tmp_path, decision, extra_argv=()):
+        (tmp_path / ".git").mkdir()
+        mock_client = MagicMock()
+        argv = [
+            "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path),
+            *extra_argv,
+        ]
+        with patch("sys.argv", argv), \
+             patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+             patch("gh_safe_repo.commands.create.discover_transport"), \
+             patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
+             patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                   return_value=decision), \
+             patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo:
+            mock_ctx.return_value = MagicMock(
+                client=mock_client, owner="alice", plan_name="free",
+                is_paid_plan=False, config=make_config(),
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            return exc_info.value.code, MockRepo.return_value
+
+    def test_blocked_scan_exits_one_without_creating(self, tmp_path):
+        code, repo_plugin = self._run_create(
+            tmp_path,
+            ScanDecision(proceed=False, blocked=True, reason="Pre-flight scan found criticals"),
+            extra_argv=["--yes"],
+        )
+        assert code == 1
+        repo_plugin.apply.assert_not_called()
+
+    def test_user_decline_still_exits_zero(self, tmp_path):
+        code, repo_plugin = self._run_create(
+            tmp_path, ScanDecision(proceed=False)
+        )
+        assert code == 0
+        repo_plugin.apply.assert_not_called()
+
+
+class TestColourDisabled:
+    """Output is plain text when stdout is not a terminal or NO_COLOR is set."""
+
+    def test_constants_blank_when_not_a_tty(self):
+        # The test suite itself runs with captured (non-tty) stdout.
+        from gh_safe_repo.commands import _common
+        assert _common._COLOR is False
+        assert _common._RESET == ""
+        assert _common._c(_common._BOLD, "hi") == "hi"
+
+    def test_plan_table_has_no_escape_codes(self, capsys):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.ADD, category=ChangeCategory.REPO,
+                        key="private", new=True))
+        print_plan(plan)
+        assert "\033[" not in capsys.readouterr().out
 
 
 class TestPrintSuccessProtocolOrdering:

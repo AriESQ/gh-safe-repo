@@ -244,3 +244,17 @@ Without these, an HTTPS preflight against a GCM-using machine with an expired to
 - The persona test matrix (Rec D)
 
 Each of these is a self-contained follow-up branch off `master` once `GitTransport` is merged.
+
+## Non-Interactive / Agent Surface
+
+**The dangerous bug class here is "exit 0 without doing the work."** `--yes` skipped the final confirmation but not the pre-flight scan prompt, so `_scan_findings_prompt` still called `input()`. Headless, the `EOFError` handler returned `False` and `create.py` printed "Aborted by user." and exited **0** — indistinguishable from success to a script, a CI job, or an agent. A warning-severity finding was enough to trigger it, even though the interactive prompt for warnings defaults to *yes*. The fix is not "suppress the prompt": it is to make the two failure modes distinguishable.
+
+**`ScanDecision` exists because a bool cannot carry that distinction.** `proceed=False` alone conflates "a human looked at the findings and declined" (a normal outcome, exit 0) with "we could not ask, or must not proceed unattended" (a failure, exit 1). `_scan_findings_prompt` returns `ScanDecision(proceed, blocked, reason)`; `create._abort_on_scan()` is the only place that maps it to an exit code. Any new caller of the pre-flight path must go through that helper rather than re-deriving the rule.
+
+**Unattended policy mirrors the prompt defaults, except for criticals.** `--yes` accepts warnings (the interactive prompt is `[Y/n]`) but always blocks on criticals (the prompt is `[y/N]`, and an unattended run must never push a leaked secret because nobody was watching). The no-TTY case without `--yes` blocks on *any* finding — the user never opted into anything.
+
+**Non-TTY detection is on `sys.stdin`, not stdout.** The question is whether a prompt can be *answered*; a piped stdout with a live terminal on stdin is still interactive. Colour suppression asks the opposite question and keys off `sys.stdout.isatty()` (plus `NO_COLOR`), evaluated once at import in `commands/_common.py` so the constants themselves go empty — that way the many direct `f"{_BOLD}..."` uses are covered without auditing every call site. `security_scanner._WARN` does the same for stderr.
+
+**truffleHog writes its progress log to stderr**, which is what makes `scan --json` safe to pipe. Worth re-checking if the scanner ever gains another engine.
+
+**The skill is documentation with no failure mode.** `skills/gh-safe-repo/SKILL.md` is the contract agents get *instead of* the README — but no test covers it and no human reads it, so it rots silently and then actively teaches wrong flags. It lives outside `.claude/skills/` deliberately: that path auto-loads, which would activate the "how to use the CLI" skill for everyone working *on* the CLI.

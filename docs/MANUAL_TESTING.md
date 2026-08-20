@@ -669,6 +669,40 @@ gh-safe-repo fix YOUR_USERNAME/gsr-test-private-01 --dry-run --json 2>/dev/null 
 
 **Expected:** Valid JSON. All rows will be SKIP (repo already has safe defaults). `summary` will contain only `{"skip": N}`.
 
+### 7.4 JSON for scan
+
+```bash
+mkdir -p /tmp/gsr-scan-json && echo "print('hello')" > /tmp/gsr-scan-json/main.py
+gh-safe-repo scan /tmp/gsr-scan-json --json 2>/dev/null | python3 -m json.tool
+echo "exit=${PIPESTATUS[0]}"   # $? would report json.tool's status, not the scan's
+```
+
+**Expected:**
+
+```json
+{
+  "findings": [],
+  "summary": { "critical": 0, "warning": 0, "info": 0 },
+  "skipped_committed_dirs": []
+}
+```
+
+Key checks, contrasting with the plan JSON above:
+- all three `summary` keys are **always** present (the plan `summary` omits absent types)
+- `severity` values are lowercase: `"critical"`, `"warning"`, `"info"`
+- `"Scanning ..."` appears on stderr, never in the JSON on stdout
+- exit code is `0` here; add a fake secret and it becomes `1` with the finding serialised and `match` set to `"[redacted]"`
+
+### 7.5 Colour is suppressed off a terminal
+
+```bash
+gh-safe-repo scan /tmp/gsr-scan-json | cat -v | grep -c '\^\['
+NO_COLOR=1 gh-safe-repo scan /tmp/gsr-scan-json | cat -v | grep -c '\^\['
+```
+
+**Expected:** `0` for both — no ANSI escape sequences when stdout is a pipe.
+Running the same command directly in the terminal should still be coloured.
+
 ---
 
 ## 8. --debug Flag
@@ -785,7 +819,7 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-free-plan-public --public --dry-run
 
 ```bash
 mkdir /tmp/gsr-abort-test
-echo 'GITHUB_TOKEN=ghp_fakefakefakefakefakefakefakefake01' > /tmp/gsr-abort-test/leak.txt
+echo 'GITHUB_TOKEN=ghp_fakefakefakefakefakefakefakefakefake' > /tmp/gsr-abort-test/leak.txt
 gh-safe-repo create YOUR_USERNAME/gsr-test-abort-01 --local /tmp/gsr-abort-test
 ```
 
@@ -818,6 +852,38 @@ gh repo view YOUR_USERNAME/gsr-test-abort-01
 ### 11.2 Continue past warnings
 
 Repeat the above but type `y`. Repo should be created with the file pushed to it.
+
+### 11.3 `--yes` blocks on criticals (does not bypass the scan)
+
+```bash
+gh-safe-repo create YOUR_USERNAME/gsr-test-abort-02 --local /tmp/gsr-abort-test --yes
+echo "exit=$?"
+```
+
+**Expected:** findings are printed, no prompt is issued, and:
+
+```
+Error: Pre-flight scan found critical findings and --yes was given. Nothing was created.
+exit=1
+```
+
+No repo is created. `--yes` accepts *warnings* unattended, never criticals.
+
+### 11.4 No terminal and no `--yes` fails loudly
+
+```bash
+gh-safe-repo create YOUR_USERNAME/gsr-test-abort-03 --local /tmp/gsr-abort-test < /dev/null
+echo "exit=$?"
+```
+
+**Expected:** exit `1`, with a message naming the missing terminal and suggesting
+`--yes`. This is the regression guard for the original bug — the same command
+used to print "Aborted by user." and exit **0**, which a script or CI job would
+read as success. Any change to the pre-flight path must keep this at `1`.
+
+Warning-only variant (replace the leak file with something that trips a warning
+rather than a critical) should behave the same without `--yes`: findings alone
+are not enough to proceed when nobody can be asked.
 
 ---
 
@@ -860,6 +926,8 @@ for repo in \
   gsr-test-free-plan-private \
   gsr-test-free-plan-public \
   gsr-test-abort-01 \
+  gsr-test-abort-02 \
+  gsr-test-abort-03 \
   gsr-test-rulesets-01; do
   gh repo delete YOUR_USERNAME/$repo --yes 2>/dev/null && echo "Deleted $repo" || echo "Skipped $repo (not found)"
 done
@@ -923,10 +991,14 @@ Run each test doc's full suite before considering these scripts production-ready
 | 7.1 --json output | Y | | | | | Y | | Y | Y |
 | 7.2 --json pipeable | Y | | | | | Y | | Y | Y |
 | 7.3 --json fix | | | | Y | | Y | | Y | Y |
+| 7.4 --json scan | | | | | Y | Y | | Y | Y |
+| 7.5 Colour off a pipe | | | | | Y | | | Y | Y |
 | 8.1 Debug API calls | Y | | | Y | | | | Y | Y |
 | 8.2 Debug repo identity (fix) | | | | Y | | | | Y | Y |
 | 9.1 Custom config | Y | | | | | | | Y | Y |
 | 11.1 Abort on findings | Y | | Y | | Y | | | Y | Y |
+| 11.3 --yes blocks on criticals | Y | | Y | | Y | | Y | Y | Y |
+| 11.4 No TTY without --yes | Y | | Y | | Y | | | Y | Y |
 | 12.1 Rulesets API | Y | | | | | | | | Y |
 
 ---

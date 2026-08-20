@@ -13,9 +13,12 @@ since the initial release.
 - `scan --json` emits findings as JSON on stdout (progress and warnings move to
   stderr), matching the `--json` convention already used by `create` and `fix`.
   All three severity counts are always present in `summary`.
-- An agent skill at `.claude/skills/gh-safe-repo/` documenting the
+- An agent skill at `skills/gh-safe-repo/SKILL.md` documenting the
   non-interactive contract, exit codes, plan-limit skips, and the common
-  failure modes. Copy it to `~/.claude/skills/` to use it outside this repo.
+  failure modes. It is not under `.claude/skills/`, so it never auto-loads
+  while you work in this checkout; point a session at the file directly, or
+  symlink it into `~/.claude/skills/` to invoke it from anywhere. See
+  `skills/README.md`.
 
 ### Fixed
 - `--yes` no longer stops at the pre-flight scan prompt. Warnings are accepted

@@ -279,12 +279,18 @@ findings truffleHog located in git history.
 
 ### Using with an AI agent
 
-Everything the tool does is available non-interactively, and there is a skill
-in this repo that teaches a coding agent the rules. To make it available
-outside this checkout:
+Everything the tool does is available non-interactively, and
+[`skills/gh-safe-repo/SKILL.md`](skills/gh-safe-repo/SKILL.md) teaches a coding
+agent the rules. It deliberately does **not** live in `.claude/skills/`, so it
+never auto-loads while you are working in this checkout — you invoke it
+explicitly, either way:
 
 ```bash
-cp -r .claude/skills/gh-safe-repo ~/.claude/skills/
+# Ad hoc, no install: point a session at the file
+#   "follow ~/path/to/gh-safe-repo/skills/gh-safe-repo/SKILL.md"
+
+# Or install it once, to invoke as /gh-safe-repo from any directory
+ln -s "$PWD/skills/gh-safe-repo" ~/.claude/skills/gh-safe-repo
 ```
 
 The recipe the skill enforces — plan, show the user, then apply:

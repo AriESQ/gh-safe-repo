@@ -13,6 +13,23 @@ import sys
 from .commands import create, fix, scan
 
 
+def _heading_style():
+    """Return (color, reset) matching argparse's own section headings.
+
+    Empty strings when color is unavailable (Python < 3.14) or disabled
+    (NO_COLOR, non-tty), so raw description/epilog text stays plain in the
+    same cases argparse itself drops color.
+    """
+    try:
+        from _colorize import can_colorize, get_theme
+    except ImportError:
+        return "", ""
+    if not can_colorize():
+        return "", ""
+    theme = get_theme(force_color=True).argparse
+    return theme.heading, theme.reset
+
+
 def _options_last(parser):
     """Reorder action groups so 'options' appears last in --help output."""
     # _action_groups is [positionals, optionals, ...extra]. Move optionals to end.
@@ -24,19 +41,20 @@ def _options_last(parser):
 
 
 def main():
+    h, r = _heading_style()
     parser = argparse.ArgumentParser(
         prog="gh-safe-repo",
-        description="""\
+        description=f"""\
 Manage safe defaults for GitHub repositories.
 
-usage:
+{h}usage:{r}
   gh-safe-repo create <owner/repo> [--public] [--local PATH | --from OWNER/REPO] [--dry-run]
   gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
   gh-safe-repo scan  <path>
 
 common options: --config PATH, --debug""",
-        epilog="""\
-examples:
+        epilog=f"""\
+{h}examples:{r}
   gh-safe-repo create <owner/repo>                    Create a private repo
   gh-safe-repo create <owner/repo> --public           Create a public repo
   gh-safe-repo create <owner/repo> --local ./src      Push local code to a new repo

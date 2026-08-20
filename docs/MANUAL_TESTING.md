@@ -29,19 +29,33 @@ gh-safe-repo --help
 **Expected output (approximately):**
 
 ```
-usage: gh-safe-repo [-h] {create,fix,scan} ...
+usage: gh-safe-repo [--config PATH] [--debug] <command> [options]
 
-Create GitHub repositories with safe defaults applied.
+Manage safe defaults for GitHub repositories.
 
-positional arguments:
-  {create,fix,scan}
-    create           Create a new repo with safe defaults
-    fix              Audit an existing repo and apply safe defaults
-    scan             Scan a local directory for secrets (no GitHub interaction)
+usage:
+  gh-safe-repo create <owner/repo> [--public] [--local PATH | --from OWNER/REPO] [--dry-run]
+  gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
+  gh-safe-repo scan  <path>
+
+commands:
+
+    create         Create a new repo with safe defaults
+    fix            Audit an existing repo and apply safe defaults
+    scan           Scan a local directory for secrets (no GitHub interaction)
 
 options:
-  -h, --help         show this help message and exit
+  -h, --help       show this help message and exit
+  --debug          Show every API call made
+  --config [PATH]  Path to config file; bare --config uses built-in defaults
+                   only
+
+examples:
+  ...
 ```
+
+The `usage:`, `commands:`, `options:` and `examples:` headings are bold blue on
+a color-capable terminal, and plain when piped or under `NO_COLOR`.
 
 ### 0.3 Subcommand help
 
@@ -51,7 +65,16 @@ gh-safe-repo fix --help
 gh-safe-repo scan --help
 ```
 
-**Expected:** Each subcommand shows its own arguments (e.g. `create` shows `--public`, `--local`, `--from`, `--yes`; `fix` shows `--yes`; `scan` has no `--dry-run`).
+**Expected:** Each subcommand shows its own arguments (e.g. `create` shows `--public`, `--local`, `--from`, `--yes`; `fix` shows `--yes`; `scan` has no `--dry-run`). Each also lists the global `--config` / `--debug`.
+
+### 0.4 Global options on either side of the command
+
+```bash
+gh-safe-repo --debug scan ./src
+gh-safe-repo scan ./src --debug
+```
+
+**Expected:** Both print `[debug] config: ...` to stderr. The same applies to `--config`.
 
 ### 0.4 No subcommand shows help
 

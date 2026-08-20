@@ -46,6 +46,18 @@ class TestHelpOutput:
         assert r.returncode == 0
         assert "path" in r.stdout.lower()
 
+    def test_top_level_help_lists_global_options(self):
+        r = run("--help")
+        assert r.returncode == 0
+        assert "--config" in r.stdout
+        assert "--debug" in r.stdout
+
+    def test_global_debug_before_command(self, tmp_path):
+        """--debug must work before the command, not just after it."""
+        r = run("--debug", "scan", str(tmp_path))
+        assert r.returncode == 0
+        assert "[debug]" in r.stderr
+
 
 # ── Section 0.5 / 0.6: Bad repo arguments ───────────────────────────
 

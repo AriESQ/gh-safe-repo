@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file was introduced with 0.2.0; the 0.2.0 entry backfills notable changes
 since the initial release.
 
+## [0.6.0] - 2026-08-20
+
+### Changed
+- `--config` and `--debug` are now global options: they are accepted before the
+  command (`gh-safe-repo --debug fix owner/repo`) as well as after it, matching
+  the convention used by `git`, `docker`, and `kubectl`. Previously only the
+  post-command form parsed; the pre-command form failed with "unrecognized
+  arguments". Existing invocations are unaffected. If both positions are used,
+  the later one wins.
+- Top-level `--help` lists `--config` and `--debug` under the `options:` heading
+  instead of as a trailing line of the description, and colors the `usage:` and
+  `examples:` headings to match argparse's own section headings.
+
 ## [0.5.0] - 2026-07-05
 
 ### Changed

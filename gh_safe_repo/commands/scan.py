@@ -13,6 +13,7 @@ from ._common import (
     _YELLOW,
     _c,
     _print_findings,
+    add_common_args,
     error,
 )
 
@@ -25,18 +26,7 @@ def add_arguments(parser):
         "path",
         help="Local directory path to scan",
     )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Show scanner details",
-    )
-    parser.add_argument(
-        "--config",
-        nargs="?",
-        const="",
-        metavar="PATH",
-        help="Path to config file; bare --config uses built-in defaults only",
-    )
+    add_common_args(parser, json_flag=False)
 
 
 def run(args):

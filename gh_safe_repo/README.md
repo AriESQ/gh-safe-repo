@@ -20,8 +20,8 @@ gh_safe_repo/         ← this package (all real logic lives here)
 
 | Module | Purpose |
 |---|---|
-| `cli.py` | `main()` — subparser dispatch to `create`, `fix`, `scan` commands |
-| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, plan formatting, ANSI output |
+| `cli.py` | `build_parser()` / `main()` — subparser dispatch to `create`, `fix`, `scan` commands |
+| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()`, plan formatting, ANSI output |
 | `commands/create.py` | `create` subcommand — new repo with safe defaults |
 | `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections |
 | `commands/scan.py` | `scan` subcommand — local-only secret scanning |
@@ -37,6 +37,17 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `plugins/security.py` | Dependabot alerts/security updates, secret scanning/push protection, private vuln reporting |
 | `plugins/tag_protection.py` | Immutable tags via Rulesets API (prevent deletion/rewriting of release tags) |
 | `templates/` | File templates (currently empty) |
+
+## Global vs. command options
+
+`--config` and `--debug` are parsed on either side of the command name. They are
+registered twice: once on the top-level parser (`build_parser()`, with the real
+defaults) and once on each subparser (`add_common_args()`, with
+`default=argparse.SUPPRESS`). The SUPPRESS is what makes the pre-command form
+usable — without it, the subparser's own default overwrites the value the
+top-level parser already stored in the namespace. Any new global option must
+follow the same two-sided pattern; command-specific options (`--json`,
+`--dry-run`, …) stay on their subparser with a normal default.
 
 ## Plugin architecture
 

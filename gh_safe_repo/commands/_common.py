@@ -1,5 +1,6 @@
 """Shared helpers for CLI subcommands."""
 
+import argparse
 import json
 import os
 import re
@@ -116,12 +117,22 @@ def build_context(args, expected_owner, require_owner_match=True):
     )
 
 
-def add_common_args(parser):
-    """Add --debug, --config, --json to a subparser."""
+def add_common_args(parser, *, json_flag=True, global_defaults=False):
+    """Add --debug and --config (and --json) to a parser.
+
+    These two are global: `cli.main` also adds them to the top-level parser so
+    they work on either side of the command (`--debug create ...` and
+    `create ... --debug`). On the subparsers they carry `default=SUPPRESS` so
+    an unused subparser default cannot clobber a value already parsed before
+    the command; the top-level copies (`global_defaults=True`) supply the
+    fallback values. --json stays command-local and keeps a real default.
+    """
+    default = {} if global_defaults else {"default": argparse.SUPPRESS}
     parser.add_argument(
         "--debug",
         action="store_true",
         help="Show every API call made",
+        **default,
     )
     parser.add_argument(
         "--config",
@@ -129,12 +140,14 @@ def add_common_args(parser):
         const="",
         metavar="PATH",
         help="Path to config file; bare --config uses built-in defaults only",
+        **default,
     )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit the plan as JSON instead of the ANSI table",
-    )
+    if json_flag:
+        parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit the plan as JSON instead of the ANSI table",
+        )
 
 
 def info(msg, *, json_mode=False):

@@ -11,6 +11,7 @@ import argparse
 import sys
 
 from .commands import create, fix, scan
+from .commands._common import add_common_args
 
 
 def _heading_style():
@@ -40,7 +41,8 @@ def _options_last(parser):
             break
 
 
-def main():
+def build_parser():
+    """Build the top-level parser with its three subcommands."""
     h, r = _heading_style()
     parser = argparse.ArgumentParser(
         prog="gh-safe-repo",
@@ -50,9 +52,7 @@ Manage safe defaults for GitHub repositories.
 {h}usage:{r}
   gh-safe-repo create <owner/repo> [--public] [--local PATH | --from OWNER/REPO] [--dry-run]
   gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
-  gh-safe-repo scan  <path>
-
-common options: --config PATH, --debug""",
+  gh-safe-repo scan  <path>""",
         epilog=f"""\
 {h}examples:{r}
   gh-safe-repo create <owner/repo>                    Create a private repo
@@ -66,8 +66,12 @@ common options: --config PATH, --debug""",
   gh-safe-repo scan ./src                             Scan a local directory for secrets
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        usage="gh-safe-repo <command> [options]",
+        usage="gh-safe-repo [--config PATH] [--debug] <command> [options]",
     )
+    # Global: also added to every subparser, so they work on either side of
+    # the command (`--debug create ...` as well as `create ... --debug`).
+    add_common_args(parser, json_flag=False, global_defaults=True)
+
     subparsers = parser.add_subparsers(dest="command", title="commands", metavar="")
 
     for cmd_module in (create, fix, scan):
@@ -84,6 +88,11 @@ common options: --config PATH, --debug""",
     # Move commands before options in top-level help
     _options_last(parser)
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     if not hasattr(args, "func"):

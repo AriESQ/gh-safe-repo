@@ -16,6 +16,7 @@ from ..plugins.tag_protection import TagProtectionPlugin
 from ..security_scanner import SecurityScanner
 from ._common import (
     _BOLD,
+    _DIM,
     _GREEN,
     _RESET,
     _YELLOW,
@@ -72,6 +73,20 @@ def add_arguments(parser):
         help="Skip confirmation prompt and apply immediately",
     )
     add_common_args(parser)
+
+
+def _abort_on_scan(decision, _info):
+    """Exit after a pre-flight scan said stop. Never returns.
+
+    A user declining at the prompt is a normal outcome (exit 0). A blocked run —
+    criticals under --yes, or findings with no terminal to confirm on — is a
+    failure (exit 1), so callers never mistake "nothing was created" for success.
+    """
+    if decision.blocked:
+        error(f"{decision.reason}. Nothing was created.")
+        sys.exit(1)
+    _info(_c(_YELLOW, "\nAborted by user."))
+    sys.exit(0)
 
 
 def run(args):
@@ -185,24 +200,23 @@ def run(args):
     # Pre-flight security scan (--from workflow, non-dry-run only)
     if args.from_repo and not args.dry_run:
         try:
-            should_continue = run_preflight_scan(
-                client, from_owner, from_repo, config, debug=args.debug, scanner=scanner
+            decision = run_preflight_scan(
+                client, from_owner, from_repo, config,
+                debug=args.debug, scanner=scanner, yes=args.yes,
             )
         except APIError as e:
             error(f"Pre-flight scan failed (clone error): {e}")
             sys.exit(1)
-        if not should_continue:
-            _info(_c(_YELLOW, "\nAborted by user."))
-            sys.exit(0)
+        if not decision.proceed:
+            _abort_on_scan(decision, _info)
 
     # Pre-flight security scan (--local workflow, non-dry-run only)
     if local_path and not args.dry_run:
-        should_continue = run_preflight_scan_local(
-            local_path, config, debug=args.debug, scanner=scanner
+        decision = run_preflight_scan_local(
+            local_path, config, debug=args.debug, scanner=scanner, yes=args.yes
         )
-        if not should_continue:
-            _info(_c(_YELLOW, "\nAborted by user."))
-            sys.exit(0)
+        if not decision.proceed:
+            _abort_on_scan(decision, _info)
 
     # Detect local repo's default branch
     local_default_branch = None
@@ -300,7 +314,7 @@ def run(args):
     actionable = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
     skipped = counts.get(ChangeType.SKIP, 0)
 
-    _info(_c(_BOLD + "\033[2m", f"{actionable} change(s) to apply, {skipped} skipped"))
+    _info(_c(_BOLD + _DIM, f"{actionable} change(s) to apply, {skipped} skipped"))
 
     if args.dry_run:
         _info(_c(_YELLOW, "\nDry run — no changes made."))

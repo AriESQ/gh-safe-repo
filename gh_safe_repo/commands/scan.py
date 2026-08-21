@@ -5,7 +5,7 @@ import sys
 
 from ..config_manager import ConfigManager
 from ..errors import ConfigError
-from ..security_scanner import SecurityScanner
+from ..security_scanner import SecurityScanner, Severity
 from ._common import (
     _BOLD,
     _DIM,
@@ -15,6 +15,8 @@ from ._common import (
     _print_findings,
     add_common_args,
     error,
+    format_findings_json,
+    info,
 )
 
 NAME = "scan"
@@ -26,7 +28,10 @@ def add_arguments(parser):
         "path",
         help="Local directory path to scan",
     )
-    add_common_args(parser, json_flag=False)
+    add_common_args(
+        parser,
+        json_help="Emit findings as JSON instead of the ANSI report",
+    )
 
 
 def run(args):
@@ -45,15 +50,22 @@ def run(args):
     if args.debug:
         print(f"[debug] config: {config.config_source}", file=sys.stderr)
 
+    json_mode = args.json
+    _info = lambda msg: info(msg, json_mode=json_mode)
+
     scanner = SecurityScanner(config, debug=args.debug)
-    print(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
+    _info(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
     findings = scanner.scan(scan_path)
 
     if scanner.skipped_committed_dirs:
-        print(_c(_YELLOW, "Warning: the following directories were skipped during scan:"))
+        _info(_c(_YELLOW, "Warning: the following directories were skipped during scan:"))
         for d in scanner.skipped_committed_dirs:
-            print(_c(_DIM, f"  {d}/"))
-        print()
+            _info(_c(_DIM, f"  {d}/"))
+        _info("")
 
-    has_criticals = _print_findings(findings, config)
+    if json_mode:
+        print(format_findings_json(findings, scanner.skipped_committed_dirs))
+        has_criticals = any(f.severity == Severity.CRITICAL for f in findings)
+    else:
+        has_criticals = _print_findings(findings, config)
     sys.exit(1 if has_criticals else 0)

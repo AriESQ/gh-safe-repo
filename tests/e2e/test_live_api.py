@@ -192,7 +192,7 @@ class TestPreflightScanAbort:
             # Create a file with a fake secret
             leak = os.path.join(tmpdir, "leak.txt")
             with open(leak, "w") as f:
-                f.write("GITHUB_TOKEN=ghp_fakefakefakefakefakefakefakefake01\n")
+                f.write("GITHUB_TOKEN=ghp_fakefakefakefakefakefakefakefakefake\n")
 
             # Pipe "n" to stdin to abort
             r = run(

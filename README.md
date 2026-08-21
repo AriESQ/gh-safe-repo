@@ -199,7 +199,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--public` | Create as a public repo (default: private) |
 | `--local PATH` | Push code from a local git repository into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
 | `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
-| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Pre-flight scan warnings are accepted automatically; **critical** findings still stop the run (exit `1`). |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
 | `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
@@ -220,6 +220,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 
 | Option | Description |
 |---|---|
+| `--json` | Emit findings as JSON to stdout instead of the ANSI report |
 | `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | *(global)* Show scanner details |
 
@@ -258,6 +259,62 @@ When `--json` is active, the plan is written to stdout as a JSON object and all 
 ```
 
 `summary` only includes types that are present in the plan. Consumers should use `.get("delete", 0)` etc. rather than assuming all four keys are present.
+
+**Scan findings** (`scan --json`):
+
+```json
+{
+  "findings": [
+    { "severity": "critical", "category": "secret", "file_path": "app/config.py", "line_number": 12,
+      "rule": "AWS Access Key", "match": "[redacted]", "commit": "", "timestamp": "" }
+  ],
+  "summary": { "critical": 1, "warning": 0, "info": 0 },
+  "skipped_committed_dirs": []
+}
+```
+
+Unlike the plan `summary`, all three severity keys are always present. Secret
+matches are `[redacted]`; `commit` and `timestamp` are populated only for
+findings truffleHog located in git history.
+
+### Using with an AI agent
+
+Everything the tool does is available non-interactively, and
+[`skills/gh-safe-repo/SKILL.md`](skills/gh-safe-repo/SKILL.md) teaches a coding
+agent the rules. It deliberately does **not** live in `.claude/skills/`, so it
+never auto-loads while you are working in this checkout — you invoke it
+explicitly, either way:
+
+```bash
+# Ad hoc, no install: point a session at the file
+#   "follow ~/path/to/gh-safe-repo/skills/gh-safe-repo/SKILL.md"
+
+# Or install it once, to invoke as /gh-safe-repo from any directory
+ln -s "$PWD/skills/gh-safe-repo" ~/.claude/skills/gh-safe-repo
+```
+
+The recipe the skill enforces — plan, show the user, then apply:
+
+```bash
+gh-safe-repo create alice/my-repo --local . --dry-run --json   # zero API calls
+gh-safe-repo create alice/my-repo --local . --yes              # apply
+```
+
+ANSI colour is dropped automatically when stdout is not a terminal, and
+honours `NO_COLOR`. With `--json`, the machine-readable document is the only
+thing on stdout; progress, warnings and errors go to stderr.
+
+**Exit codes**, common to all three commands:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success, or the user declined at an interactive prompt |
+| `1` | Operational failure — auth, permissions, API error, or a pre-flight scan that blocked the run. For `scan`, also "critical findings present" |
+| `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
+
+A run that cannot ask for confirmation never exits `0` without doing the work:
+if there is no terminal and no `--yes`, or `--yes` is set but the pre-flight
+scan found critical secrets, the command reports the reason and exits `1`.
 
 ### Safe defaults in full
 

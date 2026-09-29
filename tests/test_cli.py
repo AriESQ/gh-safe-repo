@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gh_safe_repo.github_client import LocalWiring
+
 from gh_safe_repo.errors import APIError, AuthError
 from gh_safe_repo.commands._common import (
     ScanDecision,
@@ -951,4 +953,19 @@ class TestPrintSuccessProtocolOrdering:
         print_success("octocat", "demo", local_push=True, protocol="ssh")
         out = capsys.readouterr().out
         assert "git remote add origin" not in out
-        assert "Set your tracking branch" in out
+
+    def test_local_push_banner_reports_tracking(self, capsys):
+        wiring = LocalWiring(branch="dev", origin=True, tracking=True)
+        print_success("octocat", "demo", local_push=True, wiring=wiring)
+        out = capsys.readouterr().out
+        assert "dev tracks origin/dev" in out
+        assert "set-upstream-to" not in out
+
+    def test_local_push_banner_hint_uses_real_branch(self, capsys):
+        """#70: the hint must name the branch and work without a fetch."""
+        wiring = LocalWiring(branch="dev", origin=True, error="boom")
+        print_success("octocat", "demo", local_push=True, wiring=wiring)
+        out = capsys.readouterr().out
+        assert "git push -u origin dev:dev" in out
+        assert "<branch>" not in out
+        assert "set-upstream-to" not in out

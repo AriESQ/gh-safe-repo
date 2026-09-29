@@ -88,6 +88,7 @@ A `SKIP` can also simply mean the setting is already correct.
 | `Repository already exists` | Use `fix` instead of `create`. |
 | Pre-flight scan blocked the run (exit 1) | Real secrets were found. Show the findings, let the user remove them; do not re-run with different flags to bypass. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
+| `Code pushed, but local repo not fully wired: ...` | The push succeeded; only the local `origin`/upstream setup was skipped. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose). Report it to the user; do not rewrite their `origin`. The success banner prints the exact `git push -u origin <b>:<b>` to run once it is resolved. |
 | Repo created but a later step warned | Creation is not transactional; settings failures are warnings. Re-run `fix <owner/repo> --yes` to converge. |
 
 ## Configuration

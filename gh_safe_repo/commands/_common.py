@@ -279,7 +279,7 @@ def format_findings_json(findings, skipped_committed_dirs=()):
     )
 
 
-def print_success(owner, repo, local_push=False, protocol="https"):
+def print_success(owner, repo, local_push=False, protocol="https", wiring=None):
     url = f"https://github.com/{owner}/{repo}"
     https_url = f"https://github.com/{owner}/{repo}.git"
     ssh_url = f"git@github.com:{owner}/{repo}.git"
@@ -289,12 +289,29 @@ def print_success(owner, repo, local_push=False, protocol="https"):
     ssh = ("SSH  ", ssh_url)
     ordered = (ssh, https) if protocol == "ssh" else (https, ssh)
     if local_push:
+        branch = wiring.branch if wiring else None
+        if wiring and wiring.tracking:
+            next_step = (
+                f"  Local repo wired up:  \n"
+                f"  {branch} tracks origin/{branch}  "
+            )
+        elif branch:
+            # Explicit <b>:<b> refspec: ignores tracking config, so it can
+            # never land on the default branch by accident.
+            next_step = (
+                f"  Set your tracking branch:  \n"
+                f"  git push -u origin {branch}:{branch}  "
+            )
+        else:
+            next_step = (
+                f"  Clone it:  \n"
+                f"  git clone {ordered[0][1]}  "
+            )
         inner = (
             f"  Repository created successfully!  \n"
             f"  {url}  \n"
             f"  \n"
-            f"  Set your tracking branch:  \n"
-            f"  git branch --set-upstream-to=origin/<branch> <branch>  "
+            + next_step
         )
     else:
         inner = (

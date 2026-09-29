@@ -21,6 +21,15 @@ since the initial release.
   `skills/README.md`.
 
 ### Fixed
+- `create --local` now actually sets upstream tracking on the original repo
+  (#70). The push runs from a temp clone, so the old `git branch
+  --set-upstream-to` call always failed (no `origin/<branch>` ref existed) and
+  the error was swallowed. The pushed SHAs are now written as
+  `refs/remotes/origin/*` so tracking works with no fetch. If wiring can't be
+  completed (e.g. an existing `origin` pointing elsewhere, left untouched), a
+  warning says why, and the success banner prints `git push -u origin
+  <branch>:<branch>` with the real branch name instead of an unusable
+  `--set-upstream-to=origin/<branch>` placeholder.
 - `--yes` no longer stops at the pre-flight scan prompt. Warnings are accepted
   automatically (matching the prompt's `[Y/n]` default) and critical findings
   stop the run. Previously an unattended `create --local --yes` on a repo with

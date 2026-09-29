@@ -225,7 +225,7 @@ class TestPushLocal:
         client = self._make_client()
         with patch("os.path.isdir", return_value=True), \
              patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_completed_process(stdout="master\n")
+            mock_run.side_effect = self._wiring_run()
             client.push_local("/some/local/repo", "alice", "dest-repo")
 
         cmds = [call.args[0] for call in mock_run.call_args_list]
@@ -243,7 +243,63 @@ class TestPushLocal:
             for c in cmds
         )
         # tracking branch set on original local repo
-        assert any("branch" in c and "--set-upstream-to" in c for c in cmds)
+        assert any("branch" in c and "--set-upstream-to=origin/master" in c for c in cmds)
+
+    def _wiring_run(self, origin_url=None, head="master\n"):
+        """subprocess.run fake for push_local on a git repo (#70)."""
+        def side_effect(cmd, **kwargs):
+            if "for-each-ref" in cmd:
+                return make_completed_process(stdout="master abc123\nfeat def456\n")
+            if "symbolic-ref" in cmd:
+                return make_completed_process(stdout=head, returncode=0 if head else 1)
+            if "get-url" in cmd:
+                if origin_url is None:
+                    return make_completed_process(returncode=2)
+                return make_completed_process(stdout=origin_url + "\n")
+            return make_completed_process()
+        return side_effect
+
+    def test_push_local_writes_tracking_refs_without_fetch(self):
+        """#70: remote-tracking refs come from the pushed SHAs, not a fetch."""
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run()) as mock_run:
+            wiring = client.push_local("/repo", "alice", "dest-repo")
+
+        cmds = [call.args[0] for call in mock_run.call_args_list]
+        assert ["git", "-C", "/repo", "update-ref", "refs/remotes/origin/master", "abc123"] in cmds
+        assert ["git", "-C", "/repo", "update-ref", "refs/remotes/origin/feat", "def456"] in cmds
+        assert not any("fetch" in c for c in cmds)
+        assert wiring.tracking and wiring.origin and wiring.branch == "master"
+        assert wiring.error is None
+
+    def test_push_local_leaves_foreign_origin_alone(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run",
+                   side_effect=self._wiring_run(origin_url="git@example.com:x/y.git")) as mock_run:
+            wiring = client.push_local("/repo", "alice", "dest-repo")
+
+        cmds = [call.args[0] for call in mock_run.call_args_list]
+        assert not any("/repo" in c and "remote" in c and "add" in c for c in cmds)
+        assert not wiring.tracking
+        assert "already points at git@example.com:x/y.git" in wiring.error
+
+    def test_push_local_reuses_matching_origin(self):
+        client = self._make_client()
+        url = "https://github.com/alice/dest-repo.git"
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run(origin_url=url)):
+            wiring = client.push_local("/repo", "alice", "dest-repo")
+        assert wiring.tracking and wiring.error is None
+
+    def test_push_local_detached_head_reports_error(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run(head="")):
+            wiring = client.push_local("/repo", "alice", "dest-repo")
+        assert wiring.origin and not wiring.tracking
+        assert "detached HEAD" in wiring.error
 
     def test_push_local_non_git_copies_and_inits(self):
         client = self._make_client()

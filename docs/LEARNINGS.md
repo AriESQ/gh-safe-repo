@@ -258,3 +258,17 @@ Each of these is a self-contained follow-up branch off `master` once `GitTranspo
 **truffleHog writes its progress log to stderr**, which is what makes `scan --json` safe to pipe. Worth re-checking if the scanner ever gains another engine.
 
 **The skill is documentation with no failure mode.** `skills/gh-safe-repo/SKILL.md` is the contract agents get *instead of* the README — but no test covers it and no human reads it, so it rots silently and then actively teaches wrong flags. It lives outside `.claude/skills/` deliberately: that path auto-loads, which would activate the "how to use the CLI" skill for everyone working *on* the CLI.
+
+## Upstream Tracking After `push_local` (#70)
+
+`push_local` pushes from a temp clone, so the user's own repo never sees the
+push and has no `refs/remotes/origin/*`. `git branch --set-upstream-to=origin/<b>`
+requires that ref and fails; it was run with `check=False`, so the failure was
+invisible and repos were left with `origin` but no upstream. Setting
+`branch.<b>.merge` config alone is not enough either: `git status` then reports
+"the upstream is gone". The fix reads the SHAs actually pushed
+(`for-each-ref refs/heads` in the temp clone) and writes them with `update-ref`
+into the user's repo, which makes the state identical to a post-push fetch
+without a network round trip or credentials. Hints use
+`git push -u origin <b>:<b>`: it works from any state and the explicit refspec
+cannot follow a stray upstream onto the default branch.

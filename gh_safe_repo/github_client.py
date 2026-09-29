@@ -14,10 +14,20 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from typing import Optional
 
 from .errors import APIError, AuthError
 from .git_transport import GitTransport
+
+
+@dataclass(frozen=True)
+class LocalWiring:
+    """Outcome of wiring the user's repo to the new remote after push_local."""
+    branch: Optional[str] = None
+    origin: bool = False
+    tracking: bool = False
+    error: Optional[str] = None
 
 
 class GitHubClient:
@@ -199,11 +209,13 @@ class GitHubClient:
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
                 ))
 
-    def push_local(self, local_path: str, owner: str, dest_repo: str) -> None:
+    def push_local(self, local_path: str, owner: str, dest_repo: str) -> "LocalWiring":
         """
         Push a local directory's code to a new empty GitHub repo.
-        If local_path is a git repo, its full history is pushed.
-        Otherwise files are staged in a fresh repo and pushed as an initial commit.
+        If local_path is a git repo, its full history is pushed and the
+        original repo gets `origin` + upstream tracking; the returned
+        LocalWiring says what was done. Otherwise files are staged in a
+        fresh repo and pushed as an initial commit.
         """
         transport = self._require_transport()
         dest_url = transport.remote_url(owner, dest_repo)
@@ -235,7 +247,7 @@ class GitHubClient:
                         )
                     else:
                         # Empty directory — nothing to push
-                        return
+                        return LocalWiring()
                 except subprocess.CalledProcessError as e:
                     raise APIError(
                         f"Failed to create initial git commit: {(e.stderr or '').strip()}"
@@ -254,35 +266,75 @@ class GitHubClient:
                     )
                 transport.run(["git", "-C", work_path, "push", "origin", "--all"])
                 transport.run(["git", "-C", work_path, "push", "origin", "--tags"])
+                # Record what was pushed so the user's repo can be given
+                # matching remote-tracking refs without a network fetch.
+                pushed = transport.run(
+                    ["git", "-C", work_path, "for-each-ref",
+                     "--format=%(refname:short) %(objectname)", "refs/heads"],
+                    check=False,
+                ).stdout or ""
+                pushed_refs = dict(
+                    line.split(" ", 1) for line in pushed.splitlines() if " " in line
+                )
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
                 ))
 
-        # Wire up the original local repo to the newly created remote so
-        # future `git push` / `git pull` work without extra configuration.
-        # Local-only ops; safe to use the transport for the env consistency.
-        # persistent_url, not dest_url: a token-injected URL must never be
-        # written into the user's long-lived .git/config.
-        if is_git_repo:
+        if not is_git_repo:
+            return LocalWiring()
+        return self._wire_local_repo(local_path, owner, dest_repo, pushed_refs)
+
+    def _wire_local_repo(self, local_path, owner, dest_repo, pushed_refs):
+        """Point the user's original repo at the new remote and set upstream.
+
+        The push ran from a temp clone, so the user's repo has no
+        refs/remotes/origin/* and `git branch --set-upstream-to` would fail
+        (#70). The pushed SHAs are known, so the remote-tracking refs are
+        written directly; no fetch (and no credentials) needed.
+
+        persistent_url, not remote_url: a token-injected URL must never be
+        written into the user's long-lived .git/config.
+        """
+        transport = self._require_transport()
+        url = transport.persistent_url(owner, dest_repo)
+        git = ["git", "-C", local_path]
+
+        head = transport.run(git + ["symbolic-ref", "--short", "HEAD"], check=False)
+        branch = head.stdout.strip() if head.returncode == 0 else None
+
+        existing = transport.run(git + ["remote", "get-url", "origin"], check=False)
+        if existing.returncode == 0:
+            if existing.stdout.strip() != url:
+                return LocalWiring(
+                    branch=branch,
+                    error=(f"'origin' already points at {existing.stdout.strip()}; "
+                           f"left unchanged"),
+                )
+        else:
             try:
-                transport.run(
-                    ["git", "-C", local_path, "remote", "add", "origin",
-                     transport.persistent_url(owner, dest_repo)],
+                transport.run(git + ["remote", "add", "origin", url])
+            except subprocess.CalledProcessError as e:
+                return LocalWiring(
+                    branch=branch,
+                    error=f"could not add 'origin': {(e.stderr or '').strip()}",
                 )
-                result = transport.run(
-                    ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
-                    check=False,
-                )
-                if result.returncode == 0:
-                    branch = result.stdout.strip()
-                    transport.run(
-                        ["git", "-C", local_path, "branch", "--set-upstream-to",
-                         f"origin/{branch}", branch],
-                        check=False,
-                    )
-            except subprocess.CalledProcessError:
-                pass  # non-fatal: remote wiring is a convenience
+
+        if branch is None:
+            return LocalWiring(origin=True, error="detached HEAD; no branch to track")
+
+        try:
+            for name, sha in pushed_refs.items():
+                transport.run(git + ["update-ref", f"refs/remotes/origin/{name}", sha])
+            transport.run(
+                git + ["branch", f"--set-upstream-to=origin/{branch}", branch],
+            )
+        except subprocess.CalledProcessError as e:
+            return LocalWiring(
+                branch=branch, origin=True,
+                error=f"could not set upstream: {(e.stderr or '').strip()}",
+            )
+        return LocalWiring(branch=branch, origin=True, tracking=True)
 
     def clone_for_scan(self, owner: str, repo: str, dest_path: str) -> None:
         """Full-clone repo into dest_path for pre-flight scanning.

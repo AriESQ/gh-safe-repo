@@ -384,11 +384,14 @@ def run(args):
             warn(f"Code copy failed: {e}")
 
     # Push code from local directory (--local workflow)
+    wiring = None
     if args.local_path:
         _info(f"\nPushing code from {_BOLD}{local_path}{_RESET}...")
         try:
-            client.push_local(local_path, owner, repo_name)
+            wiring = client.push_local(local_path, owner, repo_name)
             _info(_c(_GREEN, "  Code pushed successfully."))
+            if wiring is not None and wiring.error:
+                warn(f"Code pushed, but local repo not fully wired: {wiring.error}")
         except APIError as e:
             warn(f"Code push failed: {e}")
 
@@ -410,5 +413,6 @@ def run(args):
         else git_protocol_preference()
     )
     print_success(
-        owner, repo_name, local_push=bool(args.local_path), protocol=protocol
+        owner, repo_name, local_push=bool(args.local_path), protocol=protocol,
+        wiring=wiring,
     )

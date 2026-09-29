@@ -135,7 +135,7 @@ A plain `create` initializes the repo so a default branch exists (branch protect
 gh-safe-repo create <owner/repo> --local ~/projects/myapp
 ```
 
-Scans the directory for secrets first, creates the repo, pushes all branches and tags, then wires up `origin` and upstream tracking in your original directory so `git push` works immediately. See [Working from local or existing code](#working-from-local-or-existing-code).
+Scans the directory for secrets first, creates the repo, pushes all branches and tags, then wires up `origin` and upstream tracking in your original directory so `git push` works immediately. An existing `origin` pointing somewhere else is left alone; a warning and the success banner tell you the exact `git push -u origin <branch>:<branch>` to run instead. See [Working from local or existing code](#working-from-local-or-existing-code).
 
 ### Mirror an existing repo
 

@@ -65,6 +65,13 @@ def make_git_repo(tmpdir: str) -> None:
                    check=True, capture_output=True)
     subprocess.run(["git", "-C", tmpdir, "config", "user.name", "Test"],
                    check=True, capture_output=True)
+    # Isolate from the developer's global config: a global gitignore listing
+    # node_modules/ would leave nothing to commit, and commit signing could
+    # block on a hardware key.
+    subprocess.run(["git", "-C", tmpdir, "config", "core.excludesFile", os.devnull],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", tmpdir, "config", "commit.gpgsign", "false"],
+                   check=True, capture_output=True)
 
 
 def git_add_commit(tmpdir: str, message: str) -> None:

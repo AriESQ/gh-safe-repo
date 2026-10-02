@@ -21,6 +21,12 @@ since the initial release.
   `skills/README.md`.
 
 ### Fixed
+- `create --local` pushes every local branch, not just the checked-out one
+  (#86). It used to push only the current branch, which then became the
+  repo's default. The default branch is now `init.defaultBranch`, `main`, or
+  `master` when present (else the current branch), pushed first and set via
+  the API; the plan shows the branch count and default, and branch
+  protection targets it.
 - The pre-flight regex scan no longer walks ignored files (#84). In a git repo
   it scans only `git ls-files`, matching what is pushed and what truffleHog
   scans; a 7.4 GB working tree with 11 MB tracked used to stall for minutes.

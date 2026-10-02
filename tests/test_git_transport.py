@@ -496,3 +496,16 @@ class TestDiscoverTransport:
             mock_run.return_value = make_completed_process(returncode=1)
             t = discover_transport(".")
         assert os.path.isabs(t.source_dir)
+
+
+class TestSecurityKeyHint:
+    def test_recognises_sk_signing_failure(self):
+        from gh_safe_repo.git_transport import security_key_hint
+        for key in ("ED25519-SK", "ECDSA-SK"):
+            msg = f'sign_and_send_pubkey: signing failed for {key} "/k": invalid format'
+            assert "security key" in security_key_hint(msg)
+
+    def test_ignores_other_errors(self):
+        from gh_safe_repo.git_transport import security_key_hint
+        assert security_key_hint("Permission denied (publickey).") is None
+        assert security_key_hint("") is None

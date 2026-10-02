@@ -26,6 +26,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections |
 | `commands/scan.py` | `scan` subcommand — local-only secret scanning |
 | `github_client.py` | Wrapper around `gh api` (subprocess); `copy_repo()`, `push_local()` (returns a `LocalWiring` describing the `origin`/upstream setup on the user's repo), `clone_for_scan()`; `git_remote_url()` builds URLs per `gh config get git_protocol`; `verify_git_credentials()` pre-flight probes SSH |
+| `git_transport.py` | Frozen `GitTransport` (protocol, env, URLs, redaction, `preflight()`) built by `discover_transport()`; `security_key_hint()` names a missed `*-SK` hardware-key touch in git errors |
 | `config_manager.py` | INI config parsing via `configparser`; holds `SAFE_DEFAULTS` |
 | `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()` |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |

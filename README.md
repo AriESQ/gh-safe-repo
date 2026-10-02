@@ -309,7 +309,7 @@ thing on stdout; progress, warnings and errors go to stderr.
 | Code | Meaning |
 |---|---|
 | `0` | Success, or the user declined at an interactive prompt |
-| `1` | Operational failure — auth, permissions, API error, or a pre-flight scan that blocked the run. For `scan`, also "critical findings present" |
+| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
 
 A run that cannot ask for confirmation never exits `0` without doing the work:

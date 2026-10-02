@@ -40,7 +40,7 @@ drops ANSI codes when stdout is not a terminal.
 | Code | Meaning |
 |---|---|
 | `0` | Success — **or** the user declined at an interactive prompt |
-| `1` | Operational failure: auth, permissions, API error, or a pre-flight scan that blocked the run |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes) |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--local` with `--from` |
 
 `scan` exits `1` when there is at least one CRITICAL finding, `0` otherwise —
@@ -88,6 +88,7 @@ A `SKIP` can also simply mean the setting is already correct.
 | `Repository already exists` | Use `fix` instead of `create`. |
 | Pre-flight scan blocked the run (exit 1) | Real secrets were found. Show the findings, let the user remove them; do not re-run with different flags to bypass. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
+| `Code push failed: ...` (exit 1) | The repo exists on GitHub, settings applied, but it is **empty**; branch/tag protection were skipped. Do not re-run `create` (it will fail: repo exists). Fix the cause, then run the recovery commands printed on stderr, ending with `gh-safe-repo fix <owner/repo> --yes`. `Likely cause: your SSH security key did not confirm` means a missed hardware-key touch: ask the user to touch the key and retry the push; it is not a permissions problem. |
 | `Code pushed, but local repo not fully wired: ...` | The push succeeded; only the local `origin`/upstream setup was skipped. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose). Report it to the user; do not rewrite their `origin`. The success banner prints the exact `git push -u origin <b>:<b>` to run once it is resolved. |
 | Repo created but a later step warned | Creation is not transactional; settings failures are warnings. Re-run `fix <owner/repo> --yes` to converge. |
 

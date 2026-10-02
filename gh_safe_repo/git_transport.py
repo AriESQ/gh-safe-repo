@@ -10,6 +10,7 @@ See docs/2026-05-06_auth-architecture-review.md for the design rationale.
 """
 
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -370,3 +371,19 @@ def discover_transport(
         token=token if use_token else None,
         debug=debug,
     )
+
+
+_SK_SIGNING_FAILURE = re.compile(r"signing failed for \S*-SK\b", re.IGNORECASE)
+
+
+def security_key_hint(stderr: str) -> Optional[str]:
+    """Explain a missed security-key tap, which git reports as a permissions error.
+
+    OpenSSH prints `sign_and_send_pubkey: signing failed for ED25519-SK ...`
+    when a FIDO key's user-presence touch never arrives; git then appends its
+    stock "check your access rights" text, which points at the wrong cause.
+    """
+    if stderr and _SK_SIGNING_FAILURE.search(stderr):
+        return ("your SSH security key did not confirm (no touch received). "
+                "Touch the key when prompted and retry.")
+    return None

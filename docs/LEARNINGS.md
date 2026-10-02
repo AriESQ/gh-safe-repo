@@ -272,3 +272,20 @@ into the user's repo, which makes the state identical to a post-push fetch
 without a network round trip or credentials. Hints use
 `git push -u origin <b>:<b>`: it works from any state and the explicit refspec
 cannot follow a stray upstream onto the default branch.
+
+## Failed Code Push Is Fatal (#79)
+
+For `--local`/`--from` the push is the point of the run, so a push failure
+exits 1 instead of warning, unlike the settings plugins, where a partial
+result is still a usable repo that `fix` can converge. By then the repo
+already exists, so re-running `create` cannot recover; the error prints
+recovery commands instead. `push_local` raises before it wires `origin` into
+the user's repo, so the recovery adds `origin` itself.
+
+Hardware-backed SSH keys (`*-SK`) need a touch for every signature. A missed
+touch shows up as `sign_and_send_pubkey: signing failed for ED25519-SK ...:
+invalid format`, then git's stock "check your access rights" text, which
+points at the wrong cause. `git_transport.security_key_hint()` matches that
+string. A passing pre-flight only proves one touch happened; it does not
+guarantee the later push will get one. Whether to change pre-flight
+because of this is still open (#79 item 4).

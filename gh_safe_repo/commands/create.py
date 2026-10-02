@@ -7,7 +7,11 @@ from typing import Optional
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
-from ..git_transport import discover_transport, git_protocol_preference
+from ..git_transport import (
+    discover_transport,
+    git_protocol_preference,
+    security_key_hint,
+)
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
 from ..plugins.repository import RepositoryPlugin
@@ -87,6 +91,43 @@ def _abort_on_scan(decision, _info):
         sys.exit(1)
     _info(_c(_YELLOW, "\nAborted by user."))
     sys.exit(0)
+
+
+def _local_branch(local_path):
+    """Current branch of local_path, or None (not a repo, detached HEAD)."""
+    # Same test push_local uses; `git -C` alone would walk up into a parent repo.
+    if not os.path.isdir(os.path.join(local_path, ".git")):
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
+            capture_output=True, text=True,
+        )
+    except OSError:
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _abort_on_push_failure(e, owner, repo_name, recovery):
+    """A failed code push defeats the point of --local/--from (#79).
+
+    The repo already exists, so re-running `create` cannot recover. Say so,
+    give the exact commands, and exit 1 so callers never mistake this for
+    success. Branch and tag protection are skipped: there is no branch yet,
+    and `fix` applies both once the code is pushed.
+    """
+    error(f"Code push failed: {e}")
+    hint = security_key_hint(str(e))
+    if hint:
+        error(f"Likely cause: {hint}")
+    lines = [
+        f"\nThe repository {owner}/{repo_name} was created and configured, but is empty.",
+        "Re-running `create` will fail because the repo now exists. To finish:",
+    ]
+    lines += [f"  {cmd}" for cmd in recovery]
+    lines.append(f"  gh-safe-repo fix {owner}/{repo_name} --yes   # applies branch/tag protection")
+    print("\n".join(lines), file=sys.stderr)
+    sys.exit(1)
 
 
 def run(args):
@@ -381,7 +422,12 @@ def run(args):
             client.copy_repo(from_owner, from_repo, repo_name)
             _info(_c(_GREEN, f"  Code mirrored successfully."))
         except APIError as e:
-            warn(f"Code copy failed: {e}")
+            src = client.transport.persistent_url(from_owner, from_repo)
+            dest = client.transport.persistent_url(owner, repo_name)
+            _abort_on_push_failure(e, owner, repo_name, [
+                f"git clone --mirror {src} {repo_name}.git",
+                f"git -C {repo_name}.git push --mirror {dest}",
+            ])
 
     # Push code from local directory (--local workflow)
     wiring = None
@@ -393,7 +439,20 @@ def run(args):
             if wiring is not None and wiring.error:
                 warn(f"Code pushed, but local repo not fully wired: {wiring.error}")
         except APIError as e:
-            warn(f"Code push failed: {e}")
+            url = client.transport.persistent_url(owner, repo_name)
+            branch = _local_branch(local_path)
+            # push_local raises before wiring origin, so add it here.
+            # Explicit <b>:<b> refspec: cannot land on the default branch.
+            # No branch means detached HEAD; push every branch, untracked.
+            push = (f"git push -u origin {branch}:{branch}" if branch
+                    else "git push origin --all")
+            recovery = [
+                f"cd {local_path}",
+                f"git remote add origin {url}",
+                push,
+                "git push origin --tags",
+            ]
+            _abort_on_push_failure(e, owner, repo_name, recovery)
 
     # Apply branch protection after code push
     try:

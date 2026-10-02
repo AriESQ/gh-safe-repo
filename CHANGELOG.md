@@ -21,6 +21,14 @@ since the initial release.
   `skills/README.md`.
 
 ### Fixed
+- A failed code push on `create --local`/`--from` is now fatal (#79). It used
+  to print a warning, then the green success banner, and exit `0`, leaving an
+  empty repo. It now exits `1`, skips branch/tag protection (there is no
+  branch yet), and prints the exact commands to finish: add `origin`, push
+  with an explicit `<branch>:<branch>` refspec, then `gh-safe-repo fix`. A
+  missed hardware security-key touch (`signing failed for ED25519-SK`/
+  `ECDSA-SK`), which git reports as a permissions error, is now named as the
+  likely cause.
 - `create --local` now actually sets upstream tracking on the original repo
   (#70). The push runs from a temp clone, so the old `git branch
   --set-upstream-to` call always failed (no `origin/<branch>` ref existed) and

@@ -4,6 +4,7 @@ import json
 import sys
 from unittest.mock import MagicMock, patch
 
+import subprocess
 import pytest
 
 from gh_safe_repo.github_client import LocalWiring
@@ -308,6 +309,76 @@ class TestCreateFlagValidation:
         mock_client.push_local.assert_called_once()
         call_owner = mock_client.push_local.call_args[0][1]
         assert call_owner == "AriESQ"
+
+    def _run_create_with_failed_push(self, argv, fail_attr, capsys):
+        """Run create with push_local/copy_repo raising; return (exit code, stderr, bp mock)."""
+        mock_client = MagicMock()
+        getattr(mock_client, fail_attr).side_effect = APIError(
+            "git push failed to git@github.com:AriESQ/my-repo.git: "
+            "sign_and_send_pubkey: signing failed for ED25519-SK \"/k\": invalid format\n"
+            "git@github.com: Permission denied (publickey)."
+        )
+        with patch("sys.argv", ["gh-safe-repo", "create", *argv, "--yes"]), \
+             patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+             patch("gh_safe_repo.commands.create.discover_transport") as mock_discover, \
+             patch("gh_safe_repo.commands.create.check_repo_exists",
+                   side_effect=lambda c, o, r: r == "src"), \
+             patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                   return_value=ScanDecision(proceed=True)), \
+             patch("gh_safe_repo.commands.create.run_preflight_scan",
+                   return_value=ScanDecision(proceed=True)), \
+             patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
+             patch("gh_safe_repo.commands.create.ActionsPlugin"), \
+             patch("gh_safe_repo.commands.create.BranchProtectionPlugin") as MockBP, \
+             patch("gh_safe_repo.commands.create.SecurityPlugin"), \
+             patch("gh_safe_repo.commands.create.TagProtectionPlugin"), \
+             patch("gh_safe_repo.commands.create.print_success") as mock_success:
+            mock_discover.return_value.persistent_url.side_effect = (
+                lambda o, r: f"git@github.com:{o}/{r}.git"
+            )
+            MockRepo.return_value = MagicMock(created_default_branch="main")
+            mock_ctx.return_value = MagicMock(
+                client=mock_client, owner="AriESQ", plan_name="free",
+                is_paid_plan=False, config=make_config(),
+            )
+            with pytest.raises(SystemExit) as exc:
+                main()
+        mock_success.assert_not_called()
+        return exc.value.code, capsys.readouterr().err, MockBP.return_value
+
+    def test_failed_local_push_exits_1_with_recovery(self, tmp_path, capsys):
+        """#79: a failed push is fatal, not a warning followed by a success banner."""
+        subprocess.run(["git", "init", "-q", "-b", "dev", str(tmp_path)], check=True)
+        code, err, bp = self._run_create_with_failed_push(
+            ["ariesq/my-repo", "--local", str(tmp_path)], "push_local", capsys,
+        )
+        assert code == 1
+        assert "git remote add origin git@github.com:AriESQ/my-repo.git" in err
+        assert "git push -u origin dev:dev" in err
+        assert "gh-safe-repo fix AriESQ/my-repo --yes" in err
+        assert "security key did not confirm" in err
+        bp.apply.assert_not_called()
+
+    def test_failed_local_push_detached_head_recovery(self, tmp_path, capsys):
+        repo = str(tmp_path)
+        git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t",
+               "-c", "commit.gpgsign=false"]
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        subprocess.run(git + ["checkout", "-q", "--detach"], check=True)
+        code, err, _ = self._run_create_with_failed_push(
+            ["ariesq/my-repo", "--local", repo], "push_local", capsys,
+        )
+        assert code == 1
+        assert "git push origin --all" in err
+
+    def test_failed_from_copy_exits_1_with_recovery(self, capsys):
+        code, err, _ = self._run_create_with_failed_push(
+            ["ariesq/my-repo", "--from", "ariesq/src"], "copy_repo", capsys,
+        )
+        assert code == 1
+        assert "git clone --mirror git@github.com:ariesq/src.git" in err
+        assert "push --mirror git@github.com:AriESQ/my-repo.git" in err
 
     def test_plugins_constructed_with_canonical_owner(self, tmp_path):
         """Plugin constructors must receive the canonical owner for API paths."""
@@ -883,8 +954,9 @@ class TestCreateAbortsOnScan:
         ]
         with patch("sys.argv", argv), \
              patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
-             patch("gh_safe_repo.commands.create.discover_transport"), \
-             patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
+             patch("gh_safe_repo.commands.create.discover_transport") as mock_discover, \
+             patch("gh_safe_repo.commands.create.check_repo_exists",
+                   side_effect=lambda c, o, r: r == "src"), \
              patch("gh_safe_repo.commands.create.run_preflight_scan_local",
                    return_value=decision), \
              patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo:

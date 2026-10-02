@@ -236,7 +236,7 @@ def run(args):
     # Create scanner once
     scanner: Optional[SecurityScanner] = None
     if args.from_repo or args.local_path:
-        scanner = SecurityScanner(config, debug=args.debug)
+        scanner = SecurityScanner(config, debug=args.debug, progress=not json_mode)
 
     # Pre-flight security scan (--from workflow, non-dry-run only)
     if args.from_repo and not args.dry_run:

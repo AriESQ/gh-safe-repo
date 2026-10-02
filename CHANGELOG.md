@@ -21,6 +21,12 @@ since the initial release.
   `skills/README.md`.
 
 ### Fixed
+- The pre-flight regex scan no longer walks ignored files (#84). In a git repo
+  it scans only `git ls-files`, matching what is pushed and what truffleHog
+  scans; a 7.4 GB working tree with 11 MB tracked used to stall for minutes.
+  Files with a NUL byte in their first 8 KB are skipped as binary regardless
+  of extension. Ctrl-C now prints `Interrupted.` and exits `130` instead of a
+  traceback, and a TTY-only progress line shows the file being scanned.
 - A failed code push on `create --local`/`--from` is now fatal (#79). It used
   to print a warning, then the green success banner, and exit `0`, leaving an
   empty repo. It now exits `1`, skips branch/tag protection (there is no

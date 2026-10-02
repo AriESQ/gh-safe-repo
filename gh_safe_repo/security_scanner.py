@@ -41,6 +41,18 @@ BINARY_EXTENSIONS = {
     ".sqlite", ".db",
 }
 
+# Content sniff for binaries the extension list misses (e.g. TouchDesigner
+# .toe): a NUL byte in the first block means the file is not regex-scanned.
+_BINARY_SNIFF_BYTES = 8192
+
+
+def _looks_binary(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return b"\0" in f.read(_BINARY_SNIFF_BYTES)
+    except OSError:
+        return True
+
 SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
 }
@@ -168,8 +180,11 @@ def _ai_context_history_hint(rel_path: str) -> str:
 # --- Scanner class ---
 
 class SecurityScanner:
-    def __init__(self, config, debug=False):
+    def __init__(self, config, debug=False, progress=True):
         self.debug = debug
+        # Single-line progress on stderr; only ever drawn when stderr is a TTY.
+        # Callers pass progress=False in --json mode.
+        self._progress = progress and sys.stderr.isatty()
         self._scan_secrets = config.getbool("pre_flight_scan", "scan_for_secrets", fallback=True)
         self._scan_emails  = config.getbool("pre_flight_scan", "scan_for_emails", fallback=True)
         self._scan_todos   = config.getbool("pre_flight_scan", "scan_for_todos", fallback=True)
@@ -247,6 +262,36 @@ class SecurityScanner:
             return result.returncode == 0
         except FileNotFoundError:
             return True
+
+    def _tracked_files(self, root_path: str) -> Optional[Set[str]]:
+        """Return the set of git-tracked paths (relative, '/'-separated), or
+        None if root_path is not a usable git repo. Only tracked files are
+        pushed, so the content walk is restricted to them (issue #84)."""
+        try:
+            result = subprocess.run(
+                ["git", "-C", root_path, "ls-files", "-z"],
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            return None
+        if result.returncode != 0:
+            return None
+        out = result.stdout.decode("utf-8", errors="surrogateescape")
+        return {p for p in out.split("\0") if p}
+
+    def _draw_progress(self, done: int, total: Optional[int], rel_path: str) -> None:
+        if total:
+            head = f"Scanning files: {done:,}/{total:,} ({done * 100 // total}%)  "
+        else:
+            head = f"Scanning files: {done:,}  "
+        width = shutil.get_terminal_size((80, 20)).columns - 1
+        line = (head + rel_path)[:width]
+        sys.stderr.write("\r\033[K" + line)
+        sys.stderr.flush()
+
+    def _clear_progress(self) -> None:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
 
     # --- Discovery ---
 
@@ -428,8 +473,27 @@ class SecurityScanner:
         When is_git_repo is True, SKIP_DIRS that contain tracked files are scanned
         instead of skipped.
         """
+        # In a git repo only tracked files get pushed, so scan just those —
+        # walking ignored build output / binaries can take minutes (#84).
+        tracked = self._tracked_files(root_path) if is_git_repo else None
+        tracked_dirs: Set[str] = set()
+        if tracked is not None:
+            for p in tracked:
+                parts = p.split("/")[:-1]
+                for i in range(1, len(parts) + 1):
+                    tracked_dirs.add("/".join(parts[:i]))
+        total = len(tracked) if tracked is not None else None
+        try:
+            return self._walk(root_path, scan_secrets, is_git_repo,
+                              tracked, tracked_dirs, total)
+        finally:
+            if self._progress:
+                self._clear_progress()
+
+    def _walk(self, root_path, scan_secrets, is_git_repo, tracked, tracked_dirs, total):
         findings: List[Finding] = []
         skipped_dirs: Set[str] = set()
+        done = 0
 
         for dirpath, dirs, files in os.walk(root_path, followlinks=False):
             # Track and prune SKIP_DIRS; in git repos, scan dirs with tracked files
@@ -447,6 +511,12 @@ class SecurityScanner:
                     skip_set.add(d)
                     skipped_dirs.add(rel)
             dirs[:] = [d for d in dirs if d not in skip_set]
+            if tracked is not None:
+                dirs[:] = [
+                    d for d in dirs
+                    if os.path.relpath(os.path.join(dirpath, d), root_path)
+                    .replace(os.sep, "/") in tracked_dirs
+                ]
 
             # AI context directory check (.cursor)
             if self._warn_ai_context_files:
@@ -473,6 +543,12 @@ class SecurityScanner:
             for filename in files:
                 full_path = os.path.join(dirpath, filename)
                 rel_path = os.path.relpath(full_path, root_path).replace(os.sep, "/")
+
+                if tracked is not None and rel_path not in tracked:
+                    continue
+                done += 1
+                if self._progress:
+                    self._draw_progress(done, total, rel_path)
 
                 # Path exclusion check — skip before any other per-file work
                 if self._is_excluded(rel_path):
@@ -513,7 +589,7 @@ class SecurityScanner:
 
                 # Skip binary files for text content scanning
                 _, ext = os.path.splitext(filename)
-                if ext.lower() in BINARY_EXTENSIONS:
+                if ext.lower() in BINARY_EXTENSIONS or _looks_binary(full_path):
                     continue
 
                 # Text content scanning

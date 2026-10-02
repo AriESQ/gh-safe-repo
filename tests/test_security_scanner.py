@@ -1299,3 +1299,64 @@ class TestSkipDirsGitAware:
         banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
         assert len(banned) == 1
         assert "dist" in banned[0].file_path
+
+
+class TestScanScope:
+    """Issue #84: in a git repo, scan only what gets pushed."""
+
+    def test_git_repo_skips_ignored_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, ".gitignore", "build/\nlocal.txt\n")
+            write_file(tmpdir, "app.py", "x = 1\n")
+            git_add_commit(tmpdir, "init")
+            write_file(tmpdir, "build/out.txt", "leak@example.org\n")
+            write_file(tmpdir, "local.txt", "leak@example.org\n")
+            findings = make_scanner().scan(tmpdir)
+        assert [f for f in findings if f.category == FindingCategory.EMAIL] == []
+
+    def test_git_repo_scans_tracked_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "src/app.py", "leak@example.org\n")
+            git_add_commit(tmpdir, "init")
+            findings = make_scanner().scan(tmpdir)
+        emails = [f for f in findings if f.category == FindingCategory.EMAIL]
+        assert {f.file_path for f in emails if f.line_number} == {"src/app.py"}
+
+    def test_non_git_dir_scans_everything(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_file(tmpdir, "notes/out.txt", "leak@example.org\n")
+            findings = make_scanner().scan(tmpdir)
+        assert any(f.category == FindingCategory.EMAIL for f in findings)
+
+    def test_nul_byte_file_not_content_scanned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "project.toe"), "wb") as f:
+                f.write(b"\x00\x01leak@example.org\n")
+            findings = make_scanner().scan(tmpdir)
+        assert [f for f in findings if f.category == FindingCategory.EMAIL] == []
+
+
+class TestProgress:
+    def test_no_progress_when_stderr_not_tty(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_file(tmpdir, "a.py", "x = 1\n")
+            make_scanner().scan(tmpdir)
+        assert "Scanning files" not in capsys.readouterr().err
+
+    def test_progress_disabled_by_flag(self):
+        with patch("sys.stderr.isatty", return_value=True):
+            assert SecurityScanner(FakeConfig(), progress=False)._progress is False
+
+    def test_progress_shows_count_and_path(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "a.py", "x = 1\n")
+            git_add_commit(tmpdir, "init")
+            scanner = make_scanner()
+            scanner._progress = True
+            scanner.scan(tmpdir)
+        err = capsys.readouterr().err
+        assert "Scanning files: 1/1 (100%)  a.py" in err
+        assert err.endswith("\r\033[K")

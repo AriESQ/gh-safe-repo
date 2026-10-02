@@ -42,6 +42,12 @@ drops ANSI codes when stdout is not a terminal.
 | `0` | Success — **or** the user declined at an interactive prompt |
 | `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes) |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--local` with `--from` |
+| `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
+
+In a git repo the built-in scan covers tracked files only (`git ls-files`) —
+ignored/untracked files are never pushed and are not scanned. A TTY-only
+progress line is drawn on stderr; it never appears with `--json` or when
+stderr is piped.
 
 `scan` exits `1` when there is at least one CRITICAL finding, `0` otherwise —
 so `scan` returning `1` is a *result*, not a crash.

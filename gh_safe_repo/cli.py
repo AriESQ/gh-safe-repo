@@ -99,4 +99,8 @@ def main():
         parser.print_help()
         sys.exit(2)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)

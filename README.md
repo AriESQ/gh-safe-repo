@@ -311,6 +311,7 @@ thing on stdout; progress, warnings and errors go to stderr.
 | `0` | Success, or the user declined at an interactive prompt |
 | `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
+| `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
 
 A run that cannot ask for confirmation never exits `0` without doing the work:
 if there is no terminal and no `--yes`, or `--yes` is set but the pre-flight
@@ -482,6 +483,8 @@ Set `trufflehog_mode` in config to pin a specific engine. Two environment variab
 #### Scan coverage
 
 Build-artifact directories (`node_modules`, `__pycache__`, `.venv`, `venv`, `dist`, `build`) are skipped by default to keep scans fast. In git repos this skip is conditional: before pruning a directory, the scanner runs `git ls-files -- <dir>` to check whether any files inside are tracked. If they are, the directory is scanned normally — so committed `node_modules` or `dist` trees are not silently missed. A warning is still printed when such directories are found in a cloned source repo, since their presence may indicate more content is committed than expected.
+
+In a git repo, the built-in pass only reads files listed by `git ls-files`, which is what gets pushed. Ignored and untracked files are not scanned. Directories that aren't git repos are walked in full. Any file whose first 8 KB contains a NUL byte is treated as binary and is not content-scanned, whatever its extension. When stderr is a terminal (and not in `--json` mode), a one-line progress indicator shows the file count and the file being scanned.
 
 #### Suppressing false positives
 

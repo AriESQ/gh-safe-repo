@@ -725,8 +725,8 @@ class TestScannerDescriptionInPlan:
 
                     # Force scanner to report "regex only"
                     original_init = SecurityScanner.__init__
-                    def patched_init(self_inner, config, debug=False):
-                        original_init(self_inner, config, debug=debug)
+                    def patched_init(self_inner, config, debug=False, **kw):
+                        original_init(self_inner, config, debug=debug, **kw)
                         self_inner._discovery = {"method": "none"}
                     with patch.object(SecurityScanner, "__init__", patched_init):
                         with pytest.raises(SystemExit):
@@ -1041,3 +1041,13 @@ class TestPrintSuccessProtocolOrdering:
         assert "git push -u origin dev:dev" in out
         assert "<branch>" not in out
         assert "set-upstream-to" not in out
+
+
+class TestKeyboardInterrupt:
+    def test_ctrl_c_exits_130_without_traceback(self, tmp_path, capsys):
+        with patch("sys.argv", ["gh-safe-repo", "scan", str(tmp_path)]), \
+             patch.object(scan, "run", side_effect=KeyboardInterrupt):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 130
+        assert "Interrupted." in capsys.readouterr().err

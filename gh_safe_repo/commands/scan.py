@@ -53,7 +53,7 @@ def run(args):
     json_mode = args.json
     _info = lambda msg: info(msg, json_mode=json_mode)
 
-    scanner = SecurityScanner(config, debug=args.debug)
+    scanner = SecurityScanner(config, debug=args.debug, progress=not json_mode)
     _info(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
     findings = scanner.scan(scan_path)
 

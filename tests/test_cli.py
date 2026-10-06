@@ -1,6 +1,7 @@
 """Tests for CLI subcommands and shared helpers."""
 
 import json
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -1051,3 +1052,48 @@ class TestKeyboardInterrupt:
                 main()
         assert exc_info.value.code == 130
         assert "Interrupted." in capsys.readouterr().err
+
+
+class TestLocalBranches:
+    """#86: the new repo's default branch is chosen, not just HEAD."""
+
+    @pytest.fixture(autouse=True)
+    def _hermetic_git(self, monkeypatch):
+        # A developer's global init.defaultBranch would skew the choice.
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def _repo(self, path, branches, current, init_default=None):
+        def git(*a):
+            subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-q", "-b", branches[0], str(path)], check=True)
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        git("config", "commit.gpgsign", "false")
+        if init_default:
+            git("config", "init.defaultBranch", init_default)
+        git("commit", "-q", "--allow-empty", "-m", "init")
+        for b in branches[1:]:
+            git("branch", b)
+        git("switch", "-q", current)
+
+    def test_prefers_master_over_checked_out_feature(self, tmp_path):
+        self._repo(tmp_path, ["master", "feature"], current="feature")
+        branches, default = create._local_branches(str(tmp_path))
+        assert sorted(branches) == ["feature", "master"]
+        assert default == "master"
+
+    def test_prefers_main_over_master(self, tmp_path):
+        self._repo(tmp_path, ["master", "main"], current="master")
+        assert create._local_branches(str(tmp_path))[1] == "main"
+
+    def test_init_default_branch_wins(self, tmp_path):
+        self._repo(tmp_path, ["main", "trunk"], current="main", init_default="trunk")
+        assert create._local_branches(str(tmp_path))[1] == "trunk"
+
+    def test_falls_back_to_current_branch(self, tmp_path):
+        self._repo(tmp_path, ["dev", "feature"], current="feature")
+        assert create._local_branches(str(tmp_path))[1] == "feature"
+
+    def test_not_a_repo(self, tmp_path):
+        assert create._local_branches(str(tmp_path)) == ([], None)

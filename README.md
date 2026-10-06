@@ -404,11 +404,11 @@ Repository admins are on the bypass list (consistent with the branch protection 
 2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
 3. You review findings and confirm (or abort)
 4. The repo is created, and actions permissions and security settings are applied
-5. History is pushed with `push --all --tags` (all branches and tags)
+5. Every local branch and tag is pushed (from a `--bare` clone, so branches other than the checked-out one are included). The default branch is pushed first and then set via the API
 6. Branch and tag protection are applied — after the push, so the target branch exists
 7. `origin` is added to your **original** local repo pointing at the new GitHub URL, and the current branch's upstream is configured, so `git push` and `git pull` work immediately
 
-The local default branch (via `git -C PATH symbolic-ref HEAD`) is used to target branch protection, so protection lands on the right branch even if it isn't `main`.
+The new repo's default branch is chosen from the local branches, in this order: `init.defaultBranch` if set, then `main`, then `master`, then the currently checked-out branch. So running from a feature branch still makes `main`/`master` the default. The plan shows the branch count and the chosen default, and branch protection targets that branch.
 
 **`--from OWNER/REPO`** — the remote-to-remote counterpart:
 

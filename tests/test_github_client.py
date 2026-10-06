@@ -546,3 +546,41 @@ class TestGetPlanName:
             )
             result = client.get_plan_name()
         assert result == "free"
+
+
+class TestPushLocalAllBranches(TestPushLocal):
+    """#86: every branch is pushed and the chosen default is set."""
+
+    def test_clones_bare_so_all_branches_are_heads(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run()) as mock_run:
+            client.push_local("/repo", "alice", "dest-repo")
+        cmds = [c.args[0] for c in mock_run.call_args_list]
+        assert any(c[:3] == ["git", "clone", "--bare"] for c in cmds)
+
+    def test_default_branch_pushed_first_then_set(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run(head="feat\n")) as mock_run, \
+             patch.object(client, "call_api", return_value=(200, "{}")) as mock_api:
+            wiring = client.push_local("/repo", "alice", "dest-repo", default_branch="master")
+        pushes = [c.args[0] for c in mock_run.call_args_list if "push" in c.args[0]]
+        assert pushes[0][-1] == "refs/heads/master:refs/heads/master"
+        assert any("--all" in p for p in pushes[1:])
+        mock_api.assert_called_once_with(
+            "PATCH", "/repos/alice/dest-repo", {"default_branch": "master"}
+        )
+        assert wiring.default_branch == "master"
+        assert wiring.branch == "feat"
+
+    def test_unknown_default_branch_is_ignored(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run()) as mock_run, \
+             patch.object(client, "call_api") as mock_api:
+            wiring = client.push_local("/repo", "alice", "dest-repo", default_branch="nope")
+        pushes = [c.args[0] for c in mock_run.call_args_list if "push" in c.args[0]]
+        assert not any("refs/heads/nope" in " ".join(p) for p in pushes)
+        mock_api.assert_not_called()
+        assert wiring.default_branch is None

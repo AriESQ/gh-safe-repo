@@ -32,6 +32,12 @@ gh-safe-repo create alice/my-repo --local . --dry-run --json   # 1. plan
 gh-safe-repo create alice/my-repo --local . --yes               # 2. apply
 ```
 
+`--local` pushes **every** local branch and tag, not just the checked-out
+one. The default branch is `init.defaultBranch`, else `main`, else `master`,
+else the current branch; the plan's `code` entry names it
+(`Push N branch(es) from PATH (default: X)`). Check it before `--yes`: any
+local branch, including unfinished work, will be published.
+
 Set `NO_COLOR=1` if you want to be sure of clean output; the tool already
 drops ANSI codes when stdout is not a terminal.
 

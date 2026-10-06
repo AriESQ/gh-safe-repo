@@ -289,3 +289,16 @@ points at the wrong cause. `git_transport.security_key_hint()` matches that
 string. A passing pre-flight only proves one touch happened; it does not
 guarantee the later push will get one. Whether to change pre-flight
 because of this is still open (#79 item 4).
+
+## `push_local` Pushed Only One Branch (#86)
+
+A plain `git clone <local>` creates a local head only for the source's
+checked-out branch; every other branch exists only as
+`refs/remotes/origin/*`, which `git push --all` ignores. Running
+`create --local` from a feature branch therefore published just that
+branch, and GitHub made it the default (the first branch pushed to an
+empty repo becomes the default). The temp clone is now `--bare`, which
+copies all heads as `refs/heads/*`. The default branch is chosen as
+`init.defaultBranch` → `main` → `master` → current branch, pushed alone
+first, then set explicitly with `PATCH /repos {default_branch}` instead of
+relying on push order.

@@ -7,6 +7,7 @@ Callers must assign `self.transport` before invoking copy_repo / push_local /
 clone_for_scan. See commands/create.py for the wiring.
 """
 
+import dataclasses
 import json
 import os
 import re
@@ -28,6 +29,8 @@ class LocalWiring:
     origin: bool = False
     tracking: bool = False
     error: Optional[str] = None
+    # Branch made the new repo's default; None when unknown or not set.
+    default_branch: Optional[str] = None
 
 
 class GitHubClient:
@@ -209,13 +212,17 @@ class GitHubClient:
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
                 ))
 
-    def push_local(self, local_path: str, owner: str, dest_repo: str) -> "LocalWiring":
+    def push_local(self, local_path: str, owner: str, dest_repo: str,
+                   default_branch: Optional[str] = None) -> "LocalWiring":
         """
         Push a local directory's code to a new empty GitHub repo.
-        If local_path is a git repo, its full history is pushed and the
-        original repo gets `origin` + upstream tracking; the returned
-        LocalWiring says what was done. Otherwise files are staged in a
-        fresh repo and pushed as an initial commit.
+        If local_path is a git repo, every local branch and tag is pushed
+        and the original repo gets `origin` + upstream tracking; the
+        returned LocalWiring says what was done. Otherwise files are staged
+        in a fresh repo and pushed as an initial commit.
+
+        default_branch is pushed first and then set as the repo default
+        (#86); without it GitHub picks whichever branch arrives first.
         """
         transport = self._require_transport()
         dest_url = transport.remote_url(owner, dest_repo)
@@ -226,7 +233,10 @@ class GitHubClient:
 
             if is_git_repo:
                 try:
-                    transport.run(["git", "clone", local_path, work_path])
+                    # --bare: every source branch becomes a local head, so
+                    # `push --all` sends them all. A normal clone has only
+                    # the checked-out branch as a head (#86).
+                    transport.run(["git", "clone", "--bare", local_path, work_path])
                 except subprocess.CalledProcessError as e:
                     raise APIError(f"git clone (local) failed: {(e.stderr or '').strip()}")
             else:
@@ -264,9 +274,7 @@ class GitHubClient:
                     transport.run(
                         ["git", "-C", work_path, "remote", "add", "origin", dest_url],
                     )
-                transport.run(["git", "-C", work_path, "push", "origin", "--all"])
-                transport.run(["git", "-C", work_path, "push", "origin", "--tags"])
-                # Record what was pushed so the user's repo can be given
+                # Record what will be pushed so the user's repo can be given
                 # matching remote-tracking refs without a network fetch.
                 pushed = transport.run(
                     ["git", "-C", work_path, "for-each-ref",
@@ -276,6 +284,14 @@ class GitHubClient:
                 pushed_refs = dict(
                     line.split(" ", 1) for line in pushed.splitlines() if " " in line
                 )
+                if default_branch not in pushed_refs:
+                    default_branch = None
+                if default_branch:
+                    # First branch to land becomes GitHub's default.
+                    ref = f"refs/heads/{default_branch}"
+                    transport.run(["git", "-C", work_path, "push", "origin", f"{ref}:{ref}"])
+                transport.run(["git", "-C", work_path, "push", "origin", "--all"])
+                transport.run(["git", "-C", work_path, "push", "origin", "--tags"])
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
@@ -283,7 +299,12 @@ class GitHubClient:
 
         if not is_git_repo:
             return LocalWiring()
-        return self._wire_local_repo(local_path, owner, dest_repo, pushed_refs)
+        if default_branch:
+            # Belt and braces: don't rely on first-push ordering alone.
+            self.call_api("PATCH", self.repo_path(owner, dest_repo),
+                          {"default_branch": default_branch})
+        wiring = self._wire_local_repo(local_path, owner, dest_repo, pushed_refs)
+        return dataclasses.replace(wiring, default_branch=default_branch)
 
     def _wire_local_repo(self, local_path, owner, dest_repo, pushed_refs):
         """Point the user's original repo at the new remote and set upstream.

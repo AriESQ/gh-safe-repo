@@ -108,6 +108,30 @@ def _local_branch(local_path):
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _local_branches(local_path):
+    """Return (branches, default) for a local git repo, or ([], None).
+
+    default is the branch the new repo should use: init.defaultBranch, then
+    main, then master, when one exists locally; otherwise the current branch
+    (#86 — previously whatever happened to be checked out).
+    """
+    if not os.path.isdir(os.path.join(local_path, ".git")):
+        return [], None
+    def git(*args):
+        try:
+            r = subprocess.run(["git", "-C", local_path, *args],
+                               capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        return r.stdout.strip() if r.returncode == 0 else ""
+    branches = git("for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines()
+    for candidate in (git("config", "init.defaultBranch"), "main", "master"):
+        if candidate and candidate in branches:
+            return branches, candidate
+    current = _local_branch(local_path)
+    return branches, current or (branches[0] if branches else None)
+
+
 def _abort_on_push_failure(e, owner, repo_name, recovery):
     """A failed code push defeats the point of --local/--from (#79).
 
@@ -260,17 +284,9 @@ def run(args):
             _abort_on_scan(decision, _info)
 
     # Detect local repo's default branch
-    local_default_branch = None
-    if local_path and os.path.isdir(os.path.join(local_path, ".git")):
-        try:
-            r = subprocess.run(
-                ["git", "-C", local_path, "symbolic-ref", "--short", "HEAD"],
-                capture_output=True, text=True, timeout=3,
-            )
-            if r.returncode == 0:
-                local_default_branch = r.stdout.strip() or None
-        except Exception:
-            pass
+    local_branches, local_default_branch = (
+        _local_branches(local_path) if local_path else ([], None)
+    )
 
     # Resolve branches to protect
     branches = _resolve_branches(
@@ -342,7 +358,11 @@ def run(args):
             type=ChangeType.ADD,
             category=ChangeCategory.FILE,
             key="code",
-            new=f"Push code from {local_path}",
+            new=(
+                f"Push {len(local_branches)} branch(es) from {local_path}"
+                f" (default: {local_default_branch})"
+                if local_branches else f"Push code from {local_path}"
+            ),
         ))
 
     # Print the plan
@@ -434,7 +454,11 @@ def run(args):
     if args.local_path:
         _info(f"\nPushing code from {_BOLD}{local_path}{_RESET}...")
         try:
-            wiring = client.push_local(local_path, owner, repo_name)
+            wiring = client.push_local(
+                local_path, owner, repo_name, default_branch=local_default_branch
+            )
+            if wiring is not None and wiring.default_branch:
+                bp_plugin.branches = [wiring.default_branch]
             _info(_c(_GREEN, "  Code pushed successfully."))
             if wiring is not None and wiring.error:
                 warn(f"Code pushed, but local repo not fully wired: {wiring.error}")
@@ -442,16 +466,13 @@ def run(args):
             url = client.transport.persistent_url(owner, repo_name)
             branch = _local_branch(local_path)
             # push_local raises before wiring origin, so add it here.
-            # Explicit <b>:<b> refspec: cannot land on the default branch.
-            # No branch means detached HEAD; push every branch, untracked.
-            push = (f"git push -u origin {branch}:{branch}" if branch
-                    else "git push origin --all")
-            recovery = [
-                f"cd {local_path}",
-                f"git remote add origin {url}",
-                push,
-                "git push origin --tags",
-            ]
+            # Default branch first so GitHub makes it the default (#86).
+            # Explicit <b>:<b> refspec: cannot land on another branch.
+            first = local_default_branch or branch
+            recovery = [f"cd {local_path}", f"git remote add origin {url}"]
+            if first:
+                recovery.append(f"git push -u origin {first}:{first}")
+            recovery += ["git push origin --all", "git push origin --tags"]
             _abort_on_push_failure(e, owner, repo_name, recovery)
 
     # Apply branch protection after code push

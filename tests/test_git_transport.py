@@ -542,3 +542,60 @@ class TestRunRemote:
             with pytest.raises(subprocess.CalledProcessError):
                 t.run_remote(["git", "push", "origin"])
         assert mock_run.call_count == 1
+
+
+class TestCredentialHints:
+    """#100: name the real cause instead of a generic network/permission error."""
+
+    PUBLICKEY = "git@github.com: Permission denied (publickey).\nfatal: Could not read"
+
+    def test_ssh_timeout_mentions_security_key_and_uses_longer_timeout(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 45)) as m:
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight()
+        assert m.call_args.kwargs["timeout"] == 45
+        msg = str(exc_info.value)
+        assert "after 45s" in msg and "security key" in msg and "touch" in msg
+
+    def test_https_timeout_keeps_credential_helper_message(self):
+        t = make_transport(protocol="https")
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 15)) as m:
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight()
+        assert m.call_args.kwargs["timeout"] == 15
+        assert "credential helper" in str(exc_info.value)
+        assert "security key" not in str(exc_info.value)
+
+    def test_publickey_hint_names_source_dir_and_ssh_command(self):
+        t = make_transport(protocol="ssh", source_dir="/work/x", ssh_command="ssh -i /k")
+        hint = t.auth_hint(self.PUBLICKEY)
+        assert "/work/x" in hint and "`ssh -i /k`" in hint and "includeIf" in hint
+
+    def test_publickey_hint_says_when_ssh_command_not_set(self):
+        t = make_transport(protocol="ssh", source_dir="/tmp/elsewhere")
+        assert "core.sshCommand: not set" in t.auth_hint(self.PUBLICKEY)
+
+    def test_security_key_hint_takes_priority(self):
+        t = make_transport(protocol="ssh")
+        stderr = 'sign_and_send_pubkey: signing failed for ED25519-SK "k": invalid format\n' + self.PUBLICKEY
+        assert "touch" in t.auth_hint(stderr)
+
+    def test_no_hint_for_https_or_other_errors(self):
+        assert make_transport(protocol="https").auth_hint(self.PUBLICKEY) is None
+        assert make_transport(protocol="ssh").auth_hint("! [rejected] main") is None
+
+    def test_preflight_publickey_error_includes_dir_hint(self):
+        t = make_transport(protocol="ssh", source_dir="/tmp/elsewhere")
+        with patch("subprocess.run",
+                   return_value=make_completed_process(returncode=128, stderr=self.PUBLICKEY)):
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight()
+        assert "/tmp/elsewhere" in str(exc_info.value)
+
+    def test_debug_prints_discovered_ssh_command(self, tmp_path, capsys):
+        with patch("gh_safe_repo.git_transport._gh_get_protocol", return_value="ssh"), \
+             patch("gh_safe_repo.git_transport._git_config_get", return_value=None):
+            discover_transport(str(tmp_path), debug=True)
+        err = capsys.readouterr().err
+        assert f"core.sshCommand from {tmp_path}: (none)" in err

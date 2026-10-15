@@ -90,6 +90,15 @@ since the initial release.
   touch can no longer leave a half-pushed repo.
 
 ### Fixed
+- Credential failures over SSH now name the likely cause (#100). A
+  pre-flight check that times out says the security key was probably
+  waiting for a touch, instead of blaming the network, and the SSH timeout
+  is now 45 seconds (it was 15; HTTPS stays at 15). A `Permission denied
+  (publickey)` from the pre-flight check, the `--from` scan clone or the
+  push now adds which directory the SSH settings were read from and what
+  `core.sshCommand` was found there, since `--from` uses the current
+  directory and a per-directory key (`includeIf`) silently doesn't apply
+  elsewhere. `--debug` prints the discovered `core.sshCommand`.
 - `create` and `fix` run without `--yes` and with stdin closed (`< /dev/null`,
   a CI job, an agent subprocess) exited `0` at the confirmation prompt with
   nothing done, indistinguishable from success (#93). They now print

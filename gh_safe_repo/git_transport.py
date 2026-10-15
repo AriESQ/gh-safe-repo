@@ -23,6 +23,10 @@ PREFLIGHT_REPO = "gh-safe-repo-preflight/nonexistent"
 
 TRANSPORT_MODES = ("auto", "user_creds", "token")
 
+# Seconds the preflight `git ls-remote` may take. SSH gets longer: a FIDO
+# (`*-SK`) key waits for a touch, and the user has to notice the blink (#100).
+PREFLIGHT_TIMEOUT = {"ssh": 45, "https": 15}
+
 
 @dataclass(frozen=True)
 class GitTransport:
@@ -148,6 +152,34 @@ class GitTransport:
                   "Touch it when it blinks to retry...", file=sys.stderr)
             return self.run(cmd, **kwargs)
 
+    def ssh_config_hint(self) -> Optional[str]:
+        """Say where the SSH settings came from, for a publickey failure.
+
+        `core.sshCommand` is read from `source_dir` — the `--local` PATH, or
+        the current directory for `--from`. A key chosen per directory (e.g.
+        `includeIf` + `core.sshCommand`) silently doesn't apply when the tool
+        runs from elsewhere, and ssh falls back to the default identity (#100).
+        """
+        if self.protocol != "ssh":
+            return None
+        found = f"`{self.ssh_command}`" if self.ssh_command else "not set"
+        return (
+            f"SSH settings are read from the git config of {self.source_dir} "
+            f"(core.sshCommand: {found}). If your key is chosen per directory "
+            "(e.g. includeIf + core.sshCommand), run from inside a directory "
+            "where it applies."
+        )
+
+    def auth_hint(self, stderr: str) -> Optional[str]:
+        """Best guess at the real cause of a failed git auth, or None."""
+        hint = security_key_hint(stderr)
+        if hint:
+            return hint
+        lower = (stderr or "").lower()
+        if "permission denied" in lower and "publickey" in lower:
+            return self.ssh_config_hint()
+        return None
+
     # ------------------------------------------------------------- preflight
 
     def preflight(self) -> None:
@@ -164,18 +196,25 @@ class GitTransport:
         """
         url = self.preflight_url()
         display_url = self.redact(url)
+        timeout = PREFLIGHT_TIMEOUT.get(self.protocol, 15)
         try:
             result = self.run(
                 ["git", "ls-remote", url],
                 check=False,
-                timeout=15,
+                timeout=timeout,
             )
         except FileNotFoundError as e:
             raise AuthError(f"`git` not found on PATH: {e}")
         except subprocess.TimeoutExpired:
+            if self.protocol == "ssh":
+                cause = ("If you use an SSH security key, it was probably "
+                         "waiting for a touch; otherwise check the network "
+                         "and your ssh-agent.")
+            else:
+                cause = ("Network issue, or the credential helper is hanging "
+                         "on a prompt.")
             raise AuthError(
-                f"git ls-remote {display_url} timed out. "
-                "Network issue, or the credential helper is hanging on a prompt."
+                f"git ls-remote {display_url} timed out after {timeout}s. {cause}"
             )
 
         if result.returncode == 0:
@@ -196,6 +235,7 @@ class GitTransport:
                     f"git@{self.host} failed (Permission denied / publickey). "
                     "Add your SSH key to GitHub and load it into the agent, "
                     "or switch to HTTPS via `gh config set git_protocol https`.\n"
+                    f"  {self.auth_hint(stderr)}\n"
                     f"  git said: {stderr}"
                 )
             if "host key verification failed" in lower:
@@ -378,6 +418,9 @@ def discover_transport(
         cred = "token-in-URL" if use_token else "user credentials"
         print(f"[debug] git transport: {protocol} via {cred} (mode={mode})",
               file=sys.stderr)
+        if protocol == "ssh":
+            print(f"[debug] core.sshCommand from {abs_source}: "
+                  f"{ssh_command or '(none)'}", file=sys.stderr)
     return GitTransport(
         protocol=protocol,  # type: ignore[arg-type]
         source_dir=abs_source,

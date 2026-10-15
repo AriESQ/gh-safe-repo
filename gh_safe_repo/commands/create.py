@@ -145,7 +145,15 @@ def _local_branches(local_path):
     return branches, current or (branches[0] if branches else None)
 
 
-def _abort_on_push_failure(e, owner, repo_name, recovery):
+def _auth_hint(transport, message):
+    """Likely cause of a git auth failure: a missed key touch first, then
+    an SSH key setting that didn't apply from this directory (#100)."""
+    return security_key_hint(message) or (
+        transport.auth_hint(message) if transport is not None else None
+    )
+
+
+def _abort_on_push_failure(e, owner, repo_name, recovery, transport=None):
     """A failed code push defeats the point of --local/--from (#79).
 
     The repo already exists, so re-running `create` cannot recover. Say so,
@@ -154,7 +162,7 @@ def _abort_on_push_failure(e, owner, repo_name, recovery):
     and `fix` applies both once the code is pushed.
     """
     error(f"Code push failed: {e}")
-    hint = security_key_hint(str(e))
+    hint = _auth_hint(transport, str(e))
     if hint:
         error(f"Likely cause: {hint}")
     lines = [
@@ -345,6 +353,9 @@ def run(args):
                 )
         except APIError as e:
             error(f"Pre-flight scan failed (clone error): {e}")
+            hint = _auth_hint(client.transport, str(e))
+            if hint:
+                error(f"Likely cause: {hint}")
             sys.exit(1)
         if not decision.proceed:
             _abort_on_scan(decision, _info)
@@ -549,7 +560,7 @@ def run(args):
             _abort_on_push_failure(e, owner, repo_name, [
                 f"git clone --mirror {src} {repo_name}.git",
                 f"git -C {repo_name}.git push --mirror {dest}",
-            ])
+            ], transport=client.transport)
 
     # Push code from local directory (--local workflow)
     wiring = None
@@ -575,7 +586,8 @@ def run(args):
             if first:
                 recovery.append(f"git push -u origin {first}:{first}")
             recovery += ["git push origin --all", "git push origin --tags"]
-            _abort_on_push_failure(e, owner, repo_name, recovery)
+            _abort_on_push_failure(e, owner, repo_name, recovery,
+                                   transport=client.transport)
 
     # Apply branch protection after code push
     try:

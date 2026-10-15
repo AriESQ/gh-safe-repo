@@ -544,6 +544,166 @@ class TestTruffleHogIntegration:
         assert scanner._trufflehog_mode == "off"
 
 
+class TestEngineUsed:
+    """scan() records the engine that actually ran, not the plan-time guess (#77)."""
+
+    def _scan(self, mode, tmpdir, *, native=None, runtime=None, popen_rc=0,
+              popen_missing=False, overrides=None):
+        cfg = {("pre_flight_scan", "trufflehog_mode"): mode}
+        cfg.update(overrides or {})
+        scanner = make_scanner(cfg)
+        popen_kwargs = (
+            {"side_effect": FileNotFoundError()} if popen_missing
+            else {"return_value": MagicMock(
+                communicate=MagicMock(return_value=("", "")), returncode=popen_rc
+            )}
+        )
+        with patch.object(scanner, "_detect_native", return_value=native), \
+             patch.object(scanner, "_detect_container_runtime", return_value=runtime), \
+             patch("subprocess.Popen", **popen_kwargs) as mock_popen:
+            scanner.scan(tmpdir)
+        return scanner, mock_popen
+
+    def test_native_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("auto", tmpdir, native="3.93.4")
+        assert scanner.engine_used == "trufflehog-native"
+        assert scanner.fell_back is False
+        assert scanner.engine_error() is None
+        assert scanner.engine_summary == "truffleHog v3.93.4"
+
+    def test_container_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("docker", tmpdir, runtime=("podman", "/usr/bin/podman"))
+        assert scanner.engine_used == "trufflehog-container"
+        assert scanner.fell_back is False
+        assert scanner.engine_error() is None
+        assert scanner.engine_report() == {
+            "configured": "docker", "used": "trufflehog-container", "fell_back": False,
+        }
+
+    def test_off_is_regex_without_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, mock_popen = self._scan("off", tmpdir)
+        mock_popen.assert_not_called()
+        assert scanner.engine_used == "regex"
+        assert scanner.fell_back is False
+        assert scanner.engine_error() is None
+
+    def test_legacy_use_trufflehog_false_is_off(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, mock_popen = self._scan(
+                "auto", tmpdir, overrides={("pre_flight_scan", "use_trufflehog"): "false"}
+            )
+        mock_popen.assert_not_called()
+        assert scanner.engine_report() == {
+            "configured": "off", "used": "regex", "fell_back": False,
+        }
+
+    def test_secret_scanning_disabled_is_not_a_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, mock_popen = self._scan(
+                "native", tmpdir, overrides={("pre_flight_scan", "scan_for_secrets"): "false"}
+            )
+        mock_popen.assert_not_called()
+        assert scanner.engine_used == "regex"
+        assert scanner.fell_back is False
+        assert scanner.engine_error() is None
+
+    def test_auto_nothing_installed_falls_back_quietly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("auto", tmpdir)
+        assert scanner.engine_used == "regex"
+        assert scanner.fell_back is True
+        assert "not found" in scanner.fallback_reason
+        # auto never fails on a fallback
+        assert scanner.engine_error() is None
+
+    def test_auto_runtime_failure_falls_back_quietly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("auto", tmpdir, native="3.93.4", popen_rc=2)
+        assert scanner.engine_used == "regex"
+        assert scanner.fell_back is True
+        assert "exited with status 2" in scanner.fallback_reason
+        assert scanner.engine_error() is None
+        assert "fell back" in scanner.engine_summary
+
+    def test_native_missing_is_an_error(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("native", tmpdir)
+        assert scanner.engine_used == "regex"
+        assert scanner.fell_back is True
+        msg = scanner.engine_error()
+        assert msg is not None
+        assert "trufflehog_mode = native" in msg
+        assert "not found on PATH" in msg
+        # No contradictory "falling back" warning in an explicit mode.
+        assert "falling back" not in capsys.readouterr().err
+
+    def test_native_runtime_failure_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("native", tmpdir, native="3.93.4", popen_rc=137)
+        msg = scanner.engine_error()
+        assert msg is not None
+        assert "exited with status 137" in msg
+
+    def test_native_binary_vanished_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("native", tmpdir, native="3.93.4", popen_missing=True)
+        assert scanner.fell_back is True
+        assert "not found" in scanner.engine_error()
+
+    def test_docker_without_runtime_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("docker", tmpdir)
+        msg = scanner.engine_error()
+        assert "trufflehog_mode = docker" in msg
+        assert "no container runtime" in msg
+        assert scanner.engine_report() == {
+            "configured": "docker", "used": "regex", "fell_back": True,
+        }
+
+    def test_docker_container_failure_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan(
+                "docker", tmpdir, runtime=("podman", "/usr/bin/podman"), popen_rc=125
+            )
+        assert "truffleHog via podman exited with status 125" in scanner.engine_error()
+
+    def test_native_wrong_version_reason_kept(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+        v2 = subprocess.CompletedProcess(args=[], returncode=0, stdout="trufflehog 2.0.0\n", stderr="")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("subprocess.run", return_value=v2):
+                scanner.scan(tmpdir)
+        assert "v3 required" in scanner.engine_error()
+
+    def test_unrecognised_mode_is_strict(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, mock_popen = self._scan("dokcer", tmpdir)
+        mock_popen.assert_not_called()
+        assert "unrecognised trufflehog_mode 'dokcer'" in scanner.engine_error()
+
+    def test_mode_is_case_insensitive(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): " Native "})
+        assert scanner.trufflehog_mode == "native"
+
+    def test_strict_description_warns_scan_will_fail(self):
+        scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+        with patch.object(scanner, "_detect_native", return_value=None):
+            desc = scanner.scanner_description
+        assert "scan will fail" in desc
+
+    def test_rescan_resets_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner, _ = self._scan("auto", tmpdir)
+            assert scanner.fell_back is True
+            scanner._trufflehog_mode = "off"
+            scanner.scan(tmpdir)
+        assert scanner.fell_back is False
+        assert scanner.fallback_reason == ""
+
+
 class TestBannedStringScanning:
     def test_detects_exact_match(self):
         with tempfile.TemporaryDirectory() as tmpdir:

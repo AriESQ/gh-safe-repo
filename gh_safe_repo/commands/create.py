@@ -1,5 +1,6 @@
 """gh-safe-repo create — Create a new repo with safe defaults."""
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -261,13 +262,19 @@ def run(args):
     if args.from_repo or args.local_path:
         scanner = SecurityScanner(config, debug=args.debug, progress=not json_mode)
 
+    # The pre-flight report is prose; under --json it goes to stderr so stdout
+    # stays machine-readable.
+    def _scan_output():
+        return contextlib.redirect_stdout(sys.stderr) if json_mode else contextlib.nullcontext()
+
     # Pre-flight security scan (--from workflow, non-dry-run only)
     if args.from_repo and not args.dry_run:
         try:
-            decision = run_preflight_scan(
-                client, from_owner, from_repo, config,
-                debug=args.debug, scanner=scanner, yes=args.yes,
-            )
+            with _scan_output():
+                decision = run_preflight_scan(
+                    client, from_owner, from_repo, config,
+                    debug=args.debug, scanner=scanner, yes=args.yes,
+                )
         except APIError as e:
             error(f"Pre-flight scan failed (clone error): {e}")
             sys.exit(1)
@@ -276,9 +283,10 @@ def run(args):
 
     # Pre-flight security scan (--local workflow, non-dry-run only)
     if local_path and not args.dry_run:
-        decision = run_preflight_scan_local(
-            local_path, config, debug=args.debug, scanner=scanner, yes=args.yes
-        )
+        with _scan_output():
+            decision = run_preflight_scan_local(
+                local_path, config, debug=args.debug, scanner=scanner, yes=args.yes
+            )
         if not decision.proceed:
             _abort_on_scan(decision, _info)
 

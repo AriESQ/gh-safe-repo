@@ -882,6 +882,133 @@ class TestScanJson:
         assert "skipped during scan" in captured.err
 
 
+def _write_scan_config(tmp_path, mode):
+    cfg = tmp_path.parent / f"{tmp_path.name}-{mode}.ini"
+    cfg.write_text(f"[pre_flight_scan]\ntrufflehog_mode = {mode}\n")
+    return str(cfg)
+
+
+class TestScanEngine:
+    """`scan` reports the engine that ran; explicit modes may not fall back (#77)."""
+
+    def _run_scan(self, tmp_path, mode, *extra, native=None, runtime=None):
+        argv = ["gh-safe-repo", "scan", str(tmp_path), *extra,
+                "--config", _write_scan_config(tmp_path, mode)]
+        with patch("sys.argv", argv), \
+             patch.object(SecurityScanner, "_detect_native", return_value=native), \
+             patch.object(SecurityScanner, "_detect_container_runtime", return_value=runtime):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        return exc_info.value.code
+
+    def test_json_engine_key_off(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+        code = self._run_scan(tmp_path, "off", "--json")
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["engine"] == {"configured": "off", "used": "regex", "fell_back": False}
+        # Existing keys unchanged.
+        assert {"findings", "summary", "skipped_committed_dirs"} <= set(payload)
+
+    def test_json_auto_fallback_reported_and_exits_zero(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+        code = self._run_scan(tmp_path, "auto", "--json")
+        assert code == 0
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["engine"] == {"configured": "auto", "used": "regex", "fell_back": True}
+        assert "Scan engine: regex (fell back" in captured.err
+
+    def test_json_native_success(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+        proc = MagicMock(communicate=MagicMock(return_value=("", "")), returncode=0)
+        with patch("subprocess.Popen", return_value=proc):
+            code = self._run_scan(tmp_path, "native", "--json", native="3.93.4")
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["engine"] == {
+            "configured": "native", "used": "trufflehog-native", "fell_back": False,
+        }
+
+    def test_explicit_native_fallback_exits_one_with_json(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+        code = self._run_scan(tmp_path, "native", "--json")
+        assert code == 1
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)   # stdout is still a valid document
+        assert payload["engine"]["fell_back"] is True
+        assert payload["summary"]["critical"] == 0
+        assert "trufflehog_mode = native" in captured.err
+        assert "not found on PATH" in captured.err
+
+    def test_explicit_docker_fallback_exits_one_human(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+        code = self._run_scan(tmp_path, "docker")
+        assert code == 1
+        captured = capsys.readouterr()
+        assert "Scan engine: regex (fell back" in captured.out
+        assert "trufflehog_mode = docker" in captured.err
+        assert "no container runtime" in captured.err
+
+
+class TestCreatePreflightEngine:
+    """create --local: explicit-mode fallback exits 1 before anything is created."""
+
+    def _run_create(self, tmp_path, mode, extra_argv=()):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / ".git").mkdir()
+        (src / "main.py").write_text("print('hello')")
+        mock_client = MagicMock()
+        config = make_config({("pre_flight_scan", "trufflehog_mode"): mode})
+        argv = ["gh-safe-repo", "create", "alice/my-repo", "--local", str(src),
+                "--yes", *extra_argv]
+        with patch("sys.argv", argv), \
+             patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+             patch("gh_safe_repo.commands.create.discover_transport") as mock_discover, \
+             patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
+             patch.object(SecurityScanner, "_detect_native", return_value=None), \
+             patch.object(SecurityScanner, "_detect_container_runtime", return_value=None), \
+             patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo:
+            mock_ctx.return_value = MagicMock(
+                client=mock_client, owner="alice", plan_name="free",
+                is_paid_plan=False, config=config,
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            return exc_info.value.code, MockRepo.return_value, mock_discover
+
+    def test_native_fallback_exits_one_without_creating(self, tmp_path, capsys):
+        code, repo_plugin, mock_discover = self._run_create(tmp_path, "native")
+        assert code == 1
+        repo_plugin.apply.assert_not_called()
+        mock_discover.return_value.preflight.assert_not_called()
+        captured = capsys.readouterr()
+        assert "Scan engine: regex (fell back" in captured.out
+        assert "trufflehog_mode = native" in captured.err
+        assert "Nothing was created" in captured.err
+
+    def test_docker_fallback_under_json_keeps_stdout_clean(self, tmp_path, capsys):
+        code, repo_plugin, _ = self._run_create(tmp_path, "docker", ["--json"])
+        assert code == 1
+        repo_plugin.apply.assert_not_called()
+        captured = capsys.readouterr()
+        # Pre-flight prose goes to stderr under --json.
+        assert captured.out == ""
+        assert "Running pre-flight security scan" in captured.err
+        assert "trufflehog_mode = docker" in captured.err
+
+    def test_auto_fallback_does_not_block(self, tmp_path, capsys):
+        from gh_safe_repo.commands._common import run_preflight_scan_local
+        (tmp_path / "main.py").write_text("print('hello')")
+        config = make_config({("pre_flight_scan", "trufflehog_mode"): "auto"})
+        with patch.object(SecurityScanner, "_detect_native", return_value=None), \
+             patch.object(SecurityScanner, "_detect_container_runtime", return_value=None):
+            decision = run_preflight_scan_local(str(tmp_path), config, yes=True)
+        assert decision.proceed is True
+        assert "Scan engine: regex (fell back" in capsys.readouterr().out
+
+
 class TestFormatFindingsJson:
     def _finding(self, severity):
         from gh_safe_repo.security_scanner import Finding, FindingCategory

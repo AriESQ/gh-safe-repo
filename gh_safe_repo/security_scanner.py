@@ -96,6 +96,14 @@ class Severity(Enum):
     INFO = "INFO"
 
 
+# Engine names reported by SecurityScanner.engine_used after scan().
+ENGINE_NATIVE = "trufflehog-native"
+ENGINE_CONTAINER = "trufflehog-container"
+ENGINE_REGEX = "regex"
+
+TRUFFLEHOG_MODES = ("auto", "native", "docker", "off")
+
+
 class FindingCategory(Enum):
     SECRET = "secret"
     EMAIL = "email"
@@ -189,7 +197,7 @@ class SecurityScanner:
         self._scan_emails  = config.getbool("pre_flight_scan", "scan_for_emails", fallback=True)
         self._scan_todos   = config.getbool("pre_flight_scan", "scan_for_todos", fallback=True)
         # trufflehog_mode: auto / native / docker / off
-        mode = config.get("pre_flight_scan", "trufflehog_mode", fallback="auto")
+        mode = (config.get("pre_flight_scan", "trufflehog_mode", fallback="auto") or "auto").strip().lower()
         # Backwards-compat: use_trufflehog = false in old user configs → off
         if mode == "auto":
             old_flag = config.get("pre_flight_scan", "use_trufflehog", fallback=None)
@@ -198,6 +206,15 @@ class SecurityScanner:
         self._trufflehog_mode = mode
         # Discovery result cache: None = not yet run; dict after first _run_discovery() call
         self._discovery: Optional[dict] = None
+        # Why truffleHog could not be used (discovery or invocation); "" if it could.
+        self._trufflehog_failure = ""
+        # Populated by scan(): the engine that actually produced secret findings
+        # (ENGINE_* constant), whether that was a fallback from truffleHog to
+        # regex, and why. Plan-time scanner_description says what *should* run;
+        # these say what *did*.
+        self.engine_used: Optional[str] = None
+        self.fell_back = False
+        self.fallback_reason = ""
         # float() then int() to allow decimal config values like "0.001" for tests
         self._max_file_size_bytes = int(
             float(config.get("pre_flight_scan", "max_file_size_mb", fallback="100")) * 1024 * 1024
@@ -313,21 +330,30 @@ class SecurityScanner:
         output = (result.stdout + result.stderr).strip()
         m = re.search(r"(\d+)\.(\d+)\.(\d+)", output)
         if not m:
-            print(
-                _WARN + " unrecognised truffleHog version output "
-                "— falling back to container or regex scanner",
-                file=sys.stderr,
+            self._trufflehog_failure = "unrecognised truffleHog version output"
+            self._warn_auto_fallback(
+                self._trufflehog_failure + " — falling back to container or regex scanner"
             )
             return None
         major = int(m.group(1))
         if major != 3:
-            print(
-                _WARN + f" truffleHog v{m.group(0)} detected "
-                f"(v3 required) — falling back to container or regex scanner",
-                file=sys.stderr,
+            self._trufflehog_failure = f"truffleHog v{m.group(0)} found on PATH (v3 required)"
+            self._warn_auto_fallback(
+                f"truffleHog v{m.group(0)} detected "
+                f"(v3 required) — falling back to container or regex scanner"
             )
             return None
         return m.group(0)   # e.g. "3.93.4"
+
+    def _warn_auto_fallback(self, msg: str) -> None:
+        """Warn about a fallback, but only in auto mode.
+
+        In an explicit mode (native/docker) a fallback is a failure: the reason
+        is kept in _trufflehog_failure and reported once by engine_error(),
+        rather than as a "falling back" warning that would contradict it.
+        """
+        if self._trufflehog_mode == "auto":
+            print(_WARN + " " + msg, file=sys.stderr)
 
     def _detect_container_runtime(self) -> Optional[Tuple[str, str]]:
         """Return (name, full_path) for podman or docker, or None.
@@ -360,6 +386,14 @@ class SecurityScanner:
             self._discovery = {"method": "none"}
             return self._discovery
 
+        if mode not in TRUFFLEHOG_MODES:
+            self._trufflehog_failure = (
+                f"unrecognised trufflehog_mode {mode!r} "
+                f"(expected one of: {', '.join(TRUFFLEHOG_MODES)})"
+            )
+            self._discovery = {"method": "none"}
+            return self._discovery
+
         # Step 1: try native truffleHog (auto or native mode)
         if mode in ("auto", "native"):
             version = self._detect_native()
@@ -367,11 +401,8 @@ class SecurityScanner:
                 self._discovery = {"method": "native", "version": version}
                 return self._discovery
             if mode == "native":
-                print(
-                    _WARN + " truffleHog not found on PATH "
-                    "(trufflehog_mode = native) — falling back to regex scanner",
-                    file=sys.stderr,
-                )
+                if not self._trufflehog_failure:
+                    self._trufflehog_failure = "truffleHog not found on PATH"
                 self._discovery = {"method": "none"}
                 return self._discovery
             # mode == "auto": fall through to container detection
@@ -387,15 +418,12 @@ class SecurityScanner:
                 }
                 return self._discovery
             if mode == "docker":
-                print(
-                    _WARN + " trufflehog_mode = docker but no container runtime "
-                    "(podman or docker) found — falling back to regex scanner",
-                    file=sys.stderr,
-                )
+                self._trufflehog_failure = "no container runtime (podman or docker) found"
                 self._discovery = {"method": "none"}
                 return self._discovery
 
         # Step 3: nothing available (auto mode exhausted all options)
+        self._trufflehog_failure = "truffleHog not found and no container runtime available"
         print(
             _WARN + " truffleHog not found and no container runtime available "
             "— using regex scanner\n"
@@ -415,7 +443,59 @@ class SecurityScanner:
             return f"truffleHog via {disc['runtime']}"
         if self._trufflehog_mode == "off":
             return "regex only"
+        if self.is_strict:
+            return (
+                f"truffleHog unavailable: {self._trufflehog_failure} — "
+                f"trufflehog_mode = {self._trufflehog_mode}, so the scan will fail"
+            )
         return "regex only — see warning above"
+
+    @property
+    def trufflehog_mode(self) -> str:
+        """Effective mode, after the legacy use_trufflehog mapping."""
+        return self._trufflehog_mode
+
+    @property
+    def is_strict(self) -> bool:
+        """True when the configured mode forbids a silent fallback to regex.
+
+        `native` and `docker` name a specific engine, so falling back to regex
+        would quietly give weaker secret detection than the user asked for.
+        An unrecognised value is treated the same way rather than as `auto`.
+        """
+        return self._trufflehog_mode not in ("auto", "off")
+
+    def engine_error(self) -> Optional[str]:
+        """After scan(): an error message if an explicit mode fell back, else None."""
+        if not (self.fell_back and self.is_strict):
+            return None
+        return (
+            f"trufflehog_mode = {self._trufflehog_mode} but truffleHog could not run "
+            f"({self.fallback_reason}); refusing to fall back to the regex scanner. "
+            f"Fix the truffleHog install, or set trufflehog_mode = auto to allow the fallback"
+        )
+
+    def engine_report(self) -> dict:
+        """The `engine` object for `scan --json`."""
+        return {
+            "configured": self._trufflehog_mode,
+            "used": self.engine_used,
+            "fell_back": self.fell_back,
+        }
+
+    @property
+    def engine_summary(self) -> str:
+        """One-line human description of the engine scan() actually used."""
+        disc = self._discovery or {}
+        if self.engine_used == ENGINE_NATIVE:
+            return f"truffleHog v{disc.get('version', '?')}"
+        if self.engine_used == ENGINE_CONTAINER:
+            return f"truffleHog via {disc.get('runtime', 'container')}"
+        if self.fell_back:
+            return f"regex (fell back from truffleHog: {self.fallback_reason})"
+        if not self._scan_secrets:
+            return "regex (secret scanning disabled)"
+        return "regex"
 
     # --- Scanning ---
 
@@ -430,11 +510,24 @@ class SecurityScanner:
         # truffleHog handles secrets (including full git history) when available
         secrets_via_trufflehog = False
         findings: List[Finding] = []
-        if self._scan_secrets:
+        self.engine_used = ENGINE_REGEX
+        self.fell_back = False
+        self.fallback_reason = ""
+        if self._scan_secrets and self._trufflehog_mode != "off":
             trufflehog_results = self._try_trufflehog(root_path)
             if trufflehog_results is not None:
                 findings.extend(trufflehog_results)
                 secrets_via_trufflehog = True
+                method = (self._discovery or {}).get("method")
+                self.engine_used = ENGINE_CONTAINER if method == "container" else ENGINE_NATIVE
+            else:
+                self.fell_back = True
+                self.fallback_reason = self._trufflehog_failure or "truffleHog failed"
+                if self.debug:
+                    print(
+                        f"[debug] secret scan engine: regex (fell back: {self.fallback_reason})",
+                        file=sys.stderr,
+                    )
 
         # Single walk: large files, AI context files, text content.
         # Always run regex secret patterns even when trufflehog succeeds —
@@ -887,6 +980,7 @@ class SecurityScanner:
             )
 
         except FileNotFoundError:
+            self._trufflehog_failure = f"could not execute {cmd[0]!r} (not found)"
             if self.debug:
                 print(
                     "[debug] trufflehog invocation failed (binary not found), falling back to regex",
@@ -906,6 +1000,11 @@ class SecurityScanner:
         # JSON stdout is the authoritative source of findings regardless of
         # exit code; the code below parses it in all (0, 1) cases.
         if result.returncode not in (0, 1):
+            how = (
+                "truffleHog" if disc["method"] == "native"
+                else f"truffleHog via {disc.get('runtime', 'container')}"
+            )
+            self._trufflehog_failure = f"{how} exited with status {result.returncode}"
             if self.debug:
                 print(
                     f"[debug] trufflehog exited with {result.returncode}, falling back to regex",

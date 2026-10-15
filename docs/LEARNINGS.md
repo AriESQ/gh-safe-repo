@@ -255,6 +255,8 @@ Each of these is a self-contained follow-up branch off `master` once `GitTranspo
 
 **Non-TTY detection is on `sys.stdin`, not stdout.** The question is whether a prompt can be *answered*; a piped stdout with a live terminal on stdin is still interactive. Colour suppression asks the opposite question and keys off `sys.stdout.isatty()` (plus `NO_COLOR`), evaluated once at import in `commands/_common.py` so the constants themselves go empty — that way the many direct `f"{_BOLD}..."` uses are covered without auditing every call site. `security_scanner._WARN` does the same for stderr.
 
+**The final confirmation prompt had the same bug (#93).** `create` and `fix` caught `(EOFError, KeyboardInterrupt)` together and exited 0, so `fix OWNER/REPO < /dev/null` printed the plan and "succeeded" with nothing applied. `_common.confirm()` now owns that prompt for both commands: EOF → error naming `--yes`, exit 1; `n`/empty line/Ctrl-C → `False` (the caller prints "Aborted." and exits 0). Unlike the scan prompt, it does **not** pre-check `sys.stdin.isatty()`: an answer read from a pipe (`echo y | fix ...`) is an explicit answer and is honoured, and only "no answer at all" (EOF) is treated as unattended. The cost is that a pipe that never closes and never writes still blocks on `input()`; that is the caller holding stdin open, not something the tool can tell apart from a slow human. Ctrl-C *at the prompt* stays a decline (exit 0) rather than the global 130, matching the scan prompt — the user is answering the question, not interrupting work in progress.
+
 **truffleHog writes its progress log to stderr**, which is what makes `scan --json` safe to pipe. Worth re-checking if the scanner ever gains another engine.
 
 **The skill is documentation with no failure mode.** `skills/gh-safe-repo/SKILL.md` is the contract agents get *instead of* the README — but no test covers it and no human reads it, so it rots silently and then actively teaches wrong flags. It lives outside `.claude/skills/` deliberately: that path auto-loads, which would activate the "how to use the CLI" skill for everyone working *on* the CLI.
@@ -342,6 +344,11 @@ raises instead of guessing (security toggles: anything but 2xx/404; tag and
 branch rulesets: 403 and failed detail reads), and the verifier turns a read
 that keeps failing into `unknown`, which warns but exits `0`. Planning keeps
 `strict=False`, so `fix --dry-run` output is unchanged.
+
+**Private vulnerability reporting is not available on free + private.** The
+plan-limits tables said it was; `GET private-vulnerability-reporting` on a
+free-plan private repo returns 404 (checked live 2026-10-14), so the plugin's
+SKIP there is correct and the tables were wrong.
 
 **`GET private-vulnerability-reporting` answers 200 when the feature is off.**
 The body is `{"enabled": false}`. The bare 2xx check above (Security Plugin

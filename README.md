@@ -205,7 +205,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--public` | Create as a public repo (default: private) |
 | `--local PATH` | Push code from a local git repository into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
 | `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
-| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Pre-flight scan warnings are accepted automatically; **critical** findings still stop the run (exit `1`). |
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Pre-flight scan warnings are accepted automatically; **critical** findings still stop the run (exit `1`). Required when stdin is closed; without it the run exits `1` |
 | `--dry-run` | Print the plan without making any changes |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table; on a real run, printed once at the end with a `verification` block |
 | `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
@@ -215,7 +215,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 
 | Option | Description |
 |---|---|
-| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
+| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Required when stdin is closed; without it the run exits `1` |
 | `--dry-run` | Show settings diff without applying changes |
 | `--migrate-branch-protection` | Convert existing classic branch protection to a ruleset (see [Branch protection](#branch-protection-public-repos-or-any-repo-on-a-paid-plan)) |
 | `--json` | Emit the plan as JSON to stdout instead of the ANSI table; on a real run, printed once at the end with a `verification` block |
@@ -243,7 +243,7 @@ gh-safe-repo create <owner/repo> --dry-run --json
 gh-safe-repo fix <owner/repo> --dry-run --json
 ```
 
-When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer, the closing banner) go to stderr, so the output is clean for piping or scripting. With `--dry-run` the document is printed immediately. On a real `create` or `fix` run it is printed once, at the end, with a `verification` block added (see [Verification](#verification)); without `--yes`, the plan table is shown on stderr before the prompt instead. If you decline the prompt, the document is printed without `verification`. A run that stops with exit `1` before or during the apply (repo already exists, blocked pre-flight scan, credential pre-flight, failed code push) prints no document: stdout is empty and the error is on stderr.
+When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer, the closing banner) go to stderr, so the output is clean for piping or scripting. With `--dry-run` the document is printed immediately. On a real `create` or `fix` run it is printed once, at the end, with a `verification` block added (see [Verification](#verification)); without `--yes`, the plan table is shown on stderr before the prompt instead. If you decline the prompt, the document is printed without `verification`. A run that stops with exit `1` before or during the apply (repo already exists, blocked pre-flight scan, unanswered confirmation prompt, credential pre-flight, failed code push) prints no document: stdout is empty and the error is on stderr.
 
 **Change types** (the `Type` column, colourised in a terminal):
 
@@ -325,7 +325,7 @@ thing on stdout; progress, warnings and errors go to stderr.
 | Code | Meaning |
 |---|---|
 | `0` | Success, or the user declined at an interactive prompt. For `create` and `fix`, success means everything applied was read back and verified (settings that could not be read back are warned about but do not fail the run) |
-| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `create`, also a fatal verification check: the new repo cannot be found, or its visibility is not what was asked for. For `scan`, also "critical findings present" |
+| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), a `create`/`fix` confirmation prompt that hit end of input without `--yes`, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `create`, also a fatal verification check: the new repo cannot be found, or its visibility is not what was asked for. For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
 | `3` | `create` or `fix` applied the changes, but at least one setting did not stick when read back (see [Verification](#verification)) |
 | `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
@@ -333,6 +333,11 @@ thing on stdout; progress, warnings and errors go to stderr.
 A run that cannot ask for confirmation never exits `0` without doing the work:
 if there is no terminal and no `--yes`, or `--yes` is set but the pre-flight
 scan found critical secrets, the command reports the reason and exits `1`.
+The same goes for the `create`/`fix` confirmation prompt: if stdin is closed
+(`< /dev/null`, a CI job or agent subprocess with no input), the command
+prints `--yes is required for unattended runs` and exits `1`. An answer piped
+on stdin counts as an answer: `echo y | gh-safe-repo fix <owner/repo>` applies,
+and `n`, an empty line or Ctrl-C at the prompt is a decline (exit `0`).
 
 ### Verification
 
@@ -748,7 +753,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 | Dependabot security updates | Yes | No | Yes |
 | Secret scanning | Auto | No | Yes |
 | Push protection | Yes | No | Yes |
-| Private vulnerability reporting | Yes | Yes | Yes |
+| Private vulnerability reporting | Yes | No | Yes |
 | Dependency graph | Auto | No | Yes |
 
 `gh-safe-repo` detects your plan level and repo visibility at runtime. Unavailable features appear as `SKIP` in the plan output with a clear reason — the tool never fails silently.

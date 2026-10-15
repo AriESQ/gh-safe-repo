@@ -45,9 +45,9 @@ since the initial release.
   end, with the `verification` block, instead of printing the plan before
   the prompt (#77). Without `--yes` the plan table goes to stderr before the
   prompt; declining prints the document without `verification`. A run that
-  exits `1` before or during the apply (repo exists, blocked scan,
-  credential pre-flight, failed push) prints no document. `--dry-run --json`
-  is unchanged.
+  exits `1` before or during the apply (repo exists, blocked scan, prompt
+  at end of input, credential pre-flight, failed push) prints no document.
+  `--dry-run --json` is unchanged.
 - `fix` builds its closing banner from the verification result: green
   `Done` only when every setting checks out, otherwise yellow `Done with
   problems` (#77).
@@ -68,6 +68,16 @@ since the initial release.
   touch can no longer leave a half-pushed repo.
 
 ### Fixed
+- `create` and `fix` run without `--yes` and with stdin closed (`< /dev/null`,
+  a CI job, an agent subprocess) exited `0` at the confirmation prompt with
+  nothing done, indistinguishable from success (#93). They now print
+  `--yes is required for unattended runs` on stderr and exit `1`. Typing `n`
+  (or an empty line, or Ctrl-C) at the prompt still exits `0`, and an answer
+  piped on stdin (`echo y | gh-safe-repo fix ...`) is still honoured.
+- The plan-limits tables in the README and the agent skill listed private
+  vulnerability reporting as available on free plans with private repos. GitHub
+  returns 404 for it there, so `create` and `fix` skip it, as the plan already
+  showed; the tables now say so.
 - `create --json --local`/`--from` printed the pre-flight scan report on
   stdout ahead of the JSON plan. It now goes to stderr.
 - A missed security-key touch (`signing failed for ...-SK`) during the push,

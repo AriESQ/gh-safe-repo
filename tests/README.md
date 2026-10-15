@@ -34,6 +34,9 @@ and Tier 3 E2E tests below skip themselves. CI also sets `trufflehog_mode = off`
 truffleHog image. New tests must pass without network access or a token. CI sets
 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, but tests that commit should still pass
 `-c user.name=... -c commit.gpgsign=false` so they work on any machine.
+`tests/conftest.py` turns off git's background auto-maintenance (`maintenance.auto`,
+`gc.auto`) for every test through `GIT_CONFIG_*` env vars; a detached `gc` still writing
+into `.git` made `TemporaryDirectory` cleanup fail intermittently in CI.
 
 ## Test files
 

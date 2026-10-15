@@ -1740,3 +1740,182 @@ class TestCreateVerification:
         assert "✗ repo/description" in out
         assert "✗ repo/topics" in out
         assert "gh repo edit alice/demo --add-topic a --add-topic b" in out
+
+
+class TestConfirmationPromptUnattended:
+    """#93: the confirmation prompt never lets an unattended run exit 0.
+
+    EOF at the prompt (no --yes, stdin closed) → exit 1 with an error naming
+    --yes. A real "n" stays exit 0. Piped answers are honoured.
+    """
+
+    PLUGINS = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
+               "SecurityPlugin", "TagProtectionPlugin"]
+
+    @staticmethod
+    def _work():
+        p = Plan()
+        p.add(Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", old=False, new=True,
+        ))
+        return p
+
+    def _input(self, answer):
+        """builtins.input stand-in: echo the prompt (like input does), then answer."""
+        def fake(prompt):
+            print(prompt, end="")
+            if isinstance(answer, BaseException) or (
+                isinstance(answer, type) and issubclass(answer, BaseException)
+            ):
+                raise answer
+            return answer
+        return fake
+
+    def _run_fix(self, answer, argv_extra=()):
+        patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in self.PLUGINS]
+        mocks = dict(zip(self.PLUGINS, (p.start() for p in patches)))
+        try:
+            for M in mocks.values():
+                inst = MagicMock()
+                inst.owner, inst.repo = "alice", "demo"
+                inst.plan.return_value = Plan()
+                inst.fetch_current_state.return_value = {}
+                M.return_value = inst
+            sec = mocks["SecurityPlugin"].return_value
+            # Planning read has work; the post-apply re-audit is clean.
+            sec.plan.side_effect = [self._work(), Plan()]
+            client = MagicMock()
+            client.get_repo_data.return_value = dict(TestFixVerification.REPO)
+            argv = ["gh-safe-repo", "fix", "alice/demo", *argv_extra]
+            with patch("sys.argv", argv), \
+                 patch("gh_safe_repo.commands.fix.build_context") as ctx, \
+                 patch("gh_safe_repo.verify.time.sleep"), \
+                 patch("builtins.input", side_effect=self._input(answer)) as inp:
+                ctx.return_value = MagicMock(
+                    client=client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                    code = 0
+                except SystemExit as e:
+                    code = e.code
+            return code, sec, inp
+        finally:
+            for p in patches:
+                p.stop()
+
+    def _run_create(self, tmp_path, answer, argv_extra=()):
+        (tmp_path / ".git").mkdir()
+        transport = MagicMock()
+        client = MagicMock()
+        client.transport = transport
+        argv = ["gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path),
+                *argv_extra]
+        with patch("sys.argv", argv), \
+             patch("gh_safe_repo.commands.create.build_context") as ctx, \
+             patch("gh_safe_repo.commands.create.discover_transport", return_value=transport), \
+             patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
+             patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                   return_value=ScanDecision(proceed=True)), \
+             patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
+             patch("gh_safe_repo.commands.create.ActionsPlugin"), \
+             patch("gh_safe_repo.commands.create.BranchProtectionPlugin"), \
+             patch("gh_safe_repo.commands.create.SecurityPlugin"), \
+             patch("gh_safe_repo.commands.create.TagProtectionPlugin"), \
+             patch("builtins.input", side_effect=self._input(answer)) as inp:
+            ctx.return_value = MagicMock(
+                client=client, owner="alice", plan_name="free",
+                is_paid_plan=False, config=make_config(),
+            )
+            try:
+                main()
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, MockRepo, transport, inp
+
+    # -- fix ---------------------------------------------------------------
+
+    def test_fix_eof_exits_1_naming_yes(self, capsys):
+        code, sec, _ = self._run_fix(EOFError)
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "--yes is required for unattended runs" in err
+        assert "Nothing was changed." in err
+        sec.apply.assert_not_called()
+
+    def test_fix_interactive_no_exits_0(self, capsys):
+        code, sec, _ = self._run_fix("n")
+        assert code == 0
+        assert "Aborted." in capsys.readouterr().out
+        sec.apply.assert_not_called()
+
+    def test_fix_empty_answer_is_a_decline(self, capsys):
+        """An empty line (Enter, or `echo | fix`) takes the [y/N] default."""
+        code, sec, _ = self._run_fix("")
+        assert code == 0
+        sec.apply.assert_not_called()
+
+    def test_fix_ctrl_c_at_prompt_is_a_decline(self, capsys):
+        code, sec, _ = self._run_fix(KeyboardInterrupt)
+        assert code == 0
+        sec.apply.assert_not_called()
+
+    def test_fix_piped_yes_proceeds(self, capsys):
+        code, sec, _ = self._run_fix("y\n")
+        assert code == 0
+        sec.apply.assert_called_once()
+
+    def test_fix_yes_flag_never_prompts(self, capsys):
+        code, sec, inp = self._run_fix(EOFError, argv_extra=["--yes"])
+        assert code == 0
+        inp.assert_not_called()
+        sec.apply.assert_called_once()
+
+    def test_fix_eof_json_keeps_stdout_clean(self, capsys):
+        code, _, _ = self._run_fix(EOFError, argv_extra=["--json"])
+        assert code == 1
+        captured = capsys.readouterr()
+        # A real `fix --json` prints its document at the end; it never got there.
+        assert captured.out == ""
+        assert "Apply 1 change(s)" in captured.err
+        assert "--yes is required" in captured.err
+
+    # -- create ------------------------------------------------------------
+
+    def test_create_eof_exits_1_before_creating(self, tmp_path, capsys):
+        code, MockRepo, transport, _ = self._run_create(tmp_path, EOFError)
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "--yes is required for unattended runs" in err
+        assert "Nothing was created." in err
+        MockRepo.return_value.apply.assert_not_called()
+        transport.preflight.assert_not_called()
+
+    def test_create_interactive_no_exits_0(self, tmp_path, capsys):
+        code, MockRepo, _, _ = self._run_create(tmp_path, "n")
+        assert code == 0
+        assert "Aborted." in capsys.readouterr().out
+        MockRepo.return_value.apply.assert_not_called()
+
+    def test_create_piped_yes_proceeds(self, tmp_path, capsys):
+        code, MockRepo, transport, _ = self._run_create(tmp_path, "yes")
+        transport.preflight.assert_called_once()
+        MockRepo.return_value.apply.assert_called_once()
+
+    def test_create_yes_flag_never_prompts(self, tmp_path, capsys):
+        _, MockRepo, _, inp = self._run_create(tmp_path, EOFError, argv_extra=["--yes"])
+        inp.assert_not_called()
+        MockRepo.return_value.apply.assert_called_once()
+
+    def test_create_eof_json_keeps_stdout_clean(self, tmp_path, capsys):
+        code, _, _, _ = self._run_create(tmp_path, EOFError, argv_extra=["--json"])
+        assert code == 1
+        captured = capsys.readouterr()
+        # Like fix: a real `create --json` prints its document at the end
+        # (#77); an exit-1 abort before applying prints none.
+        assert captured.out == ""
+        assert "Create alice/my-repo" in captured.err
+        assert "--yes is required" in captured.err

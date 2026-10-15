@@ -493,3 +493,22 @@ choice and report `fell_back: false`.
 Under `create --json` the pre-flight report used to print to stdout ahead of
 the plan document. It now runs inside `prose_to_stderr(json_mode)` (the shared
 `_common.py` helper), so stdout carries only JSON.
+
+## Credential Errors That Point the Wrong Way (#100)
+
+Found in a live `create` test. Two failures were reported with the wrong
+cause:
+
+- **A pre-flight check that times out on an unanswered security-key touch**
+  said "Network issue, or the credential helper is hanging". Over SSH a
+  FIDO key prompt is the common reason, and 15s was too short for someone
+  who has to notice the blink, now that pre-flight runs right after the scan
+  (#89). SSH now gets 45s (`PREFLIGHT_TIMEOUT`); HTTPS stays at 15s, since
+  there a hang means a stuck helper.
+- **`--from` run outside the directory that sets `core.sshCommand`** fails
+  with a bare `Permission denied (publickey)` and no key prompt at all: ssh
+  used the default identity. `--from` has no local repo, so `source_dir` is
+  the current directory, and an `includeIf`-scoped key doesn't apply
+  elsewhere. `GitTransport.auth_hint()` adds the directory and the
+  discovered `core.sshCommand` (or "not set") to publickey failures; a
+  missed-touch hint takes priority when both apply.

@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import subprocess
 import pytest
 
+from gh_safe_repo.git_transport import GitTransport
+
 from gh_safe_repo.github_client import LocalWiring
 
 from gh_safe_repo.errors import APIError, AuthError
@@ -406,6 +408,38 @@ class TestCreateFlagValidation:
         assert code == 1
         assert "git clone --mirror git@github.com:ariesq/src.git" in err
         assert "push --mirror git@github.com:AriESQ/my-repo.git" in err
+
+    def test_from_scan_clone_publickey_names_ssh_config_dir(self, capsys):
+        """#100: a --from clone that fails with a plain publickey error says
+        where the SSH settings were read from, before anything is created."""
+        mock_client = MagicMock()
+        transport = GitTransport(
+            protocol="ssh", source_dir="/tmp/elsewhere", ssh_command=None,
+            has_credential_helper=False,
+        )
+        with patch("sys.argv", ["gh-safe-repo", "create", "ariesq/my-repo",
+                                "--from", "ariesq/src", "--yes"]), \
+             patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
+             patch("gh_safe_repo.commands.create.discover_transport",
+                   return_value=transport), \
+             patch("gh_safe_repo.commands.create.check_repo_exists",
+                   side_effect=lambda c, o, r: r == "src"), \
+             patch("gh_safe_repo.commands.create.run_preflight_scan",
+                   side_effect=APIError(
+                       "git clone (scan) failed for git@github.com:AriESQ/src.git: "
+                       "git@github.com: Permission denied (publickey).")), \
+             patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo:
+            mock_ctx.return_value = MagicMock(
+                client=mock_client, owner="AriESQ", plan_name="free",
+                is_paid_plan=False, config=make_config(),
+            )
+            with pytest.raises(SystemExit) as exc:
+                main()
+        err = capsys.readouterr().err
+        assert exc.value.code == 1
+        assert "Likely cause:" in err and "/tmp/elsewhere" in err
+        assert "core.sshCommand: not set" in err
+        MockRepo.return_value.apply.assert_not_called()
 
     def test_plugins_constructed_with_canonical_owner(self, tmp_path):
         """Plugin constructors must receive the canonical owner for API paths."""

@@ -490,11 +490,13 @@ Repository admins are on the bypass list (consistent with the branch protection 
 
 **Git credentials.** Both push over git transport using your own credentials, not the API token: an SSH key loaded into `ssh-agent` when `gh config get -h github.com git_protocol` is `ssh`, or an HTTPS credential helper (`gh auth setup-git` configures one). This is deliberate — the OAuth token would need the `workflow` scope to push `.github/workflows/*` files. In environments with neither (e.g. CI with only `GITHUB_TOKEN`), the tool falls back to HTTPS with the token in the URL; see `[git_transport] mode` in [Configuration](#configuration).
 
+SSH settings such as `core.sshCommand` come from the git config of the `--local` PATH, or of the **current directory** for `--from`. If you pick a key per directory (for example `includeIf` plus `core.sshCommand`), run `--from` from inside a directory where that applies; otherwise ssh falls back to your default key and fails with `Permission denied (publickey)`. When that happens, the error names the directory and the `core.sshCommand` that was found, and `--debug` prints it up front.
+
 **`--local PATH`** — `PATH` must be an initialized git repository (`git init` or a clone):
 
 1. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
 2. You review findings and confirm (or abort)
-3. Your git credentials for `github.com` are verified (SSH probe when the protocol is `ssh`; HTTPS is trusted), so a missing key fails before any repo is created. This runs after the prompt, right before creation, so a hardware security key is asked for its touch close to the real push
+3. Your git credentials for `github.com` are verified (SSH probe when the protocol is `ssh`; HTTPS is trusted), so a missing key fails before any repo is created. This runs after the prompt, right before creation, so a hardware security key is asked for its touch close to the real push. Over SSH the check waits up to 45 seconds (15 over HTTPS); a timeout says the key was probably waiting for a touch
 4. The repo is created, and actions permissions and security settings are applied
 5. Every local branch and tag is pushed in a single `git push` (from a `--bare` clone, so branches other than the checked-out one are included), so a hardware key needs one touch. The default branch is listed first and then set via the API. If a security key's touch is missed, the push is retried once
 6. Branch and tag protection are applied — after the push, so the target branch exists

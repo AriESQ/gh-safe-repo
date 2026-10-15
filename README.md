@@ -131,6 +131,8 @@ gh-safe-repo create <owner/repo> --public   # public — branch and tag protecti
 
 A plain `create` initializes the repo so a default branch exists (branch protection needs one), then deletes the auto-generated `README.md` so you start clean. Set `auto_init = true` in config to keep it.
 
+After applying, `create` reads back what it set and prints a **Verified** section before the banner (see [Verification](#verification)): that the repo exists with the visibility you asked for, that the README is gone, every setting it applied, and that branch and tag protection cover the branch and tag patterns. It exits `3` if a setting did not stick and `1` if the repo is missing or has the wrong visibility.
+
 ### Push an existing local project
 
 ```bash
@@ -205,7 +207,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Pre-flight scan warnings are accepted automatically; **critical** findings still stop the run (exit `1`). Required when stdin is closed; without it the run exits `1` |
 | `--dry-run` | Print the plan without making any changes |
-| `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table; on a real run, printed once at the end with a `verification` block |
 | `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | *(global)* Print every API call and response |
 
@@ -241,7 +243,7 @@ gh-safe-repo create <owner/repo> --dry-run --json
 gh-safe-repo fix <owner/repo> --dry-run --json
 ```
 
-When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer, the closing banner) go to stderr, so the output is clean for piping or scripting. With `--dry-run` the document is printed immediately. On a real `fix` run it is printed once, at the end, with a `verification` block added (see [Verification](#verification)).
+When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer, the closing banner) go to stderr, so the output is clean for piping or scripting. With `--dry-run` the document is printed immediately. On a real `create` or `fix` run it is printed once, at the end, with a `verification` block added (see [Verification](#verification)); without `--yes`, the plan table is shown on stderr before the prompt instead. If you decline the prompt, the document is printed without `verification`. A run that stops with exit `1` before or during the apply (repo already exists, blocked pre-flight scan, unanswered confirmation prompt, credential pre-flight, failed code push) prints no document: stdout is empty and the error is on stderr.
 
 **Change types** (the `Type` column, colourised in a terminal):
 
@@ -322,10 +324,10 @@ thing on stdout; progress, warnings and errors go to stderr.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success, or the user declined at an interactive prompt. For `fix`, success means every changed setting was read back and verified (settings that could not be read back are warned about but do not fail the run) |
-| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), a `create`/`fix` confirmation prompt that hit end of input without `--yes`, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `scan`, also "critical findings present" |
+| `0` | Success, or the user declined at an interactive prompt. For `create` and `fix`, success means everything applied was read back and verified (settings that could not be read back are warned about but do not fail the run) |
+| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), a `create`/`fix` confirmation prompt that hit end of input without `--yes`, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `create`, also a fatal verification check: the new repo cannot be found, or its visibility is not what was asked for. For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
-| `3` | `fix` applied the changes, but at least one setting did not stick when read back (see [Verification](#verification)) |
+| `3` | `create` or `fix` applied the changes, but at least one setting did not stick when read back (see [Verification](#verification)) |
 | `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
 
 A run that cannot ask for confirmation never exits `0` without doing the work:
@@ -339,9 +341,9 @@ and `n`, an empty line or Ctrl-C at the prompt is a decline (exit `0`).
 
 ### Verification
 
-A `fix` run that applies changes then reads each changed setting back from the
-GitHub API, the same way `fix --dry-run` audits a repo, and prints one row per
-setting:
+A `create` or `fix` run that applies changes then reads each changed setting
+back from the GitHub API, the same way `fix --dry-run` audits a repo, and
+prints one row per setting:
 
 ```
 Verified
@@ -357,9 +359,23 @@ Verified
 | `✗` | `mismatch` | GitHub holds something else (the request was ignored, or it failed and was reported as a warning) | `3` |
 | `?` | `unknown` | The setting could not be read back (permission or server error) | `0`, with a warning |
 
+`create` adds checks for what only a new repo has:
+
+| Check | Passes when | Fails with |
+|---|---|---|
+| `repo/repository` | `GET /repos` finds the new repo | exit `1` (fatal); nothing else is checked |
+| `repo/visibility` | it is `private` (or `public` with `--public`) | exit `1` (fatal): a repo meant to be private that came out public needs fixing now, and the remediation is the exact `gh repo edit … --visibility` command |
+| `file/readme` | the auto-generated `README.md` is gone (plain `create` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
+| `repo/description`, `repo/topics` | `--from`: the source's description and topics were copied | exit `3`, with the `gh repo edit` command |
+| `branch_protection/protected_branches`, `tag_protection/protected_tags` | the ruleset (or classic protection) covers the default branch and the configured tag patterns | exit `3` |
+
+Checks marked fatal carry `"fatal": true` in JSON. A fatal check that could
+not be read is `unknown`, not a failure; if `repo/repository` itself cannot be
+read, the other checks are skipped (they would only fail the same way).
+
 GitHub is briefly inconsistent right after a write, so a setting that reads
 wrong or cannot be read is read again after 1s, 2s and 4s (about 7s at worst
-for the whole run) before it is reported. Only settings `fix` changed are
+for the whole run) before it is reported. Only settings the run changed are
 read back; `SKIP` rows are never re-checked. The closing banner is green
 `Done` only when every check is `ok`; otherwise it is yellow
 `Done with problems`.

@@ -47,10 +47,10 @@ drops ANSI codes when stdout is not a terminal.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `fix`, every changed setting was read back and verified (`unknown` checks warn but still exit `0`) |
-| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes) |
+| `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `create` and `fix`, everything applied was read back and verified (`unknown` checks warn but still exit `0`) |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes). For `create`, also a failed **fatal** check: the new repo cannot be found, or its visibility is wrong |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--local` with `--from` |
-| `3` | `fix` applied the changes but at least one setting did not stick when read back (a `mismatch` check). See Failure modes |
+| `3` | `create` or `fix` applied the changes but at least one setting did not stick when read back (a non-fatal `mismatch` check). For `create` the repo exists and is usable. See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
 
 In a git repo the built-in scan covers tracked files only (`git ls-files`) —
@@ -73,9 +73,10 @@ so `scan` returning `1` is a *result*, not a crash.
 
 `summary` only lists types that occur — use `.get("delete", 0)`.
 
-`--dry-run --json` prints that document straight away. A real `fix --json`
-prints it **once, at the end**, after applying and reading the settings back,
-with a top-level `verification` block:
+`--dry-run --json` prints that document straight away. A real `create --json`
+or `fix --json` prints it **once, at the end**, after applying and reading the
+settings back, with a top-level `verification` block. (Before #77 `create`
+printed the plan before applying; parse stdout only after the process exits.)
 
 ```json
 "verification": {
@@ -87,12 +88,25 @@ with a top-level `verification` block:
 }
 ```
 
-`status` is `ok`, `mismatch` (GitHub holds something else → exit `3`) or
-`unknown` (could not be read back after retries; `actual` is `null`; exit
-stays `0`). All three `summary` keys are always present. The block is absent
-on `--dry-run` and when the prompt is declined; with nothing to change it is
+`status` is `ok`, `mismatch` (GitHub holds something else → exit `3`, or
+`1` when `fatal` is `true`) or `unknown` (could not be read back after
+retries; `actual` is `null`; exit stays `0`, even for a fatal check). All
+three `summary` keys are always present. The block is absent on `--dry-run`
+and when the prompt is declined; `fix` with nothing to change gives
 `{"ok": true, "checks": [], ...}`. Trust `verification.ok`, not the absence
 of warnings on stderr.
+
+`create` adds checks no audit can make: `repo/repository` (the repo exists)
+and `repo/visibility` (both `fatal`), `file/readme` (the auto-generated
+README is gone), `repo/description` and `repo/topics` (`--from` copied them),
+and `branch_protection/protected_branches` / `tag_protection/protected_tags`
+(protection covers the branch and tag patterns).
+
+A `create` that exits `1` **before or during** the apply (repo already
+exists, scan blocked, prompt hit end of input, credential pre-flight,
+failed code push) prints **no** JSON document: stdout is empty and the
+reason is on stderr. A `create` that exits `1` from a fatal check still
+prints the full document.
 
 `scan --json` emits `{"findings": [...], "summary": {"critical": N, "warning": N,
 "info": N}, "skipped_committed_dirs": [...], "engine": {...}}`. Each finding has
@@ -135,9 +149,11 @@ A `SKIP` can also simply mean the setting is already correct.
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
 | `Code push failed: ...` (exit 1) | The repo exists on GitHub, settings applied, but it is **empty**; branch/tag protection were skipped. Do not re-run `create` (it will fail: repo exists). Fix the cause, then run the recovery commands printed on stderr, ending with `gh-safe-repo fix <owner/repo> --yes`. `Likely cause: your SSH security key did not confirm` means a missed hardware-key touch: ask the user to touch the key and retry the push; it is not a permissions problem. The tool has already retried once (stderr shows `Your SSH security key did not confirm. Touch it when it blinks to retry...`), so this means two touches were missed. |
 | `Code pushed, but local repo not fully wired: ...` | The push succeeded; only the local `origin`/upstream setup was skipped. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose). Report it to the user; do not rewrite their `origin`. The success banner prints the exact `git push -u origin <b>:<b>` to run once it is resolved. |
-| `fix` exits `3`, `✗` rows / `mismatch` checks | The changes were sent but GitHub does not hold them (ignored, or the apply failed with a warning). Run `gh-safe-repo fix <owner/repo> --yes` **once** more. If it still exits `3`, stop and report the rows to the user — an org policy or plan limit is overriding the setting; do not loop. |
-| `fix` warns `could not be read back`, `?` rows / `unknown` checks | The tool already retried for ~7s; the setting may well be applied. Do **not** retry. Tell the user which settings are unconfirmed so they can check the repo's settings page. |
-| Repo created but a later step warned | Creation is not transactional; settings failures are warnings. Re-run `fix <owner/repo> --yes` to converge. |
+| `create` or `fix` exits `3`, `✗` rows / `mismatch` checks | The changes were sent but GitHub does not hold them (ignored, or the apply failed with a warning). Run `gh-safe-repo fix <owner/repo> --yes` **once** more (never re-run `create`: the repo exists). If it still exits `3`, stop and report the rows to the user — an org policy or plan limit is overriding the setting; do not loop. For `file/readme`, `repo/description` and `repo/topics`, `fix` does not manage them: run the `remediation` command instead, after showing it to the user. |
+| `create` exits `1` with `✗ repo/visibility` (`fatal: true`) | The repo exists but is **public when private was asked for** (or the reverse). Treat it as a possible disclosure: tell the user immediately and show the `gh repo edit ... --visibility ...` remediation; do not push anything else to it first. |
+| `create` exits `1` with `✗ repo/repository` (`fatal: true`) | GitHub accepted the create but the repo cannot be found, even after retries. Check the active `gh` account; do not re-run `create` blindly. |
+| `create`/`fix` warns `could not be read back`, `?` rows / `unknown` checks | The tool already retried for ~7s; the setting may well be applied. Do **not** retry. Tell the user which settings are unconfirmed so they can check the repo's settings page. |
+| Repo created but a later step warned | Creation is not transactional; settings failures are warnings, and verification then reports them as `mismatch` (exit `3`). Re-run `fix <owner/repo> --yes` once to converge. |
 
 ## Configuration
 

@@ -81,6 +81,35 @@ class TagProtectionPlugin(BasePlugin):
             "prevent_tag_update": "update" in rule_types,
         }
 
+    def protected_tags(self) -> list:
+        """Tag patterns our tag ruleset covers right now (create verification, #77).
+
+        [] when the ruleset does not exist. Strict: any read that cannot tell
+        (403, 5xx, non-JSON) raises APIError, so the caller reports unknown.
+        """
+        path = self.client.repo_path(self.owner, self.repo, "rulesets")
+        status, text = self.client.call_api("GET", path)
+        if status == 404:
+            return []
+        if status is None or status >= 300:
+            raise APIError(f"GET {path} returned {status}", status_code=status)
+        try:
+            rulesets = json.loads(text)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            raise APIError(f"GET {path} returned non-JSON response")
+        ours = next(
+            (rs for rs in rulesets
+             if rs.get("target") == "tag" and rs.get("name") == RULESET_NAME),
+            None,
+        )
+        if ours is None:
+            return []
+        detail_path = self.client.repo_path(self.owner, self.repo, f"rulesets/{ours['id']}")
+        detail = self.client.get_json(detail_path)
+        include = ((detail.get("conditions") or {}).get("ref_name") or {}).get("include") or []
+        prefix = "refs/tags/"
+        return [r[len(prefix):] if r.startswith(prefix) else r for r in include]
+
     def plan(self, current_state=None) -> Plan:
         plan = Plan()
 

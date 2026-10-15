@@ -372,6 +372,46 @@ and a missed touch there would show up as an unknown that says nothing about
 the repo. The code-push checks planned for `create` follow the same rule:
 read refs via `GET git/matching-refs/heads/` and `.../tags/`.
 
+**`create` verifies with the create plan, re-audited.** `create` plans with
+`current_state=None` (rows are `ADD` against GitHub defaults), so it keeps one
+`Plan` per plugin and hands those to the verifier, which re-reads each plugin
+with `fetch_current_state(strict=True)` + `plan(current_state=...)` exactly as
+for `fix`. Rows are matched by `(category, key)`, so a create-mode `ADD` and
+an audit-mode `UPDATE` line up. Rows only a create plan has (`repository`,
+`description`, `topics`, `readme`, `protected_branches`, `protected_tags`)
+are in `CREATE_ONLY_KEYS`; absence from the audit says nothing about them, so
+each gets a dedicated `Probe` instead. The probes are built from the rows the
+plan actually contained, so a SKIPped plugin or a plain create adds none.
+
+**Visibility is fatal, not a mismatch.** Visibility is a `POST /user/repos`
+field (`CREATE_FIELDS`), not a `PATCH_FIELDS` one, so the repository audit
+never compares it. A repo meant to be private that came out public is a
+disclosure that `fix` will not undo, so `repo/visibility` is a fatal probe
+(exit `1`) with the exact `gh repo edit --visibility` command as remediation.
+A fatal probe that cannot be read is still `unknown` (never fatal), keeping
+"unknown never fails the run" true.
+
+**Check the repo exists before anything else.** If `GET /repos` keeps
+404ing, every plugin audit and probe would also fail, and running them in
+the same rounds would only add noise; running the existence probe on its own
+first costs nothing when it passes (one round), and when it fails the rest
+are skipped, so the worst case stays at one ~7s budget.
+
+**Presence is not the same as values.** If every protection value equals
+GitHub's defaults (a user who turned everything off), the value audit has
+nothing to compare, but `apply()` still creates the ruleset. The
+`protected_branches` / `protected_tags` probes read the ruleset's
+`conditions.ref_name.include` (or classic protection per branch), using the
+already-narrowed `bp_plugin.branches`, not the plan row's `master, main`.
+
+**`create --json` used to print before applying.** The plan document went to
+stdout before the prompt, so a script got a plan with no outcome and could
+not tell an applied run from a declined one. It now follows `fix`: one
+document at the end with `verification`, the table on stderr before an
+interactive prompt, the plain plan on decline, and nothing on stdout for an
+exit-`1` abort before or during the apply (those already explain themselves
+on stderr, and a plan document there would look like a result).
+
 ## Scan Engine Reporting (#77)
 
 `scanner_description` is a plan-time guess: it runs discovery

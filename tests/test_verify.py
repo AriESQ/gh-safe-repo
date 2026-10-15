@@ -11,7 +11,11 @@ from gh_safe_repo.verify import (
     OK,
     UNKNOWN,
     Check,
+    Probe,
     Verification,
+    create_probes,
+    verify,
+    verify_create,
     verify_plugins,
 )
 
@@ -171,3 +175,145 @@ class TestVerifyPlugins:
         plugin = make_plugin(plan_of(skip("has_wiki", cat=ChangeCategory.REPO)))
         v = verify_plugins([(plugin, applied)], sleep=MagicMock())
         assert [c.name for c in v.checks] == ["repo/has_wiki"]
+
+
+def add(cat, key, new=None, type_=ChangeType.ADD):
+    return Change(type=type_, category=cat, key=key, new=new)
+
+
+class TestProbes:
+    def test_probe_ok_mismatch_unknown(self):
+        reads = iter(["no", "yes"])
+        flaky = Probe("x", "flaky", "yes", lambda: next(reads))
+        wrong = Probe("x", "wrong", 1, lambda: 2, fatal=True, remediation="do it")
+
+        def boom():
+            raise APIError("GET y returned 500", status_code=500)
+        broken = Probe("x", "broken", True, boom, fatal=True)
+        sleep = MagicMock()
+        v = verify(probes=[flaky, wrong, broken], sleep=sleep)
+        assert [(c.key, c.status, c.fatal) for c in v.checks] == [
+            ("flaky", OK, False),
+            ("wrong", MISMATCH, True),
+            ("broken", UNKNOWN, False),  # unreadable is never fatal
+        ]
+        assert v.checks[1].remediation == "do it"
+        assert "500" in v.checks[2].remediation
+        assert v.exit_code() == 1
+        assert sum(c.args[0] for c in sleep.call_args_list) == 7
+
+    def test_probes_and_plugins_share_rounds(self):
+        bad = plan_of(upd("a", False, True))
+        plugin = make_plugin(bad, bad, bad, bad)
+        probe = Probe("x", "p", 1, lambda: 0)
+        sleep = MagicMock()
+        v = verify([(plugin, bad)], [probe], sleep=sleep)
+        assert [c.key for c in v.checks] == ["p", "a"]  # probes first
+        assert sum(c.args[0] for c in sleep.call_args_list) == 7
+
+
+def make_client(repo=None, readme_status=404, topics=()):
+    client = MagicMock()
+    client.repo_path.side_effect = lambda o, r, s="": f"/repos/{o}/{r}" + (f"/{s}" if s else "")
+    if isinstance(repo, Exception):
+        client.get_repo_data.side_effect = repo
+    else:
+        client.get_repo_data.return_value = {"private": True, **(repo or {})}
+    client.call_api.return_value = (readme_status, "{}")
+    client.get_json.return_value = {"names": list(topics)}
+    return client
+
+
+def owned(plugin, client):
+    plugin.owner, plugin.repo, plugin.client = "alice", "demo", client
+    return plugin
+
+
+class TestCreateProbes:
+    R = ChangeCategory.REPO
+
+    def test_one_probe_per_create_only_row(self):
+        client = make_client()
+        repo = owned(MagicMock(), client)
+        bp = owned(MagicMock(branches=["main"]), client)
+        tag = owned(MagicMock(), client)
+        pairs = [
+            (repo, plan_of(
+                add(self.R, "description", "d"),
+                add(self.R, "repository", "alice/demo"),
+                add(self.R, "topics", "a, b"),
+                add(ChangeCategory.FILE, "readme", type_=ChangeType.DELETE),
+                upd("has_wiki", True, False, cat=self.R),
+            )),
+            (bp, plan_of(add(ChangeCategory.BRANCH_PROTECTION, "protected_branches", "master, main"))),
+            (tag, plan_of(add(ChangeCategory.TAG_PROTECTION, "protected_tags", "v*, release-*"))),
+            (owned(MagicMock(), client), plan_of(skip("branch_protection"))),
+        ]
+        probes = create_probes(pairs, private=True)
+        assert [(p.name, p.expected) for p in probes] == [
+            ("repo/repository", "exists"),
+            ("repo/description", "d"),
+            ("repo/visibility", "private"),
+            ("repo/topics", ["a", "b"]),
+            ("file/readme", "absent"),
+            # the narrowed list on the instance, not the plan's "master, main"
+            ("branch_protection/protected_branches", ["main"]),
+            ("tag_protection/protected_tags", ["v*", "release-*"]),
+        ]
+        assert [p.fatal for p in probes[:3]] == [True, False, True]
+
+    def test_reads(self):
+        client = make_client(repo={"description": "d"}, topics=("b", "a", "extra"))
+        repo = owned(MagicMock(), client)
+        pairs = [(repo, plan_of(
+            add(self.R, "repository", "alice/demo"),
+            add(self.R, "description", "d"),
+            add(self.R, "topics", "a, b"),
+            add(ChangeCategory.FILE, "readme", type_=ChangeType.DELETE),
+        ))]
+        v = verify_create(pairs, private=True, sleep=MagicMock())
+        assert v.ok, v.to_dict()
+        client.get_repo_data.assert_called_with("alice", "demo", refresh=True)
+        client.get_json.assert_called_with("/repos/alice/demo/topics")
+        client.call_api.assert_called_with("GET", "/repos/alice/demo/contents/README.md")
+
+    def test_readme_status_mapping(self):
+        pairs = lambda c: [(owned(MagicMock(), c), plan_of(
+            add(ChangeCategory.FILE, "readme", type_=ChangeType.DELETE)))]
+        v = verify_create(pairs(make_client(readme_status=200)), private=True, sleep=MagicMock())
+        assert [(c.status, c.actual) for c in v.checks] == [(MISMATCH, "present")]
+        v = verify_create(pairs(make_client(readme_status=403)), private=True, sleep=MagicMock())
+        assert v.checks[0].status == UNKNOWN
+
+    def test_missing_repo_short_circuits(self):
+        client = make_client(repo=APIError("GET /repos/alice/demo returned 404", status_code=404))
+        sec = make_plugin()
+        pairs = [
+            (owned(MagicMock(), client), plan_of(add(self.R, "repository", "alice/demo"))),
+            (sec, plan_of(upd("dependabot_alerts", False, True))),
+        ]
+        sleep = MagicMock()
+        v = verify_create(pairs, private=True, sleep=sleep)
+        assert [(c.name, c.status, c.actual) for c in v.checks] == [
+            ("repo/repository", MISMATCH, "missing"),
+        ]
+        assert v.exit_code() == 1
+        sec.fetch_current_state.assert_not_called()
+        assert sum(c.args[0] for c in sleep.call_args_list) == 7
+
+    def test_public_repo_meant_private_is_fatal(self):
+        client = make_client(repo={"private": False})
+        pairs = [(owned(MagicMock(), client), plan_of(add(self.R, "repository", "alice/demo")))]
+        v = verify_create(pairs, private=True, sleep=MagicMock())
+        assert [(c.key, c.status) for c in v.checks] == [
+            ("repository", OK), ("visibility", MISMATCH),
+        ]
+        assert v.exit_code() == 1
+        assert "--visibility private" in v.checks[1].remediation
+
+    def test_extra_probes_hook(self):
+        client = make_client()
+        pairs = [(owned(MagicMock(), client), plan_of(add(self.R, "repository", "alice/demo")))]
+        extra = Probe("code", "refs", ["main"], lambda: ["main"], fatal=True)
+        v = verify_create(pairs, private=True, extra_probes=[extra], sleep=MagicMock())
+        assert [c.name for c in v.checks] == ["repo/repository", "repo/visibility", "code/refs"]

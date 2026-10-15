@@ -1488,6 +1488,260 @@ class TestCreateJsonStdout:
         assert "Repository created successfully!" in captured.err
 
 
+class TestCreateVerification:
+    """`create` re-reads what it applied (#77): exit 0/3/1, unknown → 0, JSON."""
+
+    NAMES = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
+             "SecurityPlugin", "TagProtectionPlugin"]
+
+    @staticmethod
+    def _plan(*changes):
+        p = Plan()
+        for c in changes:
+            p.add(c)
+        return p
+
+    def _repo_plan(self, *extra):
+        return self._plan(
+            Change(type=ChangeType.ADD, category=ChangeCategory.REPO,
+                   key="repository", new="alice/demo"),
+            *extra,
+        )
+
+    README = Change(type=ChangeType.DELETE, category=ChangeCategory.FILE,
+                    key="readme", old="README.md")
+
+    def _sec_plan(self):
+        return self._plan(Change(
+            type=ChangeType.ADD, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", new=True,
+        ))
+
+    def _sec_ok(self):
+        return self._plan(Change(
+            type=ChangeType.SKIP, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", reason="Already at desired value",
+        ))
+
+    def _sec_bad(self):
+        return self._plan(Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", old=False, new=True,
+        ))
+
+    def _client(self, repo=None, readme_status=404, topics=()):
+        client = MagicMock()
+        if isinstance(repo, Exception):
+            client.get_repo_data.side_effect = repo
+        else:
+            data = {"private": True, "description": "", "default_branch": "main"}
+            data.update(repo or {})
+            client.get_repo_data.return_value = data
+        client.call_api.return_value = (readme_status, "{}")
+        client.get_json.return_value = {"names": list(topics)}
+        return client
+
+    def _run(self, *, repo_plan=None, sec_audits=(), client=None,
+             argv_extra=(), answer=None, extra_patches=()):
+        """Run `create alice/demo` with mocked plugins.
+
+        RepositoryPlugin plans `repo_plan` (create mode) and audits clean;
+        with `sec_audits`, SecurityPlugin plans one ADD and its post-apply
+        audits return those plans in order (an Exception is raised from
+        fetch_current_state). Returns (exit code, mocks by name, client,
+        sleep mock).
+        """
+        repo_plan = repo_plan if repo_plan is not None else self._repo_plan(self.README)
+        client = client or self._client()
+        patches = [patch(f"gh_safe_repo.commands.create.{n}") for n in self.NAMES]
+        patches += list(extra_patches)
+        started = [p.start() for p in patches]
+        mocks = dict(zip(self.NAMES, started))
+        try:
+            for name in self.NAMES:
+                inst = MagicMock()
+                inst.owner, inst.repo, inst.client = "alice", "demo", client
+                inst.created_default_branch = "main"
+                inst.plan.return_value = Plan()
+                inst.fetch_current_state.return_value = {}
+                mocks[name].return_value = inst
+            repo = mocks["RepositoryPlugin"].return_value
+            repo.plan.side_effect = (
+                lambda current_state=None: repo_plan if current_state is None else Plan()
+            )
+            sec = mocks["SecurityPlugin"].return_value
+            if sec_audits:
+                fetches, plans = [], [self._sec_plan()]
+                for a in sec_audits:
+                    if isinstance(a, Exception):
+                        fetches.append(a)
+                    else:
+                        fetches.append({})
+                        plans.append(a)
+                sec.fetch_current_state.side_effect = fetches
+                sec.plan.side_effect = plans
+
+            argv = ["gh-safe-repo", "create", "alice/demo", *argv_extra]
+            if answer is None:
+                argv.append("--yes")
+            with patch("sys.argv", argv), \
+                 patch("gh_safe_repo.commands.create.build_context") as ctx, \
+                 patch("gh_safe_repo.commands.create.check_repo_exists",
+                       side_effect=lambda c, o, r: r == "src"), \
+                 patch("gh_safe_repo.verify.time.sleep") as sleep, \
+                 patch("builtins.input",
+                       side_effect=lambda prompt: print(prompt, end="") or (answer or "")):
+                ctx.return_value = MagicMock(
+                    client=client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                    code = 0
+                except SystemExit as e:
+                    code = e.code
+            return code, mocks, client, sleep
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_verified_exits_0(self, capsys):
+        code, mocks, client, sleep = self._run(sec_audits=[self._sec_ok()])
+        assert code == 0
+        out = capsys.readouterr().out
+        for row in ("✓ repo/repository", "✓ repo/visibility", "✓ file/readme",
+                    "✓ security/dependabot_alerts"):
+            assert row in out
+        assert "Repository created successfully!" in out
+        assert "Done with problems" not in out
+        mocks["SecurityPlugin"].return_value.fetch_current_state.assert_called_with(strict=True)
+        client.get_repo_data.assert_any_call("alice", "demo", refresh=True)
+        sleep.assert_not_called()
+
+    def test_setting_that_did_not_stick_exits_3(self, capsys):
+        bad = self._sec_bad()
+        code, _, _, sleep = self._run(sec_audits=[bad, bad, bad, bad])
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "✗ security/dependabot_alerts" in out
+        assert "Done with problems" in out
+        assert "1 setting(s) did not stick." in out
+        assert "gh-safe-repo fix alice/demo --yes" in out
+        assert sleep.call_count == 3
+
+    def test_unknown_warns_and_exits_0(self, capsys):
+        err = APIError("GET x returned 403", status_code=403)
+        code, _, _, _ = self._run(sec_audits=[err, err, err, err])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "? security/dependabot_alerts" in captured.out
+        assert "could not be read back" in captured.err
+        assert "Done with problems" in captured.out
+
+    def test_missing_repo_is_fatal_and_skips_the_rest(self, capsys):
+        client = self._client(repo=APIError("GET /repos/alice/demo returned 404",
+                                            status_code=404))
+        code, mocks, _, sleep = self._run(sec_audits=[self._sec_ok()], client=client)
+        assert code == 1
+        out = capsys.readouterr().out
+        assert "✗ repo/repository" in out
+        assert "Failed" in out and "Repository created successfully!" not in out
+        mocks["SecurityPlugin"].return_value.fetch_current_state.assert_not_called()
+        assert sleep.call_count == 3  # eventual consistency: retried first
+
+    def test_wrong_visibility_is_fatal(self, capsys):
+        client = self._client(repo={"private": False})
+        code, _, _, _ = self._run(sec_audits=[self._sec_ok()], client=client)
+        assert code == 1
+        out = capsys.readouterr().out
+        assert "✗ repo/visibility: expected 'private', GitHub has 'public'" in out
+        assert "gh repo edit alice/demo --visibility private" in out
+
+    def test_readme_left_behind_exits_3(self, capsys):
+        client = self._client(readme_status=200)
+        code, _, _, _ = self._run(sec_audits=[self._sec_ok()], client=client)
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "✗ file/readme: expected 'absent', GitHub has 'present'" in out
+        assert "gh api -X DELETE repos/alice/demo/contents/README.md" in out
+
+    def test_no_readme_check_without_suppress(self, capsys):
+        client = self._client(readme_status=200)
+        code, _, _, _ = self._run(repo_plan=self._repo_plan(), client=client)
+        assert code == 0
+        assert "file/readme" not in capsys.readouterr().out
+
+    def test_json_is_one_document_at_the_end(self, capsys):
+        code, _, _, _ = self._run(sec_audits=[self._sec_ok()], argv_extra=["--json"])
+        assert code == 0
+        captured = capsys.readouterr()
+        doc = json.loads(captured.out)  # the whole of stdout, nothing else
+        v = doc["verification"]
+        assert v["ok"] is True
+        assert {c["key"] for c in v["checks"]} == {
+            "repository", "visibility", "readme", "dependabot_alerts",
+        }
+        assert any(c["key"] == "repository" for c in doc["changes"])
+        assert "Verified" in captured.err and "Done" in captured.err
+
+    def test_json_fatal_still_prints_document(self, capsys):
+        client = self._client(repo={"private": False})
+        code, _, _, _ = self._run(client=client, argv_extra=["--json"])
+        assert code == 1
+        doc = json.loads(capsys.readouterr().out)
+        bad = [c for c in doc["verification"]["checks"] if c["status"] != "ok"]
+        assert [(c["key"], c["fatal"]) for c in bad] == [("visibility", True)]
+
+    def test_json_declined_prompt_has_no_verification(self, capsys):
+        code, mocks, _, _ = self._run(argv_extra=["--json"], answer="n")
+        assert code == 0
+        captured = capsys.readouterr()
+        doc = json.loads(captured.out)
+        assert "verification" not in doc
+        assert "Create alice/demo" in captured.err
+        assert "repository" in captured.err  # plan table shown on stderr
+        mocks["RepositoryPlugin"].return_value.apply.assert_not_called()
+
+    def test_dry_run_json_unchanged(self, capsys):
+        code, _, client, _ = self._run(argv_extra=["--json", "--dry-run"])
+        assert code == 0
+        doc = json.loads(capsys.readouterr().out)
+        assert "verification" not in doc
+        client.get_repo_data.assert_not_called()
+
+    def _run_from(self, capsys, *, description="src desc", topics=("a", "b")):
+        repo_plan = self._repo_plan(
+            Change(type=ChangeType.ADD, category=ChangeCategory.REPO,
+                   key="description", new="src desc"),
+            Change(type=ChangeType.ADD, category=ChangeCategory.REPO,
+                   key="topics", new="a, b"),
+        )
+        client = self._client(repo={"description": description}, topics=topics)
+        code, _, _, _ = self._run(
+            repo_plan=repo_plan, client=client,
+            argv_extra=["--from", "alice/src"],
+            extra_patches=[
+                patch("gh_safe_repo.commands.create.discover_transport"),
+                patch("gh_safe_repo.commands.create.run_preflight_scan",
+                      return_value=ScanDecision(proceed=True)),
+            ],
+        )
+        return code, capsys.readouterr().out
+
+    def test_from_description_and_topics_verified(self, capsys):
+        code, out = self._run_from(capsys)
+        assert code == 0
+        assert "✓ repo/description" in out
+        assert "✓ repo/topics" in out
+
+    def test_from_missing_description_and_topics_exits_3(self, capsys):
+        code, out = self._run_from(capsys, description="", topics=("a",))
+        assert code == 3
+        assert "✗ repo/description" in out
+        assert "✗ repo/topics" in out
+        assert "gh repo edit alice/demo --add-topic a --add-topic b" in out
+
+
 class TestConfirmationPromptUnattended:
     """#93: the confirmation prompt never lets an unattended run exit 0.
 
@@ -1660,6 +1914,8 @@ class TestConfirmationPromptUnattended:
         code, _, _, _ = self._run_create(tmp_path, EOFError, argv_extra=["--json"])
         assert code == 1
         captured = capsys.readouterr()
-        json.loads(captured.out)  # the plan, printed before the prompt; nothing else
+        # Like fix: a real `create --json` prints its document at the end
+        # (#77); an exit-1 abort before applying prints none.
+        assert captured.out == ""
         assert "Create alice/my-repo" in captured.err
         assert "--yes is required" in captured.err

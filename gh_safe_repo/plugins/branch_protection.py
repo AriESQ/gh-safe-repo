@@ -67,6 +67,39 @@ class BranchProtectionPlugin(BasePlugin):
         finally:
             self._strict = False
 
+    def protected_branches(self) -> list:
+        """Branches our protection covers right now (create verification, #77).
+
+        Rulesets mode: the include list of the gh-safe-repo branch ruleset
+        ([] when it does not exist). Classic mode: those of ``self.branches``
+        whose protection endpoint answers 200. Strict: any read that cannot
+        tell raises APIError, so the caller reports unknown, not absent.
+        """
+        self._strict = True
+        try:
+            if self._use_rulesets():
+                detail = self._fetch_ruleset_detail()
+                if detail is None:
+                    return []
+                include = (
+                    (detail.get("conditions") or {}).get("ref_name") or {}
+                ).get("include") or []
+                prefix = "refs/heads/"
+                return [r[len(prefix):] if r.startswith(prefix) else r for r in include]
+            covered = []
+            for branch in self.branches:
+                path = self.client.repo_path(
+                    self.owner, self.repo, f"branches/{branch}/protection"
+                )
+                status, _ = self.client.call_api("GET", path)
+                if status == 200:
+                    covered.append(branch)
+                elif status != 404:
+                    raise APIError(f"GET {path} returned {status}", status_code=status)
+            return covered
+        finally:
+            self._strict = False
+
     def _ambiguous(self, path, status):
         """In strict mode a 403/odd status is "could not read", not "absent"."""
         if self._strict:

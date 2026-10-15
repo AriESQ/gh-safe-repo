@@ -1,12 +1,14 @@
 """gh-safe-repo create — Create a new repo with safe defaults."""
 
 import os
+import shlex
 import subprocess
 import sys
 from typing import Optional
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
+from ..github_client import LocalWiring
 from ..git_transport import (
     discover_transport,
     git_protocol_preference,
@@ -18,7 +20,13 @@ from ..plugins.repository import RepositoryPlugin
 from ..plugins.security import SecurityPlugin
 from ..plugins.tag_protection import TagProtectionPlugin
 from ..security_scanner import SecurityScanner
-from ..verify import verify_create
+from ..verify import (
+    default_branch_probe,
+    local_wiring_probes,
+    mirrored_ref_probes,
+    pushed_ref_probes,
+    verify_create,
+)
 from ._common import (
     _BOLD,
     _DIM,
@@ -157,6 +165,65 @@ def _abort_on_push_failure(e, owner, repo_name, recovery):
     lines.append(f"  gh-safe-repo fix {owner}/{repo_name} --yes   # applies branch/tag protection")
     print("\n".join(lines), file=sys.stderr)
     sys.exit(1)
+
+
+def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
+                 from_owner=None, from_repo=None, source_default_branch=None):
+    """Verification probes for the code `--local` / `--from` pushed (#77).
+
+    - Fatal (exit 1): every pushed branch and tag is on GitHub at the pushed
+      SHA (`--from`: the source's branches and tags). Read through the REST
+      API, never `git ls-remote`, so verifying costs no security-key touch.
+      Remediation is the recovery command in `_abort_on_push_failure`'s style.
+    - Settings-class (exit 3): the default branch is the one create chose.
+    - Advisory (warning only): the user's repo is wired to the new remote.
+    """
+    dest = client.transport.persistent_url(owner, repo_name)
+    then_fix = (
+        f"then run `gh-safe-repo fix {owner}/{repo_name} --yes` "
+        "(applies branch/tag protection)"
+    )
+    if from_repo:
+        src = client.transport.persistent_url(from_owner, from_repo)
+        probes = mirrored_ref_probes(
+            client, from_owner, from_repo, owner, repo_name,
+            remediation=(
+                f"Mirror it again: git clone --mirror {src} {repo_name}.git && "
+                f"git -C {repo_name}.git push --mirror {dest}; {then_fix}."
+            ),
+        )
+        if source_default_branch:
+            probes.append(default_branch_probe(
+                client, owner, repo_name, source_default_branch,
+            ))
+        return probes
+
+    if not isinstance(wiring, LocalWiring):
+        wiring = LocalWiring()
+    where = shlex.quote(local_path)
+    is_git = os.path.isdir(os.path.join(local_path, ".git"))
+    if is_git:
+        remediation = (
+            f"Push it again: cd {where} && git push {dest} "
+            "'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*' "
+            "(a SHA mismatch means GitHub holds different commits: compare "
+            f"before forcing); {then_fix}."
+        )
+    else:
+        remediation = f"No branch reached GitHub: push the code to {dest}; {then_fix}."
+    probes = pushed_ref_probes(
+        client, owner, repo_name,
+        branches=wiring.pushed, tags=wiring.tags, remediation=remediation,
+    )
+    if wiring.default_branch:
+        probes.append(default_branch_probe(
+            client, owner, repo_name, wiring.default_branch,
+        ))
+    if is_git:
+        probes += local_wiring_probes(
+            local_path, dest, wiring.branch, foreign_origin=wiring.foreign_origin,
+        )
+    return probes
 
 
 def run(args):
@@ -468,7 +535,13 @@ def run(args):
     if args.from_repo:
         _info(f"\nCopying code from {_BOLD}{from_owner}/{from_repo}{_RESET}...")
         try:
-            client.copy_repo(from_owner, from_repo, repo_name)
+            # A mirror push carries no HEAD: set the source's default branch
+            # explicitly, and protect that branch rather than the name the
+            # empty repo was created with.
+            client.copy_repo(from_owner, from_repo, repo_name,
+                             default_branch=source_default_branch)
+            if source_default_branch:
+                bp_plugin.branches = [source_default_branch]
             _info(_c(_GREEN, f"  Code mirrored successfully."))
         except APIError as e:
             src = client.transport.persistent_url(from_owner, from_repo)
@@ -520,12 +593,24 @@ def run(args):
     # no exception escaped (#77). Settings use each plugin's own audit (the
     # same instances, so bp_plugin.branches is already narrowed); create-only
     # rows (repo exists, visibility, README removed, --from description and
-    # topics, protection presence) get dedicated probes. Code and local-wiring
-    # checks will join through `extra_probes`.
+    # topics, protection presence) get dedicated probes. --local / --from add
+    # the pushed refs (fatal), the default branch and the local wiring
+    # (advisory) through `extra_probes`.
+    code_probes = []
+    if args.from_repo:
+        code_probes = _code_probes(
+            client, owner, repo_name, from_owner=from_owner, from_repo=from_repo,
+            source_default_branch=source_default_branch,
+        )
+    elif args.local_path:
+        code_probes = _code_probes(
+            client, owner, repo_name, local_path=local_path, wiring=wiring,
+        )
     _info(_c(_DIM, "\nVerifying..."))
     verification = verify_create(
         plugin_plans,
         private=not is_public,
+        extra_probes=code_probes,
         remediation=(
             f"Run `gh-safe-repo fix {owner}/{repo_name} --yes` once; if it "
             "still does not stick, an organization policy or plan limit is "
@@ -539,6 +624,12 @@ def run(args):
         warn(
             f"{len(verification.unknowns)} setting(s) could not be read back to "
             "confirm they were applied (see above). Not retrying further."
+        )
+    # Already warned at push time when push_local itself reported the problem.
+    if verification.advisories and not getattr(wiring, "error", None):
+        warn(
+            "Your local repo is not wired to the new remote (see above). "
+            "The new repo is fine; this does not change the exit status."
         )
 
     protocol = (

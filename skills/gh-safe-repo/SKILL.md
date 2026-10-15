@@ -47,10 +47,10 @@ drops ANSI codes when stdout is not a terminal.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `create` and `fix`, everything applied was read back and verified (`unknown` checks warn but still exit `0`) |
-| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes). For `create`, also a failed **fatal** check: the new repo cannot be found, or its visibility is wrong |
+| `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `create` and `fix`, everything applied was read back and verified (`unknown` checks and `advisory` local-wiring checks warn but still exit `0`) |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes). For `create`, also a failed **fatal** check: the new repo cannot be found, its visibility is wrong, or (`--local`/`--from`) a pushed branch or tag is missing on GitHub or at a different SHA |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--local` with `--from` |
-| `3` | `create` or `fix` applied the changes but at least one setting did not stick when read back (a non-fatal `mismatch` check). For `create` the repo exists and is usable. See Failure modes |
+| `3` | `create` or `fix` applied the changes but at least one setting did not stick when read back (a non-fatal, non-advisory `mismatch` check, e.g. `repo/default_branch`). For `create` the repo exists and is usable. See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
 
 In a git repo the built-in scan covers tracked files only (`git ls-files`) —
@@ -82,15 +82,17 @@ printed the plan before applying; parse stdout only after the process exits.)
 "verification": {
   "ok": false,
   "checks": [ {"category": "repo", "key": "has_wiki", "status": "mismatch",
-               "expected": false, "actual": true, "fatal": false,
+               "expected": false, "actual": true, "fatal": false, "advisory": false,
                "remediation": "Run `gh-safe-repo fix alice/demo --yes` once more; ..."} ],
   "summary": { "ok": 3, "mismatch": 1, "unknown": 0 }
 }
 ```
 
 `status` is `ok`, `mismatch` (GitHub holds something else → exit `3`, or
-`1` when `fatal` is `true`) or `unknown` (could not be read back after
-retries; `actual` is `null`; exit stays `0`, even for a fatal check). All
+`1` when `fatal` is `true`, unchanged when `advisory` is `true`) or `unknown`
+(could not be read back after retries; `actual` is `null`; exit stays `0`,
+even for a fatal check). An `advisory` mismatch still makes
+`verification.ok` false and counts in `summary.mismatch`. All
 three `summary` keys are always present. The block is absent on `--dry-run`
 and when the prompt is declined; `fix` with nothing to change gives
 `{"ok": true, "checks": [], ...}`. Trust `verification.ok`, not the absence
@@ -101,6 +103,16 @@ and `repo/visibility` (both `fatal`), `file/readme` (the auto-generated
 README is gone), `repo/description` and `repo/topics` (`--from` copied them),
 and `branch_protection/protected_branches` / `tag_protection/protected_tags`
 (protection covers the branch and tag patterns).
+
+`create --local`/`--from` add code checks, read through the REST API (no
+`git ls-remote`, so no extra hardware-key touch): `code/branches` and
+`code/tags` (both `fatal`; `expected` is the `{name: sha}` that was pushed,
+or the `--from` source's refs, and `actual` is GitHub's SHA for each name,
+`null` when missing; an annotated tag is compared by its tag object SHA),
+and `repo/default_branch` (exit `3`). `--local` on a git repo also adds
+`local/origin` and `local/tracking` (`advisory`): your repo's
+`remote.origin.url` and `branch.<b>.remote`/`.merge`, read from local git
+config.
 
 A `create` that exits `1` **before or during** the apply (repo already
 exists, scan blocked, prompt hit end of input, credential pre-flight,
@@ -148,7 +160,9 @@ A `SKIP` can also simply mean the setting is already correct.
 | `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `create` stopped before creating anything. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
 | `Code push failed: ...` (exit 1) | The repo exists on GitHub, settings applied, but it is **empty**; branch/tag protection were skipped. Do not re-run `create` (it will fail: repo exists). Fix the cause, then run the recovery commands printed on stderr, ending with `gh-safe-repo fix <owner/repo> --yes`. `Likely cause: your SSH security key did not confirm` means a missed hardware-key touch: ask the user to touch the key and retry the push; it is not a permissions problem. The tool has already retried once (stderr shows `Your SSH security key did not confirm. Touch it when it blinks to retry...`), so this means two touches were missed. |
-| `Code pushed, but local repo not fully wired: ...` | The push succeeded; only the local `origin`/upstream setup was skipped. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose). Report it to the user; do not rewrite their `origin`. The success banner prints the exact `git push -u origin <b>:<b>` to run once it is resolved. |
+| `create --local`/`--from` exits `1` with `✗ code/branches` or `✗ code/tags` (`fatal: true`) | The push reported success but GitHub does not have every pushed ref at the pushed SHA, even after ~7s of retries. The repo exists; do not re-run `create`. Show the user which names differ (`expected` vs `actual`; `null` = missing), then run the printed `remediation` (re-push from the local repo with explicit refspecs, or re-mirror for `--from`), then `gh-safe-repo fix <owner/repo> --yes` for branch/tag protection. A differing SHA (not `null`) means GitHub holds other commits: ask the user before any force push. |
+| `create --local`/`--from` exits `3` with `✗ repo/default_branch` | The code is all there but GitHub's default branch is not the one chosen. Show the user the `gh repo edit <owner/repo> --default-branch <b>` remediation and run it once they agree; `fix` does not manage it. |
+| `Code pushed, but local repo not fully wired: ...`, or `✗ local/origin` / `✗ local/tracking` (`advisory: true`, exit `0`) | The push succeeded and GitHub is fine; only the user's local `origin`/upstream is not pointing at the new repo. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose; the check's remediation says so). Report it to the user; do not rewrite their `origin` yourself. The remediation and the banner give the exact `git remote add`/`set-url origin <url>` and `git push -u origin <b>:<b>` commands. Not a failure: do not retry `create` or `fix` over it. |
 | `create` or `fix` exits `3`, `✗` rows / `mismatch` checks | The changes were sent but GitHub does not hold them (ignored, or the apply failed with a warning). Run `gh-safe-repo fix <owner/repo> --yes` **once** more (never re-run `create`: the repo exists). If it still exits `3`, stop and report the rows to the user — an org policy or plan limit is overriding the setting; do not loop. For `file/readme`, `repo/description` and `repo/topics`, `fix` does not manage them: run the `remediation` command instead, after showing it to the user. |
 | `create` exits `1` with `✗ repo/visibility` (`fatal: true`) | The repo exists but is **public when private was asked for** (or the reverse). Treat it as a possible disclosure: tell the user immediately and show the `gh repo edit ... --visibility ...` remediation; do not push anything else to it first. |
 | `create` exits `1` with `✗ repo/repository` (`fatal: true`) | GitHub accepted the create but the repo cannot be found, even after retries. Check the active `gh` account; do not re-run `create` blindly. |

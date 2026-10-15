@@ -26,9 +26,15 @@ Public API (shared by ``fix`` and ``create``):
 - ``CREATE_ONLY_KEYS`` — create-mode plan rows an audit cannot see.
   ``create_probes()`` turns them into probes; ``verify_create()`` is what
   ``create`` calls.
+- ``pushed_ref_probes()`` / ``mirrored_ref_probes()`` (fatal: the code
+  ``--local`` / ``--from`` pushed is on GitHub, SHA for SHA, read via
+  ``git/matching-refs``), ``default_branch_probe()`` (exit 3) and
+  ``local_wiring_probes()`` (advisory: the user's git config points at the
+  new repo) — passed to ``verify_create(extra_probes=...)``.
 """
 
 import shlex
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
@@ -67,8 +73,10 @@ class Check:
 
     ``fatal`` marks checks whose failure means the run did not do its job
     (code push missing under ``create --local/--from``): exit 1. Non-fatal
-    mismatches are settings that ``fix`` would converge: exit 3. ``unknown``
-    is never a failure on its own.
+    mismatches are settings that ``fix`` would converge: exit 3. ``advisory``
+    mismatches (the user's local repo not wired to the new remote) are
+    warnings only: they never change the exit code. ``unknown`` is never a
+    failure on its own.
     """
     category: str
     key: str
@@ -77,6 +85,7 @@ class Check:
     actual: Any = None
     fatal: bool = False
     remediation: Optional[str] = None
+    advisory: bool = False
 
     def __post_init__(self):
         if self.status not in STATUSES:
@@ -94,6 +103,7 @@ class Check:
             "expected": self.expected,
             "actual": self.actual,
             "fatal": self.fatal,
+            "advisory": self.advisory,
             "remediation": self.remediation,
         }
 
@@ -131,7 +141,13 @@ class Verification:
 
     @property
     def has_mismatch(self) -> bool:
-        return any(c.status == MISMATCH for c in self.checks)
+        """A non-advisory mismatch: a setting ``fix`` would converge (exit 3)."""
+        return any(c.status == MISMATCH and not c.advisory for c in self.checks)
+
+    @property
+    def advisories(self) -> List[Check]:
+        """Advisory mismatches: warnings that never change the exit code."""
+        return [c for c in self.checks if c.status == MISMATCH and c.advisory]
 
     def summary(self) -> dict:
         counts = {s: 0 for s in STATUSES}
@@ -191,7 +207,13 @@ class Probe:
     exception is retried, then reported ``unknown``). ``matches(expected,
     actual)`` defaults to equality. ``fatal`` applies only to a final
     ``mismatch``: a probe that cannot be read is ``unknown`` and never fails
-    the run on its own.
+    the run on its own. ``advisory`` marks a mismatch as a warning that never
+    changes the exit code. ``retry=False`` settles after the first read
+    (local git config cannot become eventually consistent, so re-reading it
+    would only spend the backoff budget).
+
+    ``read()`` may also assign ``expected`` (e.g. refs read from a ``--from``
+    source); it is read back only after the last attempt.
     """
     category: str
     key: str
@@ -200,6 +222,8 @@ class Probe:
     matches: Optional[Callable[[Any, Any], bool]] = None
     fatal: bool = False
     remediation: Optional[str] = None
+    advisory: bool = False
+    retry: bool = True
 
     @property
     def name(self) -> str:
@@ -251,7 +275,7 @@ def _plugin_task(plugin):
 def _probe_task(probe):
     def task():
         actual = probe.read()
-        return actual, probe.holds(actual)
+        return actual, probe.holds(actual) or not probe.retry
     return task
 
 
@@ -291,7 +315,7 @@ def verify(
         if kind == "error":
             verification.add(Check(
                 category=probe.category, key=probe.key, status=UNKNOWN,
-                expected=probe.expected, actual=None,
+                expected=probe.expected, actual=None, advisory=probe.advisory,
                 remediation=(
                     f"Could not read {probe.name} back after {attempts} "
                     f"attempts ({value}); check it on GitHub."
@@ -306,7 +330,7 @@ def verify(
             verification.add(Check(
                 category=probe.category, key=probe.key, status=MISMATCH,
                 expected=probe.expected, actual=value, fatal=probe.fatal,
-                remediation=probe.remediation,
+                remediation=probe.remediation, advisory=probe.advisory,
             ))
 
     for (plugin, expected), (kind, value) in zip(pending, plugin_results):
@@ -560,3 +584,132 @@ def verify_create(
         remediation=remediation, sleep=sleep, delays=delays,
     ))
     return v
+
+
+# ── create --local / --from: pushed code, default branch, local wiring ──────
+
+def _remote_refs(client, owner, repo, namespace, names):
+    """GitHub's SHA for each of ``names`` under refs/<namespace>/ (None if absent)."""
+    remote = client.matching_refs(owner, repo, namespace)
+    return {n: remote.get(n) for n in names}
+
+
+def pushed_ref_probes(client, owner, repo, *, branches, tags,
+                      remediation=None) -> List[Probe]:
+    """Fatal probes: what ``create --local`` pushed is on GitHub, SHA for SHA.
+
+    ``branches`` / ``tags`` are ``{name: sha}`` as ``push_local`` recorded
+    them (``LocalWiring.pushed`` / ``.tags``; a tag's sha is the tag object
+    for an annotated tag, which is also what the API reports). With no
+    recorded branches the probe only requires GitHub to have at least one
+    branch. Tags are checked only when some were pushed. Reads use the REST
+    API (``GitHubClient.matching_refs``), never ``git ls-remote``.
+    """
+    probes = []
+    if branches:
+        names = sorted(branches)
+        probes.append(Probe(
+            "code", "branches", dict(branches),
+            lambda: _remote_refs(client, owner, repo, "heads", names),
+            fatal=True, remediation=remediation,
+        ))
+    else:
+        probes.append(Probe(
+            "code", "branches", "at least one branch",
+            lambda: sorted(client.matching_refs(owner, repo, "heads")),
+            matches=lambda _expected, actual: bool(actual),
+            fatal=True, remediation=remediation,
+        ))
+    if tags:
+        tag_names = sorted(tags)
+        probes.append(Probe(
+            "code", "tags", dict(tags),
+            lambda: _remote_refs(client, owner, repo, "tags", tag_names),
+            fatal=True, remediation=remediation,
+        ))
+    return probes
+
+
+def mirrored_ref_probes(client, src_owner, src_repo, owner, repo, *,
+                        remediation=None) -> List[Probe]:
+    """Fatal probes: after ``create --from``, every branch and tag of the
+    source is on the new repo at the same SHA.
+
+    The source refs are read (once, through the same API) by the first
+    attempt that gets them; a failed source read is retried and ends
+    ``unknown`` like any other unreadable probe.
+    """
+    probes = []
+    for key, namespace in (("branches", "heads"), ("tags", "tags")):
+        probe = Probe("code", key, None, None, fatal=True, remediation=remediation)
+
+        def read(probe=probe, namespace=namespace):
+            if probe.expected is None:
+                probe.expected = client.matching_refs(src_owner, src_repo, namespace)
+            return _remote_refs(client, owner, repo, namespace, sorted(probe.expected))
+        probe.read = read
+        probes.append(probe)
+    return probes
+
+
+def default_branch_probe(client, owner, repo, expected) -> Probe:
+    """The new repo's default branch is the one create chose (exit 3 if not)."""
+    return Probe(
+        "repo", "default_branch", expected,
+        lambda: _read_repo_required(client, owner, repo).get("default_branch"),
+        remediation=(
+            f"gh repo edit {owner}/{repo} --default-branch {shlex.quote(expected)}"
+        ),
+    )
+
+
+def _git_config(path, key):
+    """`git config --get key` in path, or None when unset or git fails."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", path, "config", "--get", key],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def local_wiring_probes(local_path, url, branch, *, foreign_origin=None) -> List[Probe]:
+    """Advisory probes: the user's repo now points at the new remote.
+
+    Local git config reads only (``remote.origin.url``,
+    ``branch.<b>.remote`` / ``.merge``), never ``@{u}`` and never the
+    network. A mismatch is a warning (exit code unchanged) whose remediation
+    is the exact command to run. ``foreign_origin`` is an ``origin`` that
+    already pointed elsewhere and was deliberately left untouched: the
+    origin check then says so, and no tracking check is made (any upstream
+    would be the old remote's).
+    """
+    where = shlex.quote(local_path)
+    push = f" && git push -u origin {branch}:{branch}" if branch else ""
+    if foreign_origin:
+        origin_fix = (
+            f"'origin' already pointed at {foreign_origin} and was left "
+            f"unchanged. To use the new repo instead: cd {where} && "
+            f"git remote set-url origin {url}{push}"
+        )
+    else:
+        origin_fix = f"cd {where} && git remote add origin {url}{push}"
+    probes = [Probe(
+        "local", "origin", url,
+        lambda: _git_config(local_path, "remote.origin.url"),
+        advisory=True, retry=False, remediation=origin_fix,
+    )]
+    if branch and not foreign_origin:
+        probes.append(Probe(
+            "local", "tracking",
+            {"remote": "origin", "merge": f"refs/heads/{branch}"},
+            lambda: {
+                "remote": _git_config(local_path, f"branch.{branch}.remote"),
+                "merge": _git_config(local_path, f"branch.{branch}.merge"),
+            },
+            advisory=True, retry=False,
+            remediation=f"cd {where} && git push -u origin {branch}:{branch}",
+        ))
+    return probes

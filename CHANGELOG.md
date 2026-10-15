@@ -9,7 +9,23 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- `scan` and the `create --local`/`--from` pre-flight print the engine that
+  actually ran (`Scan engine: truffleHog v3.93.4`, or `regex (fell back from
+  truffleHog: ...)`) after the scan (#77). The header shown before the scan is
+  only what discovery expected; truffleHog can still fail mid-run.
+- `scan --json` gains an `engine` key: `{"configured": <trufflehog_mode>,
+  "used": "trufflehog-native" | "trufflehog-container" | "regex", "fell_back":
+  bool}`. Existing keys are unchanged.
+
 ### Changed
+- `trufflehog_mode = native` and `docker` are now strict (#77). If truffleHog
+  cannot run (not found, wrong version, or it fails mid-scan), `scan` prints
+  its findings and exits `1`, and `create --local`/`--from` exits `1` before
+  the repo is created, naming the mode and the reason. Previously both
+  printed a warning and fell back to regex. `auto` still falls back, and an
+  unrecognised `trufflehog_mode` value is treated as strict instead of as
+  `auto`.
 - `create --local`/`--from` verify git credentials after the confirmation
   prompt, right before the repo is created, instead of before the scan (#79).
   A hardware security key's touch only proves the key answered at that moment,
@@ -20,6 +36,8 @@ since the initial release.
   touch can no longer leave a half-pushed repo.
 
 ### Fixed
+- `create --json --local`/`--from` printed the pre-flight scan report on
+  stdout ahead of the JSON plan. It now goes to stderr.
 - A missed security-key touch (`signing failed for ...-SK`) during the push,
   mirror, or source clone is retried once, after printing `Your SSH security
   key did not confirm. Touch it when it blinks to retry...` on stderr (#79).

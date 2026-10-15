@@ -165,7 +165,7 @@ gh-safe-repo scan .
 gh-safe-repo scan ~/projects/myapp
 ```
 
-Local-only. Exit code `0` when there are no critical findings, `1` when there are, so it composes:
+Local-only. Exit code `0` when there are no critical findings, `1` when there are (or when an explicit `trufflehog_mode` could not run truffleHog, see [Scanner engine](#scanner-engine)), so it composes:
 
 ```bash
 gh-safe-repo scan . && git push
@@ -226,7 +226,9 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | *(global)* Show scanner details |
 
-Exit code is `0` if no critical findings, `1` if criticals are found.
+Exit code is `0` if no critical findings, `1` if criticals are found or if
+`trufflehog_mode = native`/`docker` could not run truffleHog (the findings are
+still printed; the error names the reason).
 
 ### Plan output and JSON
 
@@ -271,13 +273,21 @@ When `--json` is active, the plan is written to stdout as a JSON object and all 
       "rule": "AWS Access Key", "match": "[redacted]", "commit": "", "timestamp": "" }
   ],
   "summary": { "critical": 1, "warning": 0, "info": 0 },
-  "skipped_committed_dirs": []
+  "skipped_committed_dirs": [],
+  "engine": { "configured": "auto", "used": "trufflehog-native", "fell_back": false }
 }
 ```
 
 Unlike the plan `summary`, all three severity keys are always present. Secret
 matches are `[redacted]`; `commit` and `timestamp` are populated only for
 findings truffleHog located in git history.
+
+`engine` records what actually ran, not what was planned. `configured` is the
+effective `trufflehog_mode` (`auto`, `native`, `docker`, `off`; a legacy
+`use_trufflehog = false` shows as `off`). `used` is `trufflehog-native`,
+`trufflehog-container` or `regex`. `fell_back` is `true` when truffleHog was
+attempted but could not run, so the regex scanner covered secrets instead.
+`off`, and `scan_for_secrets = false`, report `regex` with `fell_back: false`.
 
 ### Using with an AI agent
 
@@ -311,7 +321,7 @@ thing on stdout; progress, warnings and errors go to stderr.
 | Code | Meaning |
 |---|---|
 | `0` | Success, or the user declined at an interactive prompt |
-| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `scan`, also "critical findings present" |
+| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
 | `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
 
@@ -470,7 +480,7 @@ Secrets are redacted in the output. Email addresses and TODOs show the matching 
 
 1. **truffleHog v3 on PATH** — runs `trufflehog --version`, verifies it is v3, and uses it. A v2 install or an unrecognised version prints a warning and falls through to step 2.
 2. **podman or docker** — if no native truffleHog is found, the scanner runs truffleHog in a container (`ghcr.io/trufflesecurity/trufflehog:latest`), mounting the scan path read-only at the same absolute path so JSON output paths match a native run.
-3. **Regex fallback** — if neither is available, a warning is printed and the regex scanner runs instead. It also always runs *in addition to* truffleHog for emails and TODOs, and catches lone key-ID patterns that truffleHog deliberately skips (truffleHog requires both halves of a credential pair, e.g. AWS Key ID *and* Secret Access Key, before flagging a finding).
+3. **Regex fallback** — if neither is available (or truffleHog is found but then fails to run), the regex scanner covers secrets instead; a missing engine prints a warning. It also always runs *in addition to* truffleHog for emails and TODOs, and catches lone key-ID patterns that truffleHog deliberately skips (truffleHog requires both halves of a credential pair, e.g. AWS Key ID *and* Secret Access Key, before flagging a finding).
 
 The selected scanner is shown in the scan header and in the plan table's SCAN entry:
 
@@ -480,7 +490,23 @@ Running pre-flight security scan... (truffleHog via podman)
 Running pre-flight security scan... (regex only — see warning above)
 ```
 
-Set `trufflehog_mode` in config to pin a specific engine. Two environment variables affect the container path: `CONTAINER_RUNTIME` overrides runtime selection (e.g. `CONTAINER_RUNTIME=docker`), and `TRUFFLEHOG_IMAGE` pins a specific image tag. No manual container setup is required, but a shell wrapper (`tools/trufflehog`) and a `Containerfile` for building a pinned local image are provided in [`tools/`](tools/README.md) for system-wide or air-gapped use.
+That header is decided before the scan. The engine that actually ran is
+printed after it, in both `scan` and the `create` pre-flight, because truffleHog
+can still fail mid-run (a crashed binary, a container that cannot start):
+
+```
+  Scan engine: truffleHog v3.93.4
+  Scan engine: regex (fell back from truffleHog: truffleHog via podman exited with status 125)
+```
+
+`scan --json` carries the same information in its `engine` key.
+
+Set `trufflehog_mode` in config to pin a specific engine. A pinned engine is
+strict: with `native` or `docker`, if truffleHog cannot run, `scan` prints its
+findings and exits `1`, and `create --local`/`--from` exits `1` before the repo
+is created, with an error naming the mode and the reason. Only `auto` falls
+back to regex silently (apart from the `Scan engine:` line), and `off` uses
+regex by choice, which is not a fallback. Two environment variables affect the container path: `CONTAINER_RUNTIME` overrides runtime selection (e.g. `CONTAINER_RUNTIME=docker`), and `TRUFFLEHOG_IMAGE` pins a specific image tag. No manual container setup is required, but a shell wrapper (`tools/trufflehog`) and a `Containerfile` for building a pinned local image are provided in [`tools/`](tools/README.md) for system-wide or air-gapped use.
 
 #### Scan coverage
 

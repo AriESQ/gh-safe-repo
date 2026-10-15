@@ -199,6 +199,23 @@ class TestCopyRepo:
                 client.copy_repo("alice", "private-repo", "public-repo")
         assert "clone" in str(exc_info.value).lower()
 
+    def test_copy_repo_sets_source_default_branch(self):
+        """#77: a mirror push carries no HEAD, so the default is set explicitly."""
+        client = self._make_client()
+        with patch("subprocess.run", return_value=make_completed_process()), \
+             patch.object(client, "call_api", return_value=(200, "{}")) as mock_api:
+            client.copy_repo("alice", "src", "dest", default_branch="develop")
+        mock_api.assert_called_once_with(
+            "PATCH", "/repos/alice/dest", {"default_branch": "develop"}
+        )
+
+    def test_copy_repo_without_default_branch_makes_no_api_call(self):
+        client = self._make_client()
+        with patch("subprocess.run", return_value=make_completed_process()), \
+             patch.object(client, "call_api") as mock_api:
+            client.copy_repo("alice", "src", "dest")
+        mock_api.assert_not_called()
+
     def test_copy_repo_raises_api_error_on_push_failure(self):
         client = self._make_client()
         success = make_completed_process()
@@ -247,9 +264,11 @@ class TestPushLocal:
         # tracking branch set on original local repo
         assert any("branch" in c and "--set-upstream-to=origin/master" in c for c in cmds)
 
-    def _wiring_run(self, origin_url=None, head="master\n"):
+    def _wiring_run(self, origin_url=None, head="master\n", tags=""):
         """subprocess.run fake for push_local on a git repo (#70)."""
         def side_effect(cmd, **kwargs):
+            if "for-each-ref" in cmd and "refs/tags" in cmd:
+                return make_completed_process(stdout=tags)
             if "for-each-ref" in cmd:
                 return make_completed_process(stdout="master abc123\nfeat def456\n")
             if "symbolic-ref" in cmd:
@@ -286,6 +305,53 @@ class TestPushLocal:
         assert not any("/repo" in c and "remote" in c and "add" in c for c in cmds)
         assert not wiring.tracking
         assert "already points at git@example.com:x/y.git" in wiring.error
+        assert wiring.foreign_origin == "git@example.com:x/y.git"
+        # Still pushed: verification compares GitHub against these (#77).
+        assert wiring.pushed == {"master": "abc123", "feat": "def456"}
+
+    def test_push_local_records_pushed_branches_and_tags(self):
+        """#77: LocalWiring carries every pushed ref for verification.
+
+        A tag's sha is the ref's own target (`objectname`, not the peeled
+        `*objectname`): the tag object for an annotated tag, which is what
+        the API's matching-refs reports as object.sha.
+        """
+        client = self._make_client()
+        tags = "v1.0 7a9000\nlight c0ffee\n"
+        with patch("os.path.isdir", return_value=True), \
+             patch("subprocess.run", side_effect=self._wiring_run(tags=tags)) as mock_run:
+            wiring = client.push_local("/repo", "alice", "dest-repo")
+        assert wiring.pushed == {"master": "abc123", "feat": "def456"}
+        assert wiring.tags == {"v1.0": "7a9000", "light": "c0ffee"}
+        listings = [c.args[0] for c in mock_run.call_args_list if "for-each-ref" in c.args[0]]
+        assert {c[-1] for c in listings} == {"refs/heads", "refs/tags"}
+        # lstrip=2, not :short (which renders a branch named like a tag as heads/x)
+        assert all("--format=%(refname:lstrip=2) %(objectname)" in c for c in listings)
+
+    def test_push_local_non_git_records_pushed(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=False), \
+             patch("shutil.copytree"), \
+             patch("subprocess.run") as mock_run:
+            def side_effect(cmd, **kwargs):
+                if "diff" in cmd and "--cached" in cmd:
+                    return make_completed_process(returncode=1)
+                if "for-each-ref" in cmd and "refs/heads" in cmd:
+                    return make_completed_process(stdout="main abc123\n")
+                return make_completed_process()
+            mock_run.side_effect = side_effect
+            wiring = client.push_local("/plain", "alice", "dest-repo")
+        assert wiring.pushed == {"main": "abc123"}
+        assert wiring.tags == {}
+        assert wiring.branch is None and not wiring.origin
+
+    def test_push_local_empty_dir_records_nothing(self):
+        client = self._make_client()
+        with patch("os.path.isdir", return_value=False), \
+             patch("shutil.copytree"), \
+             patch("subprocess.run", return_value=make_completed_process()):
+            wiring = client.push_local("/empty", "alice", "dest-repo")
+        assert wiring.pushed == {} and wiring.tags == {}
 
     def test_push_local_reuses_matching_origin(self):
         client = self._make_client()
@@ -632,3 +698,81 @@ class TestPushLocalAllBranches(TestPushLocal):
         assert not any("refs/heads/nope" in " ".join(p) for p in pushes)
         mock_api.assert_not_called()
         assert wiring.default_branch is None
+
+
+def _ref(name, sha, kind="commit"):
+    return {"ref": name, "object": {"sha": sha, "type": kind}}
+
+
+class TestMatchingRefs:
+    """#77: remote refs come from the REST API, never `git ls-remote`."""
+
+    def _make_client(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            return GitHubClient()
+
+    def _call(self, client, namespace="heads", **proc):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(**proc)
+            refs = client.matching_refs("alice", "demo", namespace)
+        return refs, mock_run.call_args.args[0]
+
+    def test_parses_heads_and_uses_paginate(self):
+        client = self._make_client()
+        body = json.dumps([_ref("refs/heads/main", "a1"), _ref("refs/heads/feat/x", "b2")])
+        refs, cmd = self._call(client, stdout=body)
+        assert refs == {"main": "a1", "feat/x": "b2"}
+        assert cmd[:2] == ["gh", "api"] and "--paginate" in cmd
+        assert "/repos/alice/demo/git/matching-refs/heads/?per_page=100" in cmd
+        assert not any("ls-remote" in a for a in cmd)
+
+    def test_annotated_tag_keeps_tag_object_sha(self):
+        client = self._make_client()
+        body = json.dumps([_ref("refs/tags/v1", "7a9000", "tag"),
+                           _ref("refs/tags/light", "c0ffee")])
+        refs, cmd = self._call(client, "tags", stdout=body)
+        assert refs == {"v1": "7a9000", "light": "c0ffee"}
+        assert any("git/matching-refs/tags/" in a for a in cmd)
+
+    def test_empty_list(self):
+        refs, _ = self._call(self._make_client(), stdout="[]")
+        assert refs == {}
+
+    def test_empty_repository_409_is_empty(self):
+        refs, _ = self._call(
+            self._make_client(), stderr="gh: Git Repository is empty. (HTTP 409)",
+            returncode=1,
+        )
+        assert refs == {}
+
+    def test_paginated_pages_are_concatenated(self):
+        """`gh api --paginate` prints each page as its own JSON document."""
+        page1 = json.dumps([_ref("refs/heads/a", "1"), _ref("refs/heads/b", "2")])
+        page2 = json.dumps([_ref("refs/heads/c", "3")])
+        refs, _ = self._call(self._make_client(), stdout=page1 + page2 + "\n")
+        assert refs == {"a": "1", "b": "2", "c": "3"}
+
+    def test_paginated_pages_with_whitespace_between(self):
+        page1 = json.dumps([_ref("refs/heads/a", "1")], indent=2)
+        page2 = json.dumps([_ref("refs/heads/b", "2")], indent=2)
+        refs, _ = self._call(self._make_client(), stdout=page1 + "\n" + page2)
+        assert refs == {"a": "1", "b": "2"}
+
+    def test_other_prefix_matches_are_dropped(self):
+        body = json.dumps([_ref("refs/heads/main", "a1"), _ref("refs/headsy", "zz")])
+        refs, _ = self._call(self._make_client(), stdout=body)
+        assert refs == {"main": "a1"}
+
+    def test_404_raises(self):
+        with pytest.raises(APIError) as e:
+            self._call(self._make_client(), stderr="HTTP 404", returncode=1)
+        assert e.value.status_code == 404
+
+    def test_non_list_response_raises(self):
+        with pytest.raises(APIError):
+            self._call(self._make_client(), stdout=json.dumps({"ref": "refs/heads/main"}))
+
+    def test_non_json_raises(self):
+        with pytest.raises(APIError):
+            self._call(self._make_client(), stdout="<html>")

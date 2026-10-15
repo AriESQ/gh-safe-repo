@@ -39,8 +39,30 @@ since the initial release.
 - `scan --json` gains an `engine` key: `{"configured": <trufflehog_mode>,
   "used": "trufflehog-native" | "trufflehog-container" | "regex", "fell_back":
   bool}`. Existing keys are unchanged.
+- `create --local` and `--from` verify the code they pushed (#77). Every
+  branch and tag `--local` pushed must be on GitHub at the pushed SHA
+  (`--from`: every branch and tag of the source, at the source's SHA), read
+  through the REST API (`git/matching-refs`, paginated) rather than
+  `git ls-remote`, so it costs no hardware-key touch. A missing ref or a
+  different SHA exits `1` with the push or mirror command to re-run. The
+  default branch is checked too (exit `3`, with the `gh repo edit
+  --default-branch` command). New checks: `code/branches`, `code/tags`,
+  `repo/default_branch`.
+- `create --local` reads your repo's git config afterwards to confirm the
+  wiring: `remote.origin.url` is the new repo and the current branch tracks
+  `origin/<branch>` (`local/origin`, `local/tracking`). A mismatch is a
+  warning that never changes the exit code, with the exact `git remote
+  add`/`set-url` or `git push -u origin <b>:<b>` command. Verification
+  checks gain an `advisory` field in `--json` (`true` for these).
 
 ### Changed
+- The `create --local` banner's "Local repo wired up" / "Set your tracking
+  branch" lines are built from the `local/*` checks (what git config
+  actually says) instead of from what the push step reported (#77). Only
+  advisory checks failing leaves the banner green.
+- `create --from` sets the source's default branch on the new repo after the
+  mirror push, and applies branch protection to it (#77). A mirror push
+  carries no HEAD, so GitHub used to pick its own default.
 - `create --json` (without `--dry-run`) prints its document once, at the
   end, with the `verification` block, instead of printing the plan before
   the prompt (#77). Without `--yes` the plan table goes to stderr before the

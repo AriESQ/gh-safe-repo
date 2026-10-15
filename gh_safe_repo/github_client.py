@@ -15,8 +15,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 from .errors import APIError, AuthError
 from .git_transport import GitTransport
@@ -31,6 +31,14 @@ class LocalWiring:
     error: Optional[str] = None
     # Branch made the new repo's default; None when unknown or not set.
     default_branch: Optional[str] = None
+    # What the push sent (#77): branch name -> commit SHA, and tag name ->
+    # the SHA the tag ref points at (the tag object for an annotated tag, the
+    # commit for a lightweight one; the same value `git/matching-refs`
+    # reports as object.sha). Empty when nothing was pushed.
+    pushed: Dict[str, str] = field(default_factory=dict)
+    tags: Dict[str, str] = field(default_factory=dict)
+    # An 'origin' that already pointed elsewhere and was left untouched.
+    foreign_origin: Optional[str] = None
 
 
 class GitHubClient:
@@ -117,13 +125,18 @@ class GitHubClient:
         except APIError:
             return "free"
 
-    def call_api(self, method, endpoint, body=None):
+    def call_api(self, method, endpoint, body=None, paginate=False):
         """
         Call the GitHub API via `gh api`.
         Returns (status_code, response_text).
         Raises APIError on non-2xx responses (except 404, which callers handle).
+
+        paginate=True adds `--paginate`: gh follows the Link headers and
+        writes every page's JSON back to back (see get_json_pages).
         """
         cmd = ["gh", "api", "--method", method, endpoint]
+        if paginate:
+            cmd.append("--paginate")
 
         if body:
             cmd += ["--input", "-"]
@@ -161,6 +174,51 @@ class GitHubClient:
         except json.JSONDecodeError:
             raise APIError(f"GET {endpoint} returned non-JSON response")
 
+    def get_json_pages(self, endpoint) -> list:
+        """GET every page of an endpoint; returns one decoded value per page.
+
+        `gh api --paginate` without `--slurp` (which older gh lacks) prints
+        each page as its own JSON document, so a two-page array endpoint
+        yields `[...][...]`, not one valid JSON value. Decode it as a stream.
+        Raises APIError on failure or a non-JSON response.
+        """
+        status, text = self.call_api("GET", endpoint, paginate=True)
+        if status and status >= 400:
+            raise APIError(f"GET {endpoint} returned {status}", status_code=status)
+        try:
+            return _decode_json_stream(text or "")
+        except json.JSONDecodeError:
+            raise APIError(f"GET {endpoint} returned non-JSON response")
+
+    def matching_refs(self, owner: str, repo: str, namespace: str) -> Dict[str, str]:
+        """Return {name: sha} for every ref under refs/<namespace>/ on GitHub.
+
+        Uses the REST API (`git/matching-refs`), never `git ls-remote`: over
+        SSH every git connection can cost a hardware-key touch (#77). The sha
+        is the ref's own target, so an annotated tag maps to its tag object,
+        not the peeled commit. An empty repository (409 "Git Repository is
+        empty") is {}; any other failure raises APIError.
+        """
+        endpoint = self.repo_path(
+            owner, repo, f"git/matching-refs/{namespace}/"
+        ) + "?per_page=100"
+        try:
+            pages = self.get_json_pages(endpoint)
+        except APIError as e:
+            if e.status_code == 409:
+                return {}
+            raise
+        prefix = f"refs/{namespace}/"
+        refs: Dict[str, str] = {}
+        for page in pages:
+            if not isinstance(page, list):
+                raise APIError(f"GET {endpoint} returned an unexpected response")
+            for item in page:
+                ref = (item or {}).get("ref") or ""
+                if ref.startswith(prefix):
+                    refs[ref[len(prefix):]] = (item.get("object") or {}).get("sha")
+        return refs
+
     def call_json(self, method, endpoint, body=None):
         """Call API with JSON body and return parsed response. Raises APIError on failure."""
         status, text = self.call_api(method, endpoint, body)
@@ -191,11 +249,15 @@ class GitHubClient:
         except (APIError, ValueError):
             return None
 
-    def copy_repo(self, owner, source_repo, dest_repo):
+    def copy_repo(self, owner, source_repo, dest_repo, default_branch=None):
         """
         Mirror-clone source_repo and push all refs to dest_repo.
         Both repos must belong to owner.
         Uses the user's git credentials via self.transport.
+
+        default_branch (the source's) is then set on dest_repo: a mirror
+        push does not carry HEAD, so GitHub would otherwise pick its own
+        default (#77 verifies it).
         """
         transport = self._require_transport()
         source_url = transport.remote_url(owner, source_repo)
@@ -221,6 +283,10 @@ class GitHubClient:
                 raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
                 ))
+
+        if default_branch:
+            self.call_api("PATCH", self.repo_path(owner, dest_repo),
+                          {"default_branch": default_branch})
 
     def push_local(self, local_path: str, owner: str, dest_repo: str,
                    default_branch: Optional[str] = None) -> "LocalWiring":
@@ -285,15 +351,10 @@ class GitHubClient:
                         ["git", "-C", work_path, "remote", "add", "origin", dest_url],
                     )
                 # Record what will be pushed so the user's repo can be given
-                # matching remote-tracking refs without a network fetch.
-                pushed = transport.run(
-                    ["git", "-C", work_path, "for-each-ref",
-                     "--format=%(refname:short) %(objectname)", "refs/heads"],
-                    check=False,
-                ).stdout or ""
-                pushed_refs = dict(
-                    line.split(" ", 1) for line in pushed.splitlines() if " " in line
-                )
+                # matching remote-tracking refs without a network fetch, and
+                # so verification can compare GitHub against it (#77).
+                pushed_refs = self._local_refs(transport, work_path, "refs/heads")
+                pushed_tags = self._local_refs(transport, work_path, "refs/tags")
                 if default_branch not in pushed_refs:
                     default_branch = None
                 # One push for every branch and tag: each connection costs a
@@ -312,13 +373,31 @@ class GitHubClient:
                 ))
 
         if not is_git_repo:
-            return LocalWiring()
+            return LocalWiring(pushed=pushed_refs, tags=pushed_tags)
         if default_branch:
             # Belt and braces: don't rely on first-push ordering alone.
             self.call_api("PATCH", self.repo_path(owner, dest_repo),
                           {"default_branch": default_branch})
         wiring = self._wire_local_repo(local_path, owner, dest_repo, pushed_refs)
-        return dataclasses.replace(wiring, default_branch=default_branch)
+        return dataclasses.replace(
+            wiring, default_branch=default_branch,
+            pushed=pushed_refs, tags=pushed_tags,
+        )
+
+    @staticmethod
+    def _local_refs(transport, work_path, prefix) -> Dict[str, str]:
+        """{name: sha} for the refs under prefix in work_path.
+
+        lstrip=2, not refname:short: :short renders a branch that shares a
+        tag's name as "heads/<name>". objectname is the ref's own target (the
+        tag object for an annotated tag), matching the API's object.sha.
+        """
+        out = transport.run(
+            ["git", "-C", work_path, "for-each-ref",
+             "--format=%(refname:lstrip=2) %(objectname)", prefix],
+            check=False,
+        ).stdout or ""
+        return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
 
     def _wire_local_repo(self, local_path, owner, dest_repo, pushed_refs):
         """Point the user's original repo at the new remote and set upstream.
@@ -345,6 +424,7 @@ class GitHubClient:
                     branch=branch,
                     error=(f"'origin' already points at {existing.stdout.strip()}; "
                            f"left unchanged"),
+                    foreign_origin=existing.stdout.strip(),
                 )
         else:
             try:
@@ -398,3 +478,17 @@ class GitHubClient:
         if match:
             return int(match.group(1))
         return None
+
+
+def _decode_json_stream(text: str) -> List:
+    """Decode zero or more concatenated JSON values (`gh api --paginate`)."""
+    decoder = json.JSONDecoder()
+    values = []
+    i, n = 0, len(text)
+    while True:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            return values
+        value, i = decoder.raw_decode(text, i)
+        values.append(value)

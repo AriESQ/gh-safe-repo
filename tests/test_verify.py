@@ -1,5 +1,7 @@
 """Tests for post-apply verification (gh_safe_repo/verify.py, #77)."""
 
+import os
+import subprocess
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +16,10 @@ from gh_safe_repo.verify import (
     Probe,
     Verification,
     create_probes,
+    default_branch_probe,
+    local_wiring_probes,
+    mirrored_ref_probes,
+    pushed_ref_probes,
     verify,
     verify_create,
     verify_plugins,
@@ -86,7 +92,8 @@ class TestModel:
                   remediation="r").to_dict()
         assert d == {
             "category": "security", "key": "x", "status": "mismatch",
-            "expected": True, "actual": False, "fatal": False, "remediation": "r",
+            "expected": True, "actual": False, "fatal": False, "advisory": False,
+            "remediation": "r",
         }
 
 
@@ -317,3 +324,227 @@ class TestCreateProbes:
         extra = Probe("code", "refs", ["main"], lambda: ["main"], fatal=True)
         v = verify_create(pairs, private=True, extra_probes=[extra], sleep=MagicMock())
         assert [c.name for c in v.checks] == ["repo/repository", "repo/visibility", "code/refs"]
+
+
+def refs_client(refs):
+    """client.matching_refs backed by {(repo, namespace): {name: sha} | Exception | list}.
+
+    A list value is consumed one read at a time (eventual consistency).
+    """
+    client = make_client(repo={"default_branch": "main"})
+    calls = []
+
+    def matching_refs(owner, repo, namespace):
+        calls.append((owner, repo, namespace))
+        got = refs.get((repo, namespace), {})
+        if isinstance(got, list):
+            got = got.pop(0) if len(got) > 1 else got[0]
+        if isinstance(got, Exception):
+            raise got
+        return dict(got)
+    client.matching_refs.side_effect = matching_refs
+    client.ref_calls = calls
+    return client
+
+
+class TestPushedRefProbes:
+    """#77 PR 4: create --local must leave every pushed ref on GitHub."""
+
+    BRANCHES = {"main": "a1", "dev": "b2"}
+
+    def _verify(self, client, branches=BRANCHES, tags=None):
+        sleep = MagicMock()
+        probes = pushed_ref_probes(client, "alice", "demo", branches=branches,
+                                   tags=tags or {}, remediation="push again")
+        return verify(probes=probes, sleep=sleep), sleep
+
+    def test_all_present_is_ok(self):
+        client = refs_client({("demo", "heads"): {"main": "a1", "dev": "b2", "x": "9"}})
+        v, sleep = self._verify(client)
+        assert [(c.name, c.status) for c in v.checks] == [("code/branches", OK)]
+        assert v.exit_code() == 0
+        sleep.assert_not_called()
+        assert ("alice", "demo", "heads") in client.ref_calls
+
+    def test_missing_branch_is_fatal(self):
+        client = refs_client({("demo", "heads"): {"main": "a1"}})
+        v, sleep = self._verify(client)
+        (c,) = v.checks
+        assert (c.status, c.fatal) == (MISMATCH, True)
+        assert c.actual == {"dev": None, "main": "a1"}
+        assert c.remediation == "push again"
+        assert v.exit_code() == 1
+        assert sleep.call_count == 3  # retried for eventual consistency
+
+    def test_sha_mismatch_is_fatal(self):
+        client = refs_client({("demo", "heads"): {"main": "zz", "dev": "b2"}})
+        v, _ = self._verify(client)
+        assert v.checks[0].actual == {"dev": "b2", "main": "zz"}
+        assert v.exit_code() == 1
+
+    def test_ref_appearing_late_is_ok(self):
+        client = refs_client({("demo", "heads"): [{}, self.BRANCHES]})
+        v, sleep = self._verify(client)
+        assert v.ok and sleep.call_count == 1
+
+    def test_tags_checked_against_tag_object_sha(self):
+        client = refs_client({
+            ("demo", "heads"): self.BRANCHES,
+            ("demo", "tags"): {"v1": "c0mm1t"},  # peeled commit, not the tag object
+        })
+        v, _ = self._verify(client, tags={"v1": "7a90bj"})
+        assert [(c.name, c.status) for c in v.checks] == [
+            ("code/branches", OK), ("code/tags", MISMATCH),
+        ]
+        assert v.exit_code() == 1
+
+    def test_no_tags_pushed_means_no_tag_read(self):
+        client = refs_client({("demo", "heads"): self.BRANCHES})
+        self._verify(client)
+        assert ("alice", "demo", "tags") not in client.ref_calls
+
+    def test_nothing_recorded_requires_at_least_one_branch(self):
+        v, _ = self._verify(refs_client({("demo", "heads"): {"main": "a1"}}), branches={})
+        assert v.ok and v.checks[0].actual == ["main"]
+        v, _ = self._verify(refs_client({}), branches={})
+        assert v.checks[0].status == MISMATCH and v.exit_code() == 1
+
+    def test_unreadable_is_unknown_not_fatal(self):
+        client = refs_client({("demo", "heads"): APIError("HTTP 502", status_code=502)})
+        v, _ = self._verify(client)
+        (c,) = v.checks
+        assert (c.status, c.fatal) == (UNKNOWN, False)
+        assert v.exit_code() == 0
+
+
+class TestMirroredRefProbes:
+    def test_source_refs_become_expected(self):
+        client = refs_client({
+            ("src", "heads"): {"main": "a1", "dev": "b2"},
+            ("src", "tags"): {"v1": "t1"},
+            ("demo", "heads"): {"main": "a1", "dev": "b2"},
+            ("demo", "tags"): {"v1": "t1"},
+        })
+        v = verify(probes=mirrored_ref_probes(client, "alice", "src", "alice", "demo"),
+                   sleep=MagicMock())
+        assert [(c.name, c.status) for c in v.checks] == [
+            ("code/branches", OK), ("code/tags", OK),
+        ]
+        assert v.checks[0].expected == {"main": "a1", "dev": "b2"}
+
+    def test_destination_missing_source_ref_is_fatal(self):
+        client = refs_client({
+            ("src", "heads"): {"main": "a1", "dev": "b2"},
+            ("demo", "heads"): {"main": "a1"},
+        })
+        v = verify(probes=mirrored_ref_probes(client, "alice", "src", "alice", "demo",
+                                              remediation="mirror again"),
+                   sleep=MagicMock())
+        assert v.checks[0].status == MISMATCH and v.checks[0].fatal
+        assert v.checks[0].remediation == "mirror again"
+        assert v.exit_code() == 1
+
+    def test_source_read_once(self):
+        client = refs_client({("src", "heads"): {"main": "a1"},
+                              ("demo", "heads"): [{}, {}, {"main": "a1"}]})
+        v = verify(probes=mirrored_ref_probes(client, "alice", "src", "alice", "demo"),
+                   sleep=MagicMock())
+        assert v.ok
+        assert client.ref_calls.count(("alice", "src", "heads")) == 1
+
+    def test_unreadable_source_is_unknown(self):
+        client = refs_client({("src", "heads"): APIError("HTTP 403", status_code=403)})
+        v = verify(probes=mirrored_ref_probes(client, "alice", "src", "alice", "demo"),
+                   sleep=MagicMock())
+        assert v.checks[0].status == UNKNOWN and v.exit_code() == 0
+
+
+class TestDefaultBranchProbe:
+    def test_match_and_mismatch(self):
+        client = make_client(repo={"default_branch": "main"})
+        v = verify(probes=[default_branch_probe(client, "alice", "demo", "main")],
+                   sleep=MagicMock())
+        assert v.ok
+        v = verify(probes=[default_branch_probe(client, "alice", "demo", "develop")],
+                   sleep=MagicMock())
+        (c,) = v.checks
+        assert (c.status, c.fatal, c.actual) == (MISMATCH, False, "main")
+        assert c.remediation == "gh repo edit alice/demo --default-branch develop"
+        assert v.exit_code() == 3  # settings-class, fix-able
+        client.get_repo_data.assert_called_with("alice", "demo", refresh=True)
+
+
+class TestLocalWiringProbes:
+    URL = "git@github.com:alice/demo.git"
+
+    @pytest.fixture(autouse=True)
+    def _hermetic_git(self, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def _repo(self, path, **config):
+        subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+        for k, v in config.items():
+            subprocess.run(["git", "-C", str(path), "config", k.replace("__", "."), v],
+                           check=True)
+        return str(path)
+
+    def _verify(self, path, branch="main", foreign=None):
+        sleep = MagicMock()
+        probes = local_wiring_probes(path, self.URL, branch, foreign_origin=foreign)
+        return verify(probes=probes, sleep=sleep), sleep
+
+    def test_wired_repo_is_ok(self, tmp_path):
+        path = self._repo(tmp_path, remote__origin__url=self.URL,
+                          branch__main__remote="origin",
+                          branch__main__merge="refs/heads/main")
+        v, _ = self._verify(path)
+        assert [(c.name, c.status) for c in v.checks] == [
+            ("local/origin", OK), ("local/tracking", OK),
+        ]
+
+    def test_unwired_repo_is_advisory_and_never_retried(self, tmp_path):
+        path = self._repo(tmp_path)
+        v, sleep = self._verify(path)
+        assert [(c.name, c.status, c.advisory) for c in v.checks] == [
+            ("local/origin", MISMATCH, True), ("local/tracking", MISMATCH, True),
+        ]
+        assert v.exit_code() == 0  # a warning, not a failure
+        assert not v.has_mismatch and len(v.advisories) == 2
+        sleep.assert_not_called()  # local config is not eventually consistent
+        assert v.checks[0].actual is None
+        assert f"git remote add origin {self.URL}" in v.checks[0].remediation
+        assert "git push -u origin main:main" in v.checks[1].remediation
+
+    def test_tracking_wrong_branch(self, tmp_path):
+        path = self._repo(tmp_path, remote__origin__url=self.URL,
+                          branch__main__remote="origin",
+                          branch__main__merge="refs/heads/other")
+        v, _ = self._verify(path)
+        assert v.checks[1].status == MISMATCH
+        assert v.checks[1].actual == {"remote": "origin", "merge": "refs/heads/other"}
+
+    def test_foreign_origin_is_explained_and_has_no_tracking_check(self, tmp_path):
+        other = "git@example.com:x/y.git"
+        path = self._repo(tmp_path, remote__origin__url=other)
+        v, _ = self._verify(path, foreign=other)
+        (c,) = v.checks
+        assert (c.name, c.status, c.advisory, c.actual) == (
+            "local/origin", MISMATCH, True, other,
+        )
+        assert "already pointed at git@example.com:x/y.git" in c.remediation
+        assert f"git remote set-url origin {self.URL}" in c.remediation
+        assert v.exit_code() == 0
+
+    def test_detached_head_checks_origin_only(self, tmp_path):
+        path = self._repo(tmp_path, remote__origin__url=self.URL)
+        v, _ = self._verify(path, branch=None)
+        assert [c.name for c in v.checks] == ["local/origin"] and v.ok
+
+    def test_advisory_alongside_settings_mismatch_still_exits_3(self, tmp_path):
+        path = self._repo(tmp_path)
+        probes = local_wiring_probes(path, self.URL, "main")
+        probes.append(Probe("repo", "default_branch", "main", lambda: "dev"))
+        v = verify(probes=probes, sleep=MagicMock())
+        assert v.exit_code() == 3
+        assert v.to_dict()["checks"][0]["advisory"] is True

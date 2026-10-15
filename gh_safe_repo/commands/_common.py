@@ -319,13 +319,24 @@ def print_verification(verification, *, file=None):
     colours = {"ok": _GREEN, "mismatch": _RED, "unknown": _YELLOW}
     print(f"\n{_BOLD}Verified{_RESET}", file=out)
     for c in verification.checks:
-        mark = _c(colours[c.status], _MARKS[c.status])
+        # Advisory mismatches are warnings (exit code unchanged): yellow.
+        colour = _YELLOW if c.advisory else colours[c.status]
+        mark = _c(colour, _MARKS[c.status])
         if c.status == "ok":
             print(f"  {mark} {c.name}", file=out)
         elif c.status == "mismatch":
+            local = c.category == "local"
+            expected, actual = c.expected, c.actual
+            if isinstance(expected, dict) and isinstance(actual, dict):
+                # Ref maps can hold hundreds of branches: show only what differs.
+                diff = [k for k in expected if expected.get(k) != actual.get(k)]
+                expected = {k: expected[k] for k in diff}
+                actual = {k: actual.get(k) for k in diff}
+            actual = ("(not set)" if local and actual is None
+                      else _fmt_value(actual))
             print(
-                f"  {mark} {c.name}: expected {_fmt_value(c.expected)}, "
-                f"GitHub has {_fmt_value(c.actual)}",
+                f"  {mark} {c.name}: expected {_fmt_value(expected)}, "
+                f"{'local repo has' if local else 'GitHub has'} {actual}",
                 file=out,
             )
         else:
@@ -393,12 +404,51 @@ def _problem_lines(verification):
     if verification is None or verification.ok:
         return []
     s = verification.summary()
+    # Advisory mismatches (local wiring) are not settings and do not change
+    # the exit code; the banner's next-step lines cover them.
+    mismatched = s["mismatch"] - len(verification.advisories)
     lines = []
-    if s["mismatch"]:
-        lines.append(f"{s['mismatch']} setting(s) did not stick.")
+    if mismatched:
+        lines.append(f"{mismatched} setting(s) did not stick.")
     if s["unknown"]:
         lines.append(f"{s['unknown']} setting(s) could not be read back.")
     return lines
+
+
+def _local_next_step(verification, wiring):
+    """Banner lines for the user's local repo after `create --local`.
+
+    Built from the `local/origin` and `local/tracking` verification checks
+    (what git config actually says), falling back to `wiring` (what
+    push_local reported) when there are none. None when neither applies.
+    """
+    checks = {}
+    if verification is not None:
+        checks = {c.key: c for c in verification.checks if c.category == "local"}
+    origin, tracking = checks.get("origin"), checks.get("tracking")
+    branch = wiring.branch if wiring else None
+    if tracking is not None:
+        branch = str(tracking.expected["merge"]).split("refs/heads/", 1)[-1]
+    # Explicit <b>:<b> refspec: ignores tracking config, so it can never land
+    # on the default branch by accident.
+    push = [f"git push -u origin {branch}:{branch}"] if branch else []
+    if origin is not None and origin.status == "mismatch":
+        if origin.actual:
+            return ["Your repo's origin points elsewhere. To use this repo:",
+                    f"git remote set-url origin {origin.expected}"] + push
+        return ["Wire up your local repo:",
+                f"git remote add origin {origin.expected}"] + push
+    if tracking is not None and tracking.status == "ok":
+        return ["Local repo wired up:", f"{branch} tracks origin/{branch}"]
+    if tracking is not None and tracking.status == "mismatch":
+        return ["Set your tracking branch:"] + push
+    if origin is not None and origin.status == "ok" and tracking is None:
+        return ["Local repo wired up:", f"origin is {origin.expected}"]
+    if wiring and wiring.tracking:
+        return ["Local repo wired up:", f"{branch} tracks origin/{branch}"]
+    if branch:
+        return ["Set your tracking branch:"] + push
+    return None
 
 
 def print_success(owner, repo, local_push=False, protocol="https", wiring=None,
@@ -408,8 +458,10 @@ def print_success(owner, repo, local_push=False, protocol="https", wiring=None,
     With `verification`: a failed fatal check (repo missing, wrong
     visibility) prints a red "Failed" banner naming it and nothing else; any
     other mismatch or unknown turns the green "Done" into a yellow "Done with
-    problems" whose first lines say how many settings did not stick. The
-    remote/clone/tracking hints below are unchanged either way.
+    problems" whose first lines say how many settings did not stick.
+    Advisory checks (local wiring) leave the banner green. Under
+    `local_push` the next-step lines come from the `local/*` checks (what
+    the user's git config actually says), falling back to `wiring`.
     """
     url = f"https://github.com/{owner}/{repo}"
     if verification is not None and verification.has_fatal:
@@ -433,24 +485,10 @@ def print_success(owner, repo, local_push=False, protocol="https", wiring=None,
     ssh = ("SSH  ", ssh_url)
     ordered = (ssh, https) if protocol == "ssh" else (https, ssh)
     if local_push:
-        branch = wiring.branch if wiring else None
-        if wiring and wiring.tracking:
-            next_step = (
-                f"  Local repo wired up:  \n"
-                f"  {branch} tracks origin/{branch}  "
-            )
-        elif branch:
-            # Explicit <b>:<b> refspec: ignores tracking config, so it can
-            # never land on the default branch by accident.
-            next_step = (
-                f"  Set your tracking branch:  \n"
-                f"  git push -u origin {branch}:{branch}  "
-            )
-        else:
-            next_step = (
-                f"  Clone it:  \n"
-                f"  git clone {ordered[0][1]}  "
-            )
+        steps = _local_next_step(verification, wiring) or [
+            "Clone it:", f"git clone {ordered[0][1]}",
+        ]
+        next_step = "\n".join(f"  {l}  " for l in steps)
         inner = (
             headline
             + f"  {url}  \n"

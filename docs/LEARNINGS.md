@@ -369,7 +369,7 @@ the same number of GETs as the planning pass.
 **Why API reads, not `git ls-remote`.** Verification only uses REST GETs. Over
 SSH, `ls-remote` is a network git operation that can cost a hardware-key touch,
 and a missed touch there would show up as an unknown that says nothing about
-the repo. The code-push checks planned for `create` follow the same rule:
+the repo. The code-push checks in `create` follow the same rule:
 read refs via `GET git/matching-refs/heads/` and `.../tags/`.
 
 **`create` verifies with the create plan, re-audited.** `create` plans with
@@ -411,6 +411,61 @@ document at the end with `verification`, the table on stderr before an
 interactive prompt, the plain plan on decline, and nothing on stdout for an
 exit-`1` abort before or during the apply (those already explain themselves
 on stderr, and a plan document there would look like a result).
+
+**Code push is verified against what was pushed, through the API.**
+`push_local` already listed the bare clone's heads to write remote-tracking
+refs (#70); it now also lists `refs/tags` and returns both maps on
+`LocalWiring` (`pushed`, `tags`). After the apply, `GET
+/repos/{o}/{r}/git/matching-refs/heads/` and `.../tags/` must have every
+pushed name at the pushed SHA (`--from`: the source repo's refs, read the
+same way). A missing ref or a different SHA is fatal (exit `1`): the push
+step reported success, but the point of `--local`/`--from` was not achieved.
+`git ls-remote` would answer the same question with one network git
+connection per call, which over SSH with a hardware key is a touch the user
+did not expect, so it is not used.
+
+**Annotated tags: compare the tag object, not the commit.** For an annotated
+tag, matching-refs reports `object.type = "tag"` and `object.sha` = the tag
+object; the peeled commit is only reachable through a second `GET
+git/tags/{sha}`. Locally, `for-each-ref --format=%(objectname)` gives the
+same tag object SHA (`%(*objectname)` would give the peeled commit). Both
+sides therefore use the ref's own target, and lightweight tags (`type:
+"commit"`) compare equal the same way. `--mirror` copies tag objects
+verbatim, so source and destination tag SHAs match too.
+
+**`refname:short` is ambiguous.** When a branch and a tag share a name,
+`%(refname:short)` renders the branch as `heads/<name>`, which then became
+the refspec `refs/heads/heads/<name>`. `_local_refs()` uses
+`%(refname:lstrip=2)`.
+
+**matching-refs pagination and empty repos.** The endpoint is paginated
+(`per_page` up to 100, `Link` headers), so a repo with hundreds of branches
+needs `gh api --paginate`. Without `--slurp` (not in older `gh`), gh prints
+each page as its own JSON document, back to back: `[...][...]`, which
+`json.loads` rejects. `get_json_pages()` decodes the output as a stream with
+`JSONDecoder.raw_decode`. On a repository with no commits the git-data
+endpoints answer 409 "Git Repository is empty" rather than `[]`;
+`matching_refs()` maps that to `{}` so it reads as "nothing pushed" (a
+mismatch), not as "could not read" (unknown).
+
+**A mirror push has no default branch.** `push --mirror` sends refs, not
+`HEAD`, so GitHub picked its own default for a `--from` repo, and branch
+protection went to the name the empty repo was created with. `copy_repo()`
+now PATCHes the source's `default_branch` afterwards (as `push_local` does
+for `--local`), protection targets it, and `repo/default_branch` checks it
+(exit `3`, `gh repo edit --default-branch`).
+
+**Local wiring is advisory and read from config only.** `local/origin`
+compares `git config remote.origin.url` with `transport.persistent_url()`
+(what `_wire_local_repo` writes, never the token-bearing URL);
+`local/tracking` compares `branch.<b>.remote` / `.merge`. `@{u}` is not used:
+it also needs `refs/remotes/origin/<b>` and says nothing more about the
+config. A mismatch never changes the exit code (`advisory`), because the new
+repo is fine and the fix is one local command; probes are `retry=False`, as
+local config is not eventually consistent and re-reading it would only spend
+the 7s budget. An `origin` that already pointed elsewhere was left untouched
+on purpose (#70): it is reported with that explanation, and no tracking
+check is made, since any upstream would belong to the old remote.
 
 ## Scan Engine Reporting (#77)
 

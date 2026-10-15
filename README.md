@@ -139,7 +139,7 @@ After applying, `create` reads back what it set and prints a **Verified** sectio
 gh-safe-repo create <owner/repo> --local ~/projects/myapp
 ```
 
-Scans the directory for secrets first, creates the repo, pushes all branches and tags, then wires up `origin` and upstream tracking in your original directory so `git push` works immediately. An existing `origin` pointing somewhere else is left alone; a warning and the success banner tell you the exact `git push -u origin <branch>:<branch>` to run instead. See [Working from local or existing code](#working-from-local-or-existing-code).
+Scans the directory for secrets first, creates the repo, pushes all branches and tags, then wires up `origin` and upstream tracking in your original directory so `git push` works immediately. An existing `origin` pointing somewhere else is left alone; a warning and the success banner tell you the exact commands to run instead. Afterwards it checks, through the API, that every branch and tag it pushed is on GitHub at the same commit (exit `1` with the push command to re-run if not) and that the default branch is the one it chose, then reads your repo's git config to confirm `origin` and upstream tracking (a mismatch is a warning only). See [Working from local or existing code](#working-from-local-or-existing-code) and [Verification](#verification).
 
 ### Mirror an existing repo
 
@@ -148,7 +148,7 @@ gh-safe-repo create <owner/repo> --from <owner/source>
 gh-safe-repo create <owner/pub> --from <owner/priv> --public   # the riskiest move — scanned thoroughly
 ```
 
-Clones the source with full history, scans it, and mirrors it into a fresh repo with safe defaults. If you abort at the scan, no code ever reaches the new repo.
+Clones the source with full history, scans it, and mirrors it into a fresh repo with safe defaults, then sets the source's default branch on it (a mirror push does not carry one). If you abort at the scan, no code ever reaches the new repo. Afterwards every branch and tag of the source must be on the new repo at the same SHA, or the run exits `1`.
 
 ### Audit a repo you already have
 
@@ -324,10 +324,10 @@ thing on stdout; progress, warnings and errors go to stderr.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success, or the user declined at an interactive prompt. For `create` and `fix`, success means everything applied was read back and verified (settings that could not be read back are warned about but do not fail the run) |
-| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), a `create`/`fix` confirmation prompt that hit end of input without `--yes`, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `create`, also a fatal verification check: the new repo cannot be found, or its visibility is not what was asked for. For `scan`, also "critical findings present" |
+| `0` | Success, or the user declined at an interactive prompt. For `create` and `fix`, success means everything applied was read back and verified (settings that could not be read back, and a `create --local` repo whose `origin`/tracking is not wired to the new remote, are warned about but do not fail the run) |
+| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), a `create`/`fix` confirmation prompt that hit end of input without `--yes`, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `create`, also a fatal verification check: the new repo cannot be found, its visibility is not what was asked for, or (`--local`/`--from`) a pushed branch or tag is missing from GitHub or at a different SHA. For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
-| `3` | `create` or `fix` applied the changes, but at least one setting did not stick when read back (see [Verification](#verification)) |
+| `3` | `create` or `fix` applied the changes, but at least one setting did not stick when read back, including a `create --local`/`--from` default branch that is not the one chosen (see [Verification](#verification)) |
 | `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
 
 A run that cannot ask for confirmation never exits `0` without doing the work:
@@ -368,6 +368,12 @@ Verified
 | `file/readme` | the auto-generated `README.md` is gone (plain `create` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
 | `repo/description`, `repo/topics` | `--from`: the source's description and topics were copied | exit `3`, with the `gh repo edit` command |
 | `branch_protection/protected_branches`, `tag_protection/protected_tags` | the ruleset (or classic protection) covers the default branch and the configured tag patterns | exit `3` |
+| `code/branches` | `--local`: every pushed branch is on GitHub at the pushed SHA (a directory that was not a git repo: at least one branch exists). `--from`: every branch of the source is on the new repo at the source's SHA | exit `1` (fatal), with the push (or mirror) command to re-run and `fix --yes` for protection |
+| `code/tags` | the same for tags, when any were pushed. An annotated tag is compared by its tag object SHA, not the commit it points at | exit `1` (fatal) |
+| `repo/default_branch` | `--local`/`--from`: the default branch is the one create chose (or the source's) | exit `3`, with the `gh repo edit --default-branch` command |
+| `local/origin`, `local/tracking` | `--local` on a git repo: your repo's `remote.origin.url` is the new repo, and `branch.<b>.remote`/`.merge` are `origin`/`refs/heads/<b>` for the current branch. Read from local git config only | a warning, exit unchanged (`"advisory": true`); the remediation is the exact `git remote add`/`set-url` or `git push -u origin <b>:<b>` command. An `origin` that already pointed elsewhere was left alone on purpose: it is reported here with that explanation, and no tracking check is made |
+
+Remote refs are read with the REST API (`GET /repos/{owner}/{repo}/git/matching-refs/heads/` and `.../tags/`, paginated), never `git ls-remote`, so verification costs no extra SSH connection and no hardware-key touch. The banner's "Local repo wired up" / "Set your tracking branch" lines come from these checks, not from what the push step reported.
 
 Checks marked fatal carry `"fatal": true` in JSON. A fatal check that could
 not be read is `unknown`, not a failure; if `repo/repository` itself cannot be
@@ -377,8 +383,8 @@ GitHub is briefly inconsistent right after a write, so a setting that reads
 wrong or cannot be read is read again after 1s, 2s and 4s (about 7s at worst
 for the whole run) before it is reported. Only settings the run changed are
 read back; `SKIP` rows are never re-checked. The closing banner is green
-`Done` only when every check is `ok`; otherwise it is yellow
-`Done with problems`.
+`Done` only when every check is `ok` (advisory `local/*` warnings aside);
+otherwise it is yellow `Done with problems`, or red `Failed` for a fatal check.
 
 With `--json`, the document gains a top-level `verification` block:
 
@@ -387,7 +393,7 @@ With `--json`, the document gains a top-level `verification` block:
   "ok": false,
   "checks": [
     { "category": "repo", "key": "has_wiki", "status": "mismatch",
-      "expected": false, "actual": true, "fatal": false,
+      "expected": false, "actual": true, "fatal": false, "advisory": false,
       "remediation": "Run `gh-safe-repo fix alice/demo --yes` once more; ..." }
   ],
   "summary": { "ok": 3, "mismatch": 1, "unknown": 0 }
@@ -395,6 +401,11 @@ With `--json`, the document gains a top-level `verification` block:
 ```
 
 All three `summary` keys are always present. `actual` is `null` for `unknown`.
+`advisory: true` marks a warning-only check (local wiring): it counts as a
+`mismatch` in `summary` and makes `ok` false, but never changes the exit code.
+For `code/branches` and `code/tags`, `expected` is the `{name: sha}` map that
+was pushed and `actual` GitHub's SHA for each of those names (`null` when
+missing).
 The block is absent on `--dry-run` and when you decline the prompt; when there
 is nothing to change it is present with no checks and `"ok": true`.
 
@@ -488,6 +499,7 @@ Repository admins are on the bypass list (consistent with the branch protection 
 5. Every local branch and tag is pushed in a single `git push` (from a `--bare` clone, so branches other than the checked-out one are included), so a hardware key needs one touch. The default branch is listed first and then set via the API. If a security key's touch is missed, the push is retried once
 6. Branch and tag protection are applied — after the push, so the target branch exists
 7. `origin` is added to your **original** local repo pointing at the new GitHub URL, and the current branch's upstream is configured, so `git push` and `git pull` work immediately
+8. [Verification](#verification): every pushed branch and tag is read back through the API and compared SHA for SHA, then the default branch, then your repo's `origin` and tracking config
 
 The new repo's default branch is chosen from the local branches, in this order: `init.defaultBranch` if set, then `main`, then `master`, then the currently checked-out branch. So running from a feature branch still makes `main`/`master` the default. The plan shows the branch count and the chosen default, and branch protection targets that branch.
 
@@ -499,8 +511,9 @@ The new repo's default branch is chosen from the local branches, in this order: 
 4. Git credentials are verified, same as above
 5. The new repo is created (private by default, or public with `--public`)
 6. Actions permissions and security settings are applied
-7. Full history is mirrored: `git clone --mirror` + `git push --mirror`
-8. Branch and tag protection are applied
+7. Full history is mirrored: `git clone --mirror` + `git push --mirror`, and the source's default branch is set on the new repo
+8. Branch and tag protection are applied (to the source's default branch)
+9. [Verification](#verification): the new repo's branches and tags are compared with the source's through the API, SHA for SHA
 
 If the scan reveals a problem and you abort, no code is ever copied to GitHub.
 

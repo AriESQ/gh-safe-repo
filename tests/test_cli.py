@@ -1529,8 +1529,23 @@ class TestCreateVerification:
             key="dependabot_alerts", old=False, new=True,
         ))
 
-    def _client(self, repo=None, readme_status=404, topics=()):
+    def _client(self, repo=None, readme_status=404, topics=(), refs=None):
+        """refs: {(repo, "heads"|"tags"): {name: sha} or Exception}; any
+        pair not given is {"main": "a1"} for heads and {} for tags."""
         client = MagicMock()
+        client.get_default_branch.return_value = "main"
+        refs = refs or {}
+
+        def matching_refs(owner, repo_name, namespace):
+            got = refs.get((repo_name, namespace),
+                           {"main": "a1"} if namespace == "heads" else {})
+            if isinstance(got, Exception):
+                raise got
+            return dict(got)
+        client.matching_refs.side_effect = matching_refs
+        client.transport.persistent_url.side_effect = (
+            lambda o, r: f"git@github.com:{o}/{r}.git"
+        )
         if isinstance(repo, Exception):
             client.get_repo_data.side_effect = repo
         else:
@@ -1740,6 +1755,226 @@ class TestCreateVerification:
         assert "✗ repo/description" in out
         assert "✗ repo/topics" in out
         assert "gh repo edit alice/demo --add-topic a --add-topic b" in out
+
+    # ── code push and local wiring (#77 PR 4) ──────────────────────────────
+
+    URL = "git@github.com:alice/demo.git"
+    PUSHED = {"main": "a1", "dev": "b2"}
+    TAGS = {"v1": "7a9"}  # annotated: the tag object's sha, as the API reports
+
+    @pytest.fixture
+    def hermetic_git(self, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def _local_repo(self, tmp_path, wired=True, origin=None):
+        path = tmp_path / "proj"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+
+        def cfg(k, v):
+            subprocess.run(["git", "-C", str(path), "config", k, v], check=True)
+        if origin or wired:
+            cfg("remote.origin.url", origin or self.URL)
+        if wired:
+            cfg("branch.main.remote", "origin")
+            cfg("branch.main.merge", "refs/heads/main")
+        return str(path)
+
+    def _run_local(self, capsys, path, *, wiring=None, refs=None, repo=None,
+                   argv_extra=()):
+        if wiring is None:
+            wiring = LocalWiring(branch="main", origin=True, tracking=True,
+                                 default_branch="main", pushed=dict(self.PUSHED),
+                                 tags=dict(self.TAGS))
+        if refs is None:
+            refs = {("demo", "heads"): dict(self.PUSHED),
+                    ("demo", "tags"): dict(self.TAGS)}
+        client = self._client(repo=repo, refs=refs)
+        client.push_local.return_value = wiring
+        transport = MagicMock(protocol="ssh")
+        transport.persistent_url.side_effect = lambda o, r: f"git@github.com:{o}/{r}.git"
+        code, _, client, sleep = self._run(
+            repo_plan=self._repo_plan(), client=client,
+            argv_extra=["--local", path, *argv_extra],
+            extra_patches=[
+                patch("gh_safe_repo.commands.create.discover_transport",
+                      return_value=transport),
+                patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                      return_value=ScanDecision(proceed=True)),
+            ],
+        )
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err, client, sleep
+
+    def test_local_all_verified_exits_0(self, tmp_path, capsys, hermetic_git):
+        code, out, err, client, sleep = self._run_local(capsys, self._local_repo(tmp_path))
+        assert code == 0, out + err
+        for row in ("✓ code/branches", "✓ code/tags", "✓ repo/default_branch",
+                    "✓ local/origin", "✓ local/tracking"):
+            assert row in out
+        assert "Repository created successfully!" in out
+        assert "main tracks origin/main" in out
+        assert "Done with problems" not in out
+        sleep.assert_not_called()
+        # Remote refs come from the API, for the new repo only.
+        assert {c.args for c in client.matching_refs.call_args_list} == {
+            ("alice", "demo", "heads"), ("alice", "demo", "tags"),
+        }
+
+    def test_local_missing_branch_exits_1_with_recovery(self, tmp_path, capsys, hermetic_git):
+        refs = {("demo", "heads"): {"main": "a1"}, ("demo", "tags"): dict(self.TAGS)}
+        code, out, _, _, sleep = self._run_local(
+            capsys, self._local_repo(tmp_path), refs=refs,
+        )
+        assert code == 1
+        assert "✗ code/branches" in out
+        assert "'dev': None" in out
+        assert "Failed" in out and "Repository created successfully!" not in out
+        assert (f"git push {self.URL} 'refs/heads/*:refs/heads/*' "
+                "'refs/tags/*:refs/tags/*'") in out
+        assert "gh-safe-repo fix alice/demo --yes" in out
+        assert sleep.call_count == 3  # eventual consistency: retried first
+
+    def test_local_sha_mismatch_exits_1(self, tmp_path, capsys, hermetic_git):
+        refs = {("demo", "heads"): {"main": "a1", "dev": "XX"},
+                ("demo", "tags"): dict(self.TAGS)}
+        code, out, _, _, _ = self._run_local(capsys, self._local_repo(tmp_path), refs=refs)
+        assert code == 1
+        assert "✗ code/branches" in out
+
+    def test_local_tag_mismatch_exits_1(self, tmp_path, capsys, hermetic_git):
+        refs = {("demo", "heads"): dict(self.PUSHED), ("demo", "tags"): {}}
+        code, out, _, _, _ = self._run_local(capsys, self._local_repo(tmp_path), refs=refs)
+        assert code == 1
+        assert "✗ code/tags" in out
+
+    def test_local_wrong_default_branch_exits_3(self, tmp_path, capsys, hermetic_git):
+        code, out, _, _, _ = self._run_local(
+            capsys, self._local_repo(tmp_path), repo={"default_branch": "dev"},
+        )
+        assert code == 3
+        assert "✗ repo/default_branch: expected 'main', GitHub has 'dev'" in out
+        assert "gh repo edit alice/demo --default-branch main" in out
+        assert "Done with problems" in out
+
+    def test_local_wiring_mismatch_warns_and_exits_0(self, tmp_path, capsys, hermetic_git):
+        """push_local said it wired the repo, but git config disagrees."""
+        path = self._local_repo(tmp_path, wired=False)
+        code, out, err, _, _ = self._run_local(capsys, path)
+        assert code == 0
+        assert "✗ local/origin" in out and "local repo has (not set)" in out
+        assert "✗ local/tracking" in out
+        assert "not wired to the new remote" in err
+        # Banner built from the checks, not from push_local's report.
+        assert "Wire up your local repo:" in out
+        assert f"git remote add origin {self.URL}" in out
+        assert "git push -u origin main:main" in out
+        assert "main tracks origin/main" not in out
+        assert "Done with problems" not in out
+
+    def test_local_foreign_origin_left_alone_warns_and_exits_0(
+            self, tmp_path, capsys, hermetic_git):
+        other = "git@example.com:x/y.git"
+        path = self._local_repo(tmp_path, wired=False, origin=other)
+        wiring = LocalWiring(
+            branch="main", error=f"'origin' already points at {other}; left unchanged",
+            foreign_origin=other, default_branch="main",
+            pushed=dict(self.PUSHED), tags=dict(self.TAGS),
+        )
+        code, out, err, _, _ = self._run_local(capsys, path, wiring=wiring)
+        assert code == 0
+        assert "✗ local/origin" in out
+        assert "local/tracking" not in out
+        assert f"already pointed at {other} and was left unchanged" in out
+        assert f"git remote set-url origin {self.URL}" in out
+        assert "Your repo's origin points elsewhere" in out
+        assert "not fully wired" in err
+        assert "not wired to the new remote" not in err  # warned once, at push time
+
+    def test_local_refs_unreadable_is_unknown_exits_0(self, tmp_path, capsys, hermetic_git):
+        boom = APIError("GET .../matching-refs/heads/ returned 502", status_code=502)
+        refs = {("demo", "heads"): boom, ("demo", "tags"): boom}
+        code, out, err, _, sleep = self._run_local(
+            capsys, self._local_repo(tmp_path), refs=refs,
+        )
+        assert code == 0
+        assert "? code/branches" in out and "? code/tags" in out
+        assert "could not be read back" in err
+        assert sleep.call_count == 3
+
+    def test_local_json_is_one_document_with_code_checks(self, tmp_path, capsys, hermetic_git):
+        path = self._local_repo(tmp_path, wired=False)
+        refs = {("demo", "heads"): {"main": "a1"}, ("demo", "tags"): dict(self.TAGS)}
+        code, out, err, _, _ = self._run_local(capsys, path, refs=refs, argv_extra=["--json"])
+        assert code == 1
+        doc = json.loads(out)  # the whole of stdout, nothing else
+        checks = {f"{c['category']}/{c['key']}": c for c in doc["verification"]["checks"]}
+        assert checks["code/branches"]["status"] == "mismatch"
+        assert checks["code/branches"]["fatal"] is True
+        assert checks["code/branches"]["expected"] == self.PUSHED
+        assert checks["code/tags"]["status"] == "ok"
+        assert checks["local/origin"]["advisory"] is True
+        assert checks["local/origin"]["fatal"] is False
+        assert doc["verification"]["ok"] is False
+        assert "Verified" in err
+
+    def test_local_without_tags_reads_no_tags(self, tmp_path, capsys, hermetic_git):
+        wiring = LocalWiring(branch="main", origin=True, tracking=True,
+                             default_branch="main", pushed={"main": "a1"})
+        code, out, _, client, _ = self._run_local(
+            capsys, self._local_repo(tmp_path), wiring=wiring,
+            refs={("demo", "heads"): {"main": "a1"}},
+        )
+        assert code == 0
+        assert "code/tags" not in out
+        assert ("alice", "demo", "tags") not in {
+            c.args for c in client.matching_refs.call_args_list
+        }
+
+    def _run_from_refs(self, capsys, refs, repo=None):
+        client = self._client(repo=repo, refs=refs)
+        transport = MagicMock()
+        transport.persistent_url.side_effect = lambda o, r: f"git@github.com:{o}/{r}.git"
+        code, _, client, _ = self._run(
+            repo_plan=self._repo_plan(), client=client,
+            argv_extra=["--from", "alice/src"],
+            extra_patches=[
+                patch("gh_safe_repo.commands.create.discover_transport",
+                      return_value=transport),
+                patch("gh_safe_repo.commands.create.run_preflight_scan",
+                      return_value=ScanDecision(proceed=True)),
+            ],
+        )
+        return code, capsys.readouterr().out, client
+
+    def test_from_compares_destination_with_source(self, capsys):
+        refs = {("src", "heads"): {"main": "a1", "dev": "b2"},
+                ("src", "tags"): {"v1": "t1"},
+                ("demo", "heads"): {"main": "a1", "dev": "b2"},
+                ("demo", "tags"): {"v1": "t1"}}
+        code, out, client = self._run_from_refs(capsys, refs)
+        assert code == 0
+        assert "✓ code/branches" in out and "✓ code/tags" in out
+        assert "✓ repo/default_branch" in out
+        # The source's default branch is set explicitly after the mirror.
+        client.copy_repo.assert_called_once_with("alice", "src", "demo",
+                                                 default_branch="main")
+
+    def test_from_missing_ref_exits_1(self, capsys):
+        refs = {("src", "heads"): {"main": "a1", "dev": "b2"},
+                ("src", "tags"): {"v1": "t1"},
+                ("demo", "heads"): {"main": "a1", "dev": "b2"},
+                ("demo", "tags"): {}}
+        code, out, _ = self._run_from_refs(capsys, refs)
+        assert code == 1
+        assert "✗ code/tags" in out
+        assert ("git clone --mirror git@github.com:alice/src.git demo.git && "
+                "git -C demo.git push --mirror git@github.com:alice/demo.git") in out
+
+    def test_from_wrong_default_branch_exits_3(self, capsys):
+        code, out, _ = self._run_from_refs(capsys, {}, repo={"default_branch": "dev"})
+        assert code == 3
+        assert "gh repo edit alice/demo --default-branch main" in out
 
 
 class TestConfirmationPromptUnattended:

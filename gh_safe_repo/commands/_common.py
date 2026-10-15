@@ -279,6 +279,31 @@ def ask(prompt, *, json_mode=False):
         return input(prompt)
 
 
+def confirm(prompt, *, json_mode=False, nothing_done="Nothing was changed."):
+    """Ask a [y/N] confirmation. Returns True only for an explicit yes.
+
+    An answer read from a pipe (`echo y | gh-safe-repo fix ...`) counts like a
+    typed one. EOF — stdin closed, `< /dev/null`, an agent or CI subprocess
+    with no input — is not an answer: it is an unattended run that forgot
+    --yes, so this prints an error and exits 1 rather than letting the caller
+    exit 0 with nothing done (#93; the same split `ScanDecision.blocked`
+    makes). Ctrl-C at the prompt is a decline (False), as before.
+    """
+    try:
+        answer = ask(prompt, json_mode=json_mode)
+    except EOFError:
+        print(file=prose_stream(json_mode))
+        error(
+            "Could not read an answer to the confirmation prompt (stdin closed); "
+            f"--yes is required for unattended runs. {nothing_done}"
+        )
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print(file=prose_stream(json_mode))
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
 _MARKS = {"ok": "✓", "mismatch": "✗", "unknown": "?"}
 
 

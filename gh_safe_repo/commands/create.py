@@ -27,7 +27,7 @@ from ._common import (
     _c,
     _resolve_branches,
     add_common_args,
-    ask,
+    confirm,
     build_context,
     check_repo_exists,
     error,
@@ -389,15 +389,11 @@ def run(args):
 
     # Prompt confirmation (skip with --yes)
     if not args.yes:
-        try:
-            answer = ask(
-                f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: ",
-                json_mode=json_mode,
-            ).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print(file=prose_stream(json_mode))
-            sys.exit(0)
-        if answer not in ("y", "yes"):
+        if not confirm(
+            f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: ",
+            json_mode=json_mode,
+            nothing_done="Nothing was created.",
+        ):
             _info(_c(_YELLOW, "Aborted."))
             sys.exit(0)
 

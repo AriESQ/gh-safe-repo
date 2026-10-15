@@ -24,7 +24,7 @@ from ._common import (
     info,
     parse_repo_arg,
     print_plan,
-    ask,
+    confirm,
     print_success_fix,
     print_verification,
     prose_stream,
@@ -188,15 +188,10 @@ def run(args):
 
     # Prompt confirmation (skip with --yes)
     if not args.yes:
-        try:
-            answer = ask(
-                f"\nApply {len(actionable)} change(s) to {owner}/{repo_name}? [y/N]: ",
-                json_mode=json_mode,
-            ).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print(file=prose_stream(json_mode))
-            sys.exit(0)
-        if answer not in ("y", "yes"):
+        if not confirm(
+            f"\nApply {len(actionable)} change(s) to {owner}/{repo_name}? [y/N]: ",
+            json_mode=json_mode,
+        ):
             _info(_c(_YELLOW, "Aborted."))
             if json_mode:
                 print(format_plan_json(full_plan))

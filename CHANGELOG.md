@@ -57,6 +57,10 @@ since the initial release.
   `--yes is required for unattended runs` on stderr and exit `1`. Typing `n`
   (or an empty line, or Ctrl-C) at the prompt still exits `0`, and an answer
   piped on stdin (`echo y | gh-safe-repo fix ...`) is still honoured.
+- The plan-limits tables in the README and the agent skill listed private
+  vulnerability reporting as available on free plans with private repos. GitHub
+  returns 404 for it there, so `create` and `fix` skip it, as the plan already
+  showed; the tables now say so.
 - `create --json --local`/`--from` printed the pre-flight scan report on
   stdout ahead of the JSON plan. It now goes to stderr.
 - A missed security-key touch (`signing failed for ...-SK`) during the push,

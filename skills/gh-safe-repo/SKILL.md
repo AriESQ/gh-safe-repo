@@ -117,7 +117,7 @@ combination. Explain them; never loop trying to force them.
 | Tag protection | ✅ | ❌ | ✅ |
 | Dependabot alerts + security updates | ✅ | ❌ | ✅ |
 | Secret scanning + push protection | ✅ | ❌ | ✅ |
-| Private vulnerability reporting | ✅ | ✅ | ✅ |
+| Private vulnerability reporting | ✅ | ❌ | ✅ |
 
 A `SKIP` can also simply mean the setting is already correct.
 

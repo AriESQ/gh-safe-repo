@@ -737,7 +737,7 @@ Some features are only available depending on repo visibility and your GitHub pl
 | Dependabot security updates | Yes | No | Yes |
 | Secret scanning | Auto | No | Yes |
 | Push protection | Yes | No | Yes |
-| Private vulnerability reporting | Yes | Yes | Yes |
+| Private vulnerability reporting | Yes | No | Yes |
 | Dependency graph | Auto | No | Yes |
 
 `gh-safe-repo` detects your plan level and repo visibility at runtime. Unavailable features appear as `SKIP` in the plan output with a clear reason — the tool never fails silently.

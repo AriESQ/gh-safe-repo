@@ -345,6 +345,11 @@ branch rulesets: 403 and failed detail reads), and the verifier turns a read
 that keeps failing into `unknown`, which warns but exits `0`. Planning keeps
 `strict=False`, so `fix --dry-run` output is unchanged.
 
+**Private vulnerability reporting is not available on free + private.** The
+plan-limits tables said it was; `GET private-vulnerability-reporting` on a
+free-plan private repo returns 404 (checked live 2026-10-14), so the plugin's
+SKIP there is correct and the tables were wrong.
+
 **`GET private-vulnerability-reporting` answers 200 when the feature is off.**
 The body is `{"enabled": false}`. The bare 2xx check above (Security Plugin
 Expansion) read that as enabled, so `fix` never proposed turning it on, and

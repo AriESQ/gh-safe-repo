@@ -1,5 +1,7 @@
 # gh-safe-repo
 
+[![CI](https://github.com/AriESQ/gh-safe-repo/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/AriESQ/gh-safe-repo/actions/workflows/ci.yml)
+
 Create GitHub repositories with safe defaults applied automatically. Replaces the five-minute post-creation settings checklist with a single command.
 
 ```
@@ -749,6 +751,8 @@ uv tool install .                # install globally from current source
 
 There are **no runtime dependencies** — everything uses the standard library (`argparse`, `configparser`, `subprocess`, `json`, `re`). Do not add third-party packages without discussion. `pytest` is the only dev dependency, declared as a UV-native `[dependency-groups]` entry in `pyproject.toml`.
 
+CI (`.github/workflows/ci.yml`) runs the same `uv run pytest tests/ -v` on every push to `master` and every pull request, on Python 3.10 and 3.14. It has read-only `contents` permission and no token, so the authenticated and live E2E tiers skip. It also sets `trufflehog_mode = off`, so the scan tests use the regex scanner. Every `uses:` is pinned to a full commit SHA, as this repo's own Actions policy requires (`sha_pinning_required`, GitHub-owned and verified actions only).
+
 ```
 gh-safe-repo/
 ├── gh-safe-repo          # Thin launcher (entry point for direct use)
@@ -760,6 +764,7 @@ gh-safe-repo/
 │   │   ├── fix.py        # fix subcommand
 │   │   └── scan.py       # scan subcommand
 │   └── plugins/          # Settings plugins (one per category)
+├── .github/workflows/    # CI: pytest on push to master and on PRs
 ├── pyproject.toml        # Build config, entry points
 ├── gh-safe-repo.ini.example  # Fully annotated example config
 └── tests/

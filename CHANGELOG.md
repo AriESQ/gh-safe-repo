@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-15
+
 ### Added
 - `fix` reads every changed setting back from GitHub after applying it and
   prints a `Verified` section, one `✓`/`✗`/`?` row per setting (#77).

@@ -195,7 +195,7 @@ class GitHubClient:
             mirror_path = os.path.join(tmpdir, "mirror")
 
             try:
-                transport.run(["git", "clone", "--mirror", source_url, mirror_path])
+                transport.run_remote(["git", "clone", "--mirror", source_url, mirror_path])
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git clone failed for {source_url}: {(e.stderr or '').strip()}"
@@ -206,7 +206,7 @@ class GitHubClient:
             )
 
             try:
-                transport.run(["git", "-C", mirror_path, "push", "--mirror", "origin"])
+                transport.run_remote(["git", "-C", mirror_path, "push", "--mirror", "origin"])
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
@@ -286,12 +286,16 @@ class GitHubClient:
                 )
                 if default_branch not in pushed_refs:
                     default_branch = None
-                if default_branch:
-                    # First branch to land becomes GitHub's default.
-                    ref = f"refs/heads/{default_branch}"
-                    transport.run(["git", "-C", work_path, "push", "origin", f"{ref}:{ref}"])
-                transport.run(["git", "-C", work_path, "push", "origin", "--all"])
-                transport.run(["git", "-C", work_path, "push", "origin", "--tags"])
+                # One push for every branch and tag: each connection costs a
+                # security-key touch, and a miss between separate pushes left
+                # a half-pushed repo (#79). Default branch first, since the
+                # first branch to land becomes GitHub's default.
+                order = sorted(pushed_refs, key=lambda b: b != default_branch)
+                refspecs = [f"refs/heads/{b}:refs/heads/{b}" for b in order]
+                refspecs.append("refs/tags/*:refs/tags/*")
+                transport.run_remote(
+                    ["git", "-C", work_path, "push", "origin", *refspecs]
+                )
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"
@@ -366,7 +370,7 @@ class GitHubClient:
         transport = self._require_transport()
         clone_url = transport.remote_url(owner, repo)
         try:
-            transport.run(["git", "clone", clone_url, dest_path])
+            transport.run_remote(["git", "clone", clone_url, dest_path])
         except subprocess.CalledProcessError as e:
             raise APIError(transport.redact(
                 f"git clone (scan) failed for {clone_url}: {(e.stderr or '').strip()}"

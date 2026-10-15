@@ -174,10 +174,10 @@ def run(args):
     # Git push URLs are case-sensitive; redirected pushes reject workflow files.
     owner = ctx.owner
 
-    # Pre-flight git credential check for paths that push or clone.
-    # The OAuth token used for API calls cannot push workflow files without the
-    # `workflow` scope, so we use the user's own git credentials instead. Verify
-    # they work before creating the repo, so we don't leave an empty repo behind.
+    # Git transport for paths that push or clone. The OAuth token used for API
+    # calls cannot push workflow files without the `workflow` scope, so we use
+    # the user's own git credentials instead. The credential preflight runs
+    # later, just before the repo is created.
     #
     # source_dir for `--local PATH` is PATH itself (so per-directory git config
     # like includeIf-set core.sshCommand is honored). For `--from`, no local
@@ -194,7 +194,6 @@ def run(args):
                 mode=config.get("git_transport", "mode", fallback="auto"),
                 token=client.token,
             )
-            client.transport.preflight()
         except (AuthError, ConfigError) as e:
             error(str(e))
             sys.exit(1)
@@ -393,6 +392,17 @@ def run(args):
         if answer not in ("y", "yes"):
             _info(_c(_YELLOW, "Aborted."))
             sys.exit(0)
+
+    # Verify git credentials before creating the repo, so a credential failure
+    # can't leave an empty repo behind. Run it after the scan and the prompt,
+    # not before: a security-key touch proves only that the key answered then,
+    # so the gap to the real push should be as short as possible (#79).
+    if args.local_path or args.from_repo:
+        try:
+            client.transport.preflight()
+        except AuthError as e:
+            error(str(e))
+            sys.exit(1)
 
     # Apply changes
     repo_plugin      = plugins[0]

@@ -287,8 +287,19 @@ touch shows up as `sign_and_send_pubkey: signing failed for ED25519-SK ...:
 invalid format`, then git's stock "check your access rights" text, which
 points at the wrong cause. `git_transport.security_key_hint()` matches that
 string. A passing pre-flight only proves one touch happened; it does not
-guarantee the later push will get one. Whether to change pre-flight
-because of this is still open (#79 item 4).
+guarantee the later push will get one.
+
+Resolved (#79 item 4) without trying to make pre-flight durable, which it
+cannot be: the check still runs, but after the scan and the confirmation
+prompt, just before the repo is created, so the gap to the push is seconds,
+not minutes. `push_local` sends every branch and tag in one `git push` with
+explicit refspecs (`refs/heads/<b>:refs/heads/<b>` per branch, default
+first, plus `refs/tags/*:refs/tags/*`). Three pushes meant three touches,
+and a miss on the second left a half-pushed repo that the recovery text
+called empty. Remote git calls go through `GitTransport.run_remote()`, which
+retries once when `security_key_hint()` matches and re-raises anything else.
+The `discover_transport()` call stays early because the `--from` scan
+clones through it.
 
 ## `push_local` Pushed Only One Branch (#86)
 

@@ -206,34 +206,60 @@ class TestCreateFlagValidation:
                 main()
         assert exc_info.value.code == 2
 
-    def test_credential_failure_aborts_before_repo_creation(self, tmp_path):
-        """When --local is set and git creds are missing, create must fail
-        BEFORE any API call — otherwise we leave an empty repo behind."""
+    def _run_local_create(self, tmp_path, mock_transport, extra_args=(), answer=None):
+        """Run `create --local` with plugins mocked; return (exit code, client, RepositoryPlugin)."""
+        (tmp_path / ".git").mkdir()
         mock_client = MagicMock()
-        mock_transport = MagicMock()
-        mock_transport.preflight.side_effect = AuthError(
-            "SSH authentication to git@github.com failed."
-        )
-
+        mock_client.transport = mock_transport
         with patch("sys.argv", [
-            "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), "--yes",
+            "gh-safe-repo", "create", "alice/my-repo", "--local", str(tmp_path), *extra_args,
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.discover_transport",
-                       return_value=mock_transport) as mock_discover:
+                       return_value=mock_transport), \
+                 patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False), \
+                 patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                       return_value=ScanDecision(proceed=True)), \
+                 patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
+                 patch("gh_safe_repo.commands.create.ActionsPlugin"), \
+                 patch("gh_safe_repo.commands.create.BranchProtectionPlugin"), \
+                 patch("gh_safe_repo.commands.create.SecurityPlugin"), \
+                 patch("gh_safe_repo.commands.create.TagProtectionPlugin"), \
+                 patch("builtins.input", return_value=answer or ""):
                 mock_ctx.return_value = MagicMock(
                     client=mock_client, owner="alice", plan_name="free",
                     is_paid_plan=False, config=make_config(),
                 )
                 with pytest.raises(SystemExit) as exc_info:
                     main()
+        return exc_info.value.code, mock_client, MockRepo
 
-        assert exc_info.value.code == 1
-        mock_discover.assert_called_once()
+    def test_credential_failure_aborts_before_repo_creation(self, tmp_path):
+        """When --local is set and git creds are missing, create must fail
+        BEFORE any API call — otherwise we leave an empty repo behind."""
+        mock_transport = MagicMock()
+        mock_transport.preflight.side_effect = AuthError(
+            "SSH authentication to git@github.com failed."
+        )
+        code, mock_client, MockRepo = self._run_local_create(
+            tmp_path, mock_transport, extra_args=["--yes"],
+        )
+
+        assert code == 1
         mock_transport.preflight.assert_called_once()
         # Critical: no repo creation API call was made
-        mock_client.call_json.assert_not_called()
+        MockRepo.return_value.apply.assert_not_called()
         mock_client.push_local.assert_not_called()
+
+    def test_credential_preflight_runs_after_confirmation(self, tmp_path):
+        """#79: a security-key touch is not durable, so the preflight runs
+        after the prompt, right before creation. Declining never probes."""
+        mock_transport = MagicMock()
+        code, _, MockRepo = self._run_local_create(tmp_path, mock_transport, answer="n")
+
+        assert code == 0
+        mock_transport.preflight.assert_not_called()
+        MockRepo.return_value.apply.assert_not_called()
 
     def test_credential_check_skipped_when_no_push_needed(self):
         """Plain create (no --local/--from) doesn't push, so don't probe creds."""

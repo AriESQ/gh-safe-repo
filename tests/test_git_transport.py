@@ -509,3 +509,36 @@ class TestSecurityKeyHint:
         from gh_safe_repo.git_transport import security_key_hint
         assert security_key_hint("Permission denied (publickey).") is None
         assert security_key_hint("") is None
+
+
+class TestRunRemote:
+    """#79: a missed security-key touch gets one retry; nothing else does."""
+
+    SK_FAIL = subprocess.CalledProcessError(
+        128, "git",
+        stderr="sign_and_send_pubkey: signing failed for ECDSA-SK \"k\": invalid format\n"
+               "git@github.com: Permission denied (publickey).",
+    )
+
+    def test_retries_once_after_missed_touch(self, capsys):
+        t = make_transport()
+        with patch("subprocess.run",
+                   side_effect=[self.SK_FAIL, make_completed_process()]) as mock_run:
+            t.run_remote(["git", "push", "origin"])
+        assert mock_run.call_count == 2
+        assert "Touch it" in capsys.readouterr().err
+
+    def test_second_missed_touch_raises(self):
+        t = make_transport()
+        with patch("subprocess.run", side_effect=[self.SK_FAIL, self.SK_FAIL]) as mock_run:
+            with pytest.raises(subprocess.CalledProcessError):
+                t.run_remote(["git", "push", "origin"])
+        assert mock_run.call_count == 2
+
+    def test_other_failures_are_not_retried(self):
+        t = make_transport()
+        err = subprocess.CalledProcessError(1, "git", stderr="! [rejected] main")
+        with patch("subprocess.run", side_effect=err) as mock_run:
+            with pytest.raises(subprocess.CalledProcessError):
+                t.run_remote(["git", "push", "origin"])
+        assert mock_run.call_count == 1

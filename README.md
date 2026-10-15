@@ -400,11 +400,11 @@ Repository admins are on the bypass list (consistent with the branch protection 
 
 **`--local PATH`** — `PATH` must be an initialized git repository (`git init` or a clone):
 
-1. Your git credentials for `github.com` are verified up front (SSH probe when the protocol is `ssh`; HTTPS is trusted), so a missing key fails fast before any repo is created
-2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
-3. You review findings and confirm (or abort)
+1. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
+2. You review findings and confirm (or abort)
+3. Your git credentials for `github.com` are verified (SSH probe when the protocol is `ssh`; HTTPS is trusted), so a missing key fails before any repo is created. This runs after the prompt, right before creation, so a hardware security key is asked for its touch close to the real push
 4. The repo is created, and actions permissions and security settings are applied
-5. Every local branch and tag is pushed (from a `--bare` clone, so branches other than the checked-out one are included). The default branch is pushed first and then set via the API
+5. Every local branch and tag is pushed in a single `git push` (from a `--bare` clone, so branches other than the checked-out one are included), so a hardware key needs one touch. The default branch is listed first and then set via the API. If a security key's touch is missed, the push is retried once
 6. Branch and tag protection are applied — after the push, so the target branch exists
 7. `origin` is added to your **original** local repo pointing at the new GitHub URL, and the current branch's upstream is configured, so `git push` and `git pull` work immediately
 
@@ -412,10 +412,10 @@ The new repo's default branch is chosen from the local branches, in this order: 
 
 **`--from OWNER/REPO`** — the remote-to-remote counterpart:
 
-1. Git credentials are verified up front, same as above
-2. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the entire commit history)
-3. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the clone
-4. You review findings and confirm (or abort)
+1. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the entire commit history)
+2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the clone
+3. You review findings and confirm (or abort)
+4. Git credentials are verified, same as above
 5. The new repo is created (private by default, or public with `--public`)
 6. Actions permissions and security settings are applied
 7. Full history is mirrored: `git clone --mirror` + `git push --mirror`

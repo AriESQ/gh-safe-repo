@@ -1250,3 +1250,239 @@ class TestLocalBranches:
 
     def test_not_a_repo(self, tmp_path):
         assert create._local_branches(str(tmp_path)) == ([], None)
+
+
+class TestFixVerification:
+    """`fix` re-reads settings after apply (#77): exit 0/3, JSON, banner."""
+
+    REPO = {
+        "id": 1, "full_name": "alice/demo", "name": "demo",
+        "owner": {"login": "alice", "type": "User"},
+        "private": False, "default_branch": "main",
+        "permissions": {"admin": True},
+    }
+
+    @staticmethod
+    def _plan(*changes):
+        p = Plan()
+        for c in changes:
+            p.add(c)
+        return p
+
+    def _ok(self):
+        return self._plan(Change(
+            type=ChangeType.SKIP, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", reason="Already at desired value",
+        ))
+
+    def _bad(self):
+        return self._plan(Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", old=False, new=True,
+        ))
+
+    def _run(self, post_audits, argv_extra=(), initial=None, apply_error=None):
+        """Run `fix alice/demo --yes` with one mocked plugin that has work.
+
+        `post_audits` are what SecurityPlugin's re-audit returns after apply
+        (an Exception is raised from fetch_current_state instead). The other
+        four plugins plan nothing. Returns (exit_code, security_mock, sleep_mock).
+        """
+        initial = initial or self._bad()
+        names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
+                 "SecurityPlugin", "TagProtectionPlugin"]
+        patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
+        mocks = dict(zip(names, (p.start() for p in patches)))
+        try:
+            for M in mocks.values():
+                inst = MagicMock()
+                inst.owner, inst.repo = "alice", "demo"
+                inst.plan.return_value = Plan()
+                inst.fetch_current_state.return_value = {}
+                M.return_value = inst
+            sec = mocks["SecurityPlugin"].return_value
+            fetches, plans = [{}], [initial]  # the planning read
+            for a in post_audits:
+                if isinstance(a, Exception):
+                    fetches.append(a)
+                else:
+                    fetches.append({})
+                    plans.append(a)
+            sec.fetch_current_state.side_effect = fetches
+            sec.plan.side_effect = plans
+            if apply_error is not None:
+                for M in mocks.values():
+                    M.return_value.apply.side_effect = apply_error
+
+            client = MagicMock()
+            client.get_repo_data.return_value = dict(self.REPO)
+            argv = ["gh-safe-repo", "fix", "alice/demo", "--yes", *argv_extra]
+            with patch("sys.argv", argv), \
+                 patch("gh_safe_repo.commands.fix.build_context") as ctx, \
+                 patch("gh_safe_repo.verify.time.sleep") as sleep:
+                ctx.return_value = MagicMock(
+                    client=client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                    code = 0
+                except SystemExit as e:
+                    code = e.code
+            return code, sec, sleep
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_verified_exits_0_with_green_banner(self, capsys):
+        code, sec, sleep = self._run([self._ok()])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "Verified" in out
+        assert "✓ security/dependabot_alerts" in out
+        assert "Done" in out and "Done with problems" not in out
+        sec.fetch_current_state.assert_called_with(strict=True)
+        sleep.assert_not_called()
+
+    def test_setting_that_did_not_stick_exits_3(self, capsys):
+        bad = self._bad()
+        code, _, sleep = self._run([bad, bad, bad, bad])
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "✗ security/dependabot_alerts" in out
+        assert "Done with problems" in out
+        assert "gh-safe-repo fix alice/demo --yes" in out
+        assert sleep.call_count == 3
+
+    def test_every_apply_failing_is_not_reported_as_success(self, capsys):
+        """fix used to print a green "updated successfully" even when every
+        apply raised; verification now catches it."""
+        bad = self._bad()
+        code, _, _ = self._run(
+            [bad, bad, bad, bad], apply_error=APIError("nope", status_code=422),
+        )
+        assert code == 3
+        captured = capsys.readouterr()
+        assert "Some settings failed to apply" in captured.err
+        assert "Done with problems" in captured.out
+
+    def test_unreadable_after_retries_warns_and_exits_0(self, capsys):
+        err = APIError("GET x returned 403", status_code=403)
+        code, _, sleep = self._run([err, err, err, err])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "? security/dependabot_alerts" in captured.out
+        assert "could not be read back" in captured.err
+        assert "Done with problems" in captured.out
+        assert sleep.call_count == 3
+
+    def test_eventual_consistency_retry_then_ok(self, capsys):
+        code, _, sleep = self._run([self._bad(), self._ok()])
+        assert code == 0
+        assert sleep.call_count == 1
+
+    def test_json_stdout_is_one_document_with_verification(self, capsys):
+        code, _, _ = self._run([self._ok()], argv_extra=["--json"])
+        assert code == 0
+        captured = capsys.readouterr()
+        doc = json.loads(captured.out)  # the whole of stdout, nothing else
+        assert doc["verification"]["ok"] is True
+        assert doc["verification"]["summary"] == {"ok": 1, "mismatch": 0, "unknown": 0}
+        (check,) = doc["verification"]["checks"]
+        assert check["key"] == "dependabot_alerts" and check["status"] == "ok"
+        assert doc["changes"][0]["key"] == "dependabot_alerts"
+        # Banner and verification prose went to stderr.
+        assert "Done" in captured.err
+        assert "Verified" in captured.err
+
+    def test_json_mismatch_exits_3_and_still_prints_document(self, capsys):
+        bad = self._bad()
+        code, _, _ = self._run([bad, bad, bad, bad], argv_extra=["--json"])
+        assert code == 3
+        doc = json.loads(capsys.readouterr().out)
+        assert doc["verification"]["ok"] is False
+        check = doc["verification"]["checks"][0]
+        assert (check["status"], check["expected"], check["actual"]) == ("mismatch", True, False)
+
+    def test_dry_run_json_has_no_verification(self, capsys):
+        code, sec, _ = self._run([], argv_extra=["--json", "--dry-run"])
+        assert code == 0
+        doc = json.loads(capsys.readouterr().out)
+        assert "verification" not in doc
+        assert sec.fetch_current_state.call_count == 1  # planning read only
+
+    def test_nothing_to_do_json_has_empty_verification(self, capsys):
+        code, _, _ = self._run([], argv_extra=["--json"], initial=self._ok())
+        assert code == 0
+        doc = json.loads(capsys.readouterr().out)
+        assert doc["verification"] == {
+            "ok": True, "checks": [],
+            "summary": {"ok": 0, "mismatch": 0, "unknown": 0},
+        }
+
+    def test_declined_prompt_json_has_no_verification(self, capsys):
+        """Without --yes the prompt goes to stderr and the doc stays parseable."""
+        names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
+                 "SecurityPlugin", "TagProtectionPlugin"]
+        patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
+        mocks = [p.start() for p in patches]
+        try:
+            for M in mocks:
+                M.return_value.plan.return_value = Plan()
+            mocks[3].return_value.plan.return_value = self._bad()
+            client = MagicMock()
+            client.get_repo_data.return_value = dict(self.REPO)
+            with patch("sys.argv", ["gh-safe-repo", "fix", "alice/demo", "--json"]), \
+                 patch("gh_safe_repo.commands.fix.build_context") as ctx, \
+                 patch("builtins.input", side_effect=lambda prompt: print(prompt, end="") or "n"):
+                ctx.return_value = MagicMock(
+                    client=client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        finally:
+            for p in patches:
+                p.stop()
+        assert exc.value.code == 0
+        captured = capsys.readouterr()
+        doc = json.loads(captured.out)
+        assert "verification" not in doc
+        assert "Apply 1 change(s)" in captured.err
+        mocks[3].return_value.apply.assert_not_called()
+
+
+class TestCreateJsonStdout:
+    def test_success_banner_can_go_to_stderr(self, capsys):
+        """create --json routes the banner to stderr (SKILL.md: stdout is JSON)."""
+        print_success("octocat", "demo", file=sys.stderr)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Repository created successfully!" in captured.err
+
+    def test_plain_create_json_stdout_is_only_json(self, capsys):
+        names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
+                 "SecurityPlugin", "TagProtectionPlugin"]
+        patches = [patch(f"gh_safe_repo.commands.create.{n}") for n in names]
+        mocks = [p.start() for p in patches]
+        try:
+            for M in mocks:
+                M.return_value.plan.return_value = Plan()
+                M.return_value.created_default_branch = "main"
+            with patch("sys.argv", ["gh-safe-repo", "create", "alice/demo", "--yes", "--json"]), \
+                 patch("gh_safe_repo.commands.create.build_context") as ctx, \
+                 patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False):
+                ctx.return_value = MagicMock(
+                    client=MagicMock(), owner="alice", plan_name="free",
+                    is_paid_plan=False, config=make_config(),
+                )
+                try:
+                    main()
+                except SystemExit as e:
+                    assert e.code in (0, None)
+        finally:
+            for p in patches:
+                p.stop()
+        captured = capsys.readouterr()
+        json.loads(captured.out)
+        assert "Repository created successfully!" in captured.err

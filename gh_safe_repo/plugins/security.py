@@ -15,7 +15,10 @@ Not available via REST API (UI-only or dependabot.yml):
     - Dependency graph: auto-enabled for public repos; no writable REST API for private
 """
 
+import json
+
 from ..diff import Change, ChangeCategory, ChangeType, Plan
+from ..errors import APIError
 from .base import BasePlugin
 
 # Settings managed via PATCH /repos with security_and_analysis body.
@@ -45,52 +48,65 @@ class SecurityPlugin(BasePlugin):
         self.is_public = is_public
         self.is_paid_plan = is_paid_plan
 
-    def _is_enabled(self, suffix):
-        """Check a toggle endpoint: 2xx = enabled, 404 = disabled."""
-        path = self.client.repo_path(self.owner, self.repo, suffix)
-        status, _ = self.client.call_api("GET", path)
-        # gh api infers 200 when stderr has no status; actual API may return 200 or 204
-        return status is not None and 200 <= status < 300
+    def _is_enabled(self, suffix, strict=False):
+        """Check a toggle endpoint: 2xx = enabled, 404 = disabled.
 
-    def fetch_current_state(self) -> dict:
+        Endpoints that answer 200 with a JSON ``{"enabled": bool}`` body
+        (private-vulnerability-reporting does, even when off) are read from
+        the body, so "200, enabled: false" is not mistaken for "on".
+
+        Any other status (403, 5xx, no status at all) is ambiguous. Planning
+        (strict=False) keeps treating it as disabled, so `fix` proposes the
+        change; verification (strict=True) raises APIError so the setting is
+        reported as unknown instead of as a mismatch (#77).
+        """
+        path = self.client.repo_path(self.owner, self.repo, suffix)
+        status, text = self.client.call_api("GET", path)
+        # gh api infers 200 when stderr has no status; actual API may return 200 or 204
+        if status is not None and 200 <= status < 300:
+            try:
+                body = json.loads(text) if text and text.strip() else None
+            except (json.JSONDecodeError, ValueError, TypeError):
+                body = None
+            if isinstance(body, dict) and isinstance(body.get("enabled"), bool):
+                return body["enabled"]
+            return True
+        if status == 404 or not strict:
+            return False
+        raise APIError(f"GET {path} returned {status}", status_code=status)
+
+    def fetch_current_state(self, strict: bool = False) -> dict:
         result = {}
 
-        result["dependabot_alerts"] = self._is_enabled("vulnerability-alerts")
-        result["dependabot_security_updates"] = self._is_enabled("automated-security-fixes")
+        result["dependabot_alerts"] = self._is_enabled("vulnerability-alerts", strict)
+        result["dependabot_security_updates"] = self._is_enabled(
+            "automated-security-fixes", strict
+        )
         result["private_vulnerability_reporting"] = self._is_enabled(
-            "private-vulnerability-reporting"
+            "private-vulnerability-reporting", strict
         )
 
-        # Check secret scanning and security_and_analysis settings
+        # Secret scanning and push protection come from GET /repos
+        # (security_and_analysis). A failed read is "disabled" when planning
+        # and re-raised when verifying.
+        try:
+            data = self.client.get_repo_data(self.owner, self.repo)
+        except Exception:
+            if strict:
+                raise
+            data = None
+        sa = ((data or {}).get("security_and_analysis") or {})
+
         if self.is_public:
             result["secret_scanning"] = True
             result["enable_dependency_graph"] = True
         else:
-            try:
-                data = self.client.get_repo_data(self.owner, self.repo)
-                sa = data.get("security_and_analysis") or {}
-                ss = sa.get("secret_scanning") or {}
-                result["secret_scanning"] = ss.get("status") == "enabled"
+            ss = sa.get("secret_scanning") or {}
+            result["secret_scanning"] = ss.get("status") == "enabled"
 
-                for config_key, api_key in SECURITY_ANALYSIS_SETTINGS.items():
-                    entry = sa.get(api_key) or {}
-                    result[config_key] = entry.get("status") == "enabled"
-            except Exception:
-                result["secret_scanning"] = False
-                for config_key in SECURITY_ANALYSIS_SETTINGS:
-                    result[config_key] = False
-
-        # For public repos, still check the non-auto security_and_analysis settings
-        if self.is_public:
-            try:
-                data = self.client.get_repo_data(self.owner, self.repo)
-                sa = data.get("security_and_analysis") or {}
-                for config_key, api_key in SECURITY_ANALYSIS_SETTINGS.items():
-                    entry = sa.get(api_key) or {}
-                    result[config_key] = entry.get("status") == "enabled"
-            except Exception:
-                for config_key in SECURITY_ANALYSIS_SETTINGS:
-                    result.setdefault(config_key, False)
+        for config_key, api_key in SECURITY_ANALYSIS_SETTINGS.items():
+            entry = sa.get(api_key) or {}
+            result[config_key] = entry.get("status") == "enabled"
 
         return result
 

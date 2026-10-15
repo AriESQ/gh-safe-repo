@@ -44,7 +44,8 @@ truffleHog image. New tests must pass without network access or a token. CI sets
 | `test_diff.py` | `Change` and `Plan` dataclasses, `count_by_type()`, `format_plan_json()` |
 | `test_github_client.py` | `GitHubClient` — `call_api()`, auth token resolution, `copy_repo()`, `push_local()`, status-code parsing, `git_remote_url()` protocol selection, `verify_git_credentials()` SSH probe |
 | `test_plugins.py` | All four plugins (`RepositoryPlugin`, `ActionsPlugin`, `BranchProtectionPlugin`, `SecurityPlugin`) — plan generation, apply calls, no-op detection, plan-limit skips |
-| `test_cli.py` | `main()` argument validation, `build_context()` owner check and `require_owner_match`, `fix` admin permissions check, `_resolve_branches()`, `format_plan_json()` / `format_findings_json()`, `scan --json`, the `ScanDecision` matrix (`--yes` / no-TTY / criticals) and the exit codes it drives, ANSI suppression off a TTY, mutually-exclusive flag errors |
+| `test_cli.py` | `main()` argument validation, `build_context()` owner check and `require_owner_match`, `fix` admin permissions check, `_resolve_branches()`, `format_plan_json()` / `format_findings_json()`, `scan --json`, the `ScanDecision` matrix (`--yes` / no-TTY / criticals) and the exit codes it drives, ANSI suppression off a TTY, mutually-exclusive flag errors, `fix` verification exit matrix (0 / 3 / unknown → 0) and the `--json` rule that stdout is one `json.loads`-able document |
+| `test_verify.py` | `verify.py` — `Check`/`Verification` model and exit codes, audit-plan → check mapping, retry → success, retry → unknown, all-SKIP plugins never re-read, shared retry budget. Plugins are `MagicMock`s; `sleep` is injected |
 | `test_security_scanner.py` | `SecurityScanner` — real tempfiles on disk; truffleHog dispatch, regex fallback, `_unified_walk()`, AI context file detection, git history check |
 
 ## Mocking conventions

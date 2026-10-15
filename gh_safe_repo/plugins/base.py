@@ -23,8 +23,17 @@ class BasePlugin(ABC):
         """
 
     @abstractmethod
-    def fetch_current_state(self) -> dict:
-        """Fetch this plugin's settings from the GitHub API. Used in audit mode."""
+    def fetch_current_state(self, strict: bool = False) -> dict:
+        """Fetch this plugin's settings from the GitHub API. Used in audit mode.
+
+        strict=False (planning): an unreadable setting may be reported as
+        GitHub's default, so the plan proposes setting it.
+        strict=True (post-apply verification, #77): a read that cannot tell
+        "off" from "could not read" must raise APIError instead of guessing,
+        so the verifier reports the setting as unknown, not as a mismatch.
+        Only a definite answer (2xx, or the endpoint's documented 404 for
+        "off") may be returned.
+        """
 
     @abstractmethod
     def apply(self, plan: Plan) -> None:

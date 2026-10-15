@@ -1,6 +1,5 @@
 """gh-safe-repo create — Create a new repo with safe defaults."""
 
-import contextlib
 import os
 import subprocess
 import sys
@@ -28,6 +27,7 @@ from ._common import (
     _c,
     _resolve_branches,
     add_common_args,
+    ask,
     build_context,
     check_repo_exists,
     error,
@@ -36,6 +36,8 @@ from ._common import (
     parse_repo_arg,
     print_plan,
     print_success,
+    prose_stream,
+    prose_to_stderr,
     run_preflight_scan,
     run_preflight_scan_local,
     warn,
@@ -262,15 +264,12 @@ def run(args):
     if args.from_repo or args.local_path:
         scanner = SecurityScanner(config, debug=args.debug, progress=not json_mode)
 
-    # The pre-flight report is prose; under --json it goes to stderr so stdout
-    # stays machine-readable.
-    def _scan_output():
-        return contextlib.redirect_stdout(sys.stderr) if json_mode else contextlib.nullcontext()
-
     # Pre-flight security scan (--from workflow, non-dry-run only)
     if args.from_repo and not args.dry_run:
         try:
-            with _scan_output():
+            # The scan report and its prompt print to stdout; under --json
+            # stdout is reserved for the plan document.
+            with prose_to_stderr(json_mode):
                 decision = run_preflight_scan(
                     client, from_owner, from_repo, config,
                     debug=args.debug, scanner=scanner, yes=args.yes,
@@ -283,7 +282,7 @@ def run(args):
 
     # Pre-flight security scan (--local workflow, non-dry-run only)
     if local_path and not args.dry_run:
-        with _scan_output():
+        with prose_to_stderr(json_mode):
             decision = run_preflight_scan_local(
                 local_path, config, debug=args.debug, scanner=scanner, yes=args.yes
             )
@@ -391,11 +390,12 @@ def run(args):
     # Prompt confirmation (skip with --yes)
     if not args.yes:
         try:
-            answer = input(
-                f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: "
+            answer = ask(
+                f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: ",
+                json_mode=json_mode,
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            print(file=prose_stream(json_mode))
             sys.exit(0)
         if answer not in ("y", "yes"):
             _info(_c(_YELLOW, "Aborted."))
@@ -512,5 +512,5 @@ def run(args):
     )
     print_success(
         owner, repo_name, local_push=bool(args.local_path), protocol=protocol,
-        wiring=wiring,
+        wiring=wiring, file=prose_stream(json_mode),
     )

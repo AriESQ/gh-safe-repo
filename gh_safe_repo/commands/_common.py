@@ -1,6 +1,7 @@
 """Shared helpers for CLI subcommands."""
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -226,26 +227,107 @@ def print_plan(plan):
     print()
 
 
-def format_plan_json(plan):
-    """Serialise a Plan to a JSON string for --json output."""
+def format_plan_json(plan, verification=None):
+    """Serialise a Plan to a JSON string for --json output.
+
+    With `verification` (a verify.Verification), the document gains a
+    top-level "verification" block. Non-dry-run create/fix print this once,
+    at the end of the run; --dry-run never passes it.
+    """
     counts = plan.count_by_type()
-    return json.dumps(
-        {
-            "changes": [
-                {
-                    "type": c.type.value,
-                    "category": c.category.value,
-                    "key": c.key,
-                    "old": c.old,
-                    "new": c.new,
-                    "reason": c.reason,
-                }
-                for c in plan.changes
-            ],
-            "summary": {t.value: n for t, n in counts.items()},
-        },
-        indent=2,
+    doc = {
+        "changes": [
+            {
+                "type": c.type.value,
+                "category": c.category.value,
+                "key": c.key,
+                "old": c.old,
+                "new": c.new,
+                "reason": c.reason,
+            }
+            for c in plan.changes
+        ],
+        "summary": {t.value: n for t, n in counts.items()},
+    }
+    if verification is not None:
+        doc["verification"] = verification.to_dict()
+    return json.dumps(doc, indent=2)
+
+
+def prose_stream(json_mode):
+    """Where human-readable output goes: stderr under --json, else stdout.
+
+    Under --json, stdout is reserved for the one JSON document.
+    """
+    return sys.stderr if json_mode else sys.stdout
+
+
+def prose_to_stderr(json_mode):
+    """Context manager: route print()/input() prompts to stderr under --json.
+
+    For shared helpers that print to stdout unconditionally (the plan table,
+    the pre-flight scan report). A no-op outside --json.
+    """
+    if json_mode:
+        return contextlib.redirect_stdout(sys.stderr)
+    return contextlib.nullcontext()
+
+
+def ask(prompt, *, json_mode=False):
+    """input() whose prompt goes to stderr under --json (stdout stays JSON)."""
+    with prose_to_stderr(json_mode):
+        return input(prompt)
+
+
+_MARKS = {"ok": "✓", "mismatch": "✗", "unknown": "?"}
+
+
+def _fmt_value(v):
+    return "(unreadable)" if v is None else repr(v)
+
+
+def print_verification(verification, *, file=None):
+    """Print the human "Verified" section: one ✓/✗/? row per check."""
+    out = file or sys.stdout
+    if not verification.checks:
+        return
+    colours = {"ok": _GREEN, "mismatch": _RED, "unknown": _YELLOW}
+    print(f"\n{_BOLD}Verified{_RESET}", file=out)
+    for c in verification.checks:
+        mark = _c(colours[c.status], _MARKS[c.status])
+        if c.status == "ok":
+            print(f"  {mark} {c.name}", file=out)
+        elif c.status == "mismatch":
+            print(
+                f"  {mark} {c.name}: expected {_fmt_value(c.expected)}, "
+                f"GitHub has {_fmt_value(c.actual)}",
+                file=out,
+            )
+        else:
+            print(f"  {mark} {c.name}: could not read it back", file=out)
+    # Remediation, de-duplicated and in check order.
+    seen = []
+    for c in verification.checks:
+        if c.status != "ok" and c.remediation and c.remediation not in seen:
+            seen.append(c.remediation)
+    for r in seen:
+        print(_c(_DIM, f"  → {r}"), file=out)
+    s = verification.summary()
+    print(
+        _c(_DIM, f"{s['ok']} ok, {s['mismatch']} mismatch, {s['unknown']} unknown"),
+        file=out,
     )
+
+
+def _print_banner(title, inner, colour, file=None):
+    out = file or sys.stdout
+    width = max(len(line) for line in inner.splitlines()) + 2
+    top    = f"╭─ {title} " + "─" * (width - len(title) - 3) + "╮"
+    bottom = "╰" + "─" * (width + 1) + "╯"
+    print(f"\n{colour}{top}{_RESET}", file=out)
+    for line in inner.splitlines():
+        print(f"{colour}│{_RESET} {line.ljust(width)} {colour}│{_RESET}", file=out)
+    print(f"{colour}{bottom}{_RESET}\n", file=out)
 
 
 def format_findings_json(findings, skipped_committed_dirs=(), engine=None):
@@ -281,7 +363,7 @@ def format_findings_json(findings, skipped_committed_dirs=(), engine=None):
     return json.dumps(doc, indent=2)
 
 
-def print_success(owner, repo, local_push=False, protocol="https", wiring=None):
+def print_success(owner, repo, local_push=False, protocol="https", wiring=None, file=None):
     url = f"https://github.com/{owner}/{repo}"
     https_url = f"https://github.com/{owner}/{repo}.git"
     ssh_url = f"git@github.com:{owner}/{repo}.git"
@@ -328,25 +410,32 @@ def print_success(owner, repo, local_push=False, protocol="https", wiring=None):
             f"  {ordered[0][0]}: git clone {ordered[0][1]}  \n"
             f"  {ordered[1][0]}: git clone {ordered[1][1]}  "
         )
-    width = max(len(line) for line in inner.splitlines()) + 2
-    top    = "╭─ Done " + "─" * (width - 7) + "╮"
-    bottom = "╰" + "─" * (width + 1) + "╯"
-    print(f"\n{_GREEN}{top}{_RESET}")
-    for line in inner.splitlines():
-        print(f"{_GREEN}│{_RESET} {line.ljust(width)} {_GREEN}│{_RESET}")
-    print(f"{_GREEN}{bottom}{_RESET}\n")
+    _print_banner("Done", inner, _GREEN, file=file)
 
 
-def print_success_fix(owner, repo):
+def print_success_fix(owner, repo, verification=None, file=None):
+    """Closing banner for `fix`, built from the verification result.
+
+    Green "Done" only when every check is ok; otherwise yellow
+    "Done with problems" naming how many settings did not stick or could not
+    be read back.
+    """
     url = f"https://github.com/{owner}/{repo}"
-    inner = f"  Repository updated successfully!  \n  {url}  "
-    width = max(len(line) for line in inner.splitlines()) + 2
-    top    = "╭─ Done " + "─" * (width - 7) + "╮"
-    bottom = "╰" + "─" * (width + 1) + "╯"
-    print(f"\n{_GREEN}{top}{_RESET}")
-    for line in inner.splitlines():
-        print(f"{_GREEN}│{_RESET} {line.ljust(width)} {_GREEN}│{_RESET}")
-    print(f"{_GREEN}{bottom}{_RESET}\n")
+    if verification is None or verification.ok:
+        status = "Repository updated and verified."
+        if verification is None:
+            status = "Repository updated."
+        inner = f"  {status}  \n  {url}  "
+        _print_banner("Done", inner, _GREEN, file=file)
+        return
+    s = verification.summary()
+    lines = []
+    if s["mismatch"]:
+        lines.append(f"{s['mismatch']} setting(s) did not stick.")
+    if s["unknown"]:
+        lines.append(f"{s['unknown']} setting(s) could not be read back.")
+    inner = "\n".join(f"  {l}  " for l in lines + [url])
+    _print_banner("Done with problems", inner, _YELLOW, file=file)
 
 
 def _print_findings(findings, config):

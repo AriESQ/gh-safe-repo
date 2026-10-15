@@ -28,9 +28,14 @@ class TagProtectionPlugin(BasePlugin):
         self.is_public = is_public
         self.is_paid_plan = is_paid_plan
 
-    def fetch_current_state(self) -> dict:
+    def fetch_current_state(self, strict: bool = False) -> dict:
         path = self.client.repo_path(self.owner, self.repo, "rulesets")
         status, text = self.client.call_api("GET", path)
+        # 403 means "rulesets unavailable" when planning (plan() SKIPs on
+        # free+private anyway), but after an apply it means "could not read":
+        # strict mode raises so verification reports unknown, not mismatch.
+        if status == 403 and strict:
+            raise APIError(f"GET {path} returned {status}", status_code=status)
         if status == 404 or status == 403:
             return dict(GITHUB_DEFAULTS)
         if status and status >= 400:
@@ -55,10 +60,17 @@ class TagProtectionPlugin(BasePlugin):
         detail_path = self.client.repo_path(self.owner, self.repo, f"rulesets/{ruleset_id}")
         detail_status, detail_text = self.client.call_api("GET", detail_path)
         if detail_status and detail_status >= 400:
+            if strict:
+                raise APIError(
+                    f"GET {detail_path} returned {detail_status}",
+                    status_code=detail_status,
+                )
             return dict(GITHUB_DEFAULTS)
         try:
             detail = json.loads(detail_text)
         except (json.JSONDecodeError, ValueError):
+            if strict:
+                raise APIError(f"GET {detail_path} returned non-JSON response")
             return dict(GITHUB_DEFAULTS)
 
         rules = detail.get("rules", [])

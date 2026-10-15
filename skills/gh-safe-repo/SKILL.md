@@ -45,9 +45,10 @@ drops ANSI codes when stdout is not a terminal.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success — **or** the user declined at an interactive prompt |
+| `0` | Success — **or** the user declined at an interactive prompt. For `fix`, every changed setting was read back and verified (`unknown` checks warn but still exit `0`) |
 | `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes) |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--local` with `--from` |
+| `3` | `fix` applied the changes but at least one setting did not stick when read back (a `mismatch` check). See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
 
 In a git repo the built-in scan covers tracked files only (`git ls-files`) —
@@ -69,6 +70,27 @@ so `scan` returning `1` is a *result*, not a crash.
 ```
 
 `summary` only lists types that occur — use `.get("delete", 0)`.
+
+`--dry-run --json` prints that document straight away. A real `fix --json`
+prints it **once, at the end**, after applying and reading the settings back,
+with a top-level `verification` block:
+
+```json
+"verification": {
+  "ok": false,
+  "checks": [ {"category": "repo", "key": "has_wiki", "status": "mismatch",
+               "expected": false, "actual": true, "fatal": false,
+               "remediation": "Run `gh-safe-repo fix alice/demo --yes` once more; ..."} ],
+  "summary": { "ok": 3, "mismatch": 1, "unknown": 0 }
+}
+```
+
+`status` is `ok`, `mismatch` (GitHub holds something else → exit `3`) or
+`unknown` (could not be read back after retries; `actual` is `null`; exit
+stays `0`). All three `summary` keys are always present. The block is absent
+on `--dry-run` and when the prompt is declined; with nothing to change it is
+`{"ok": true, "checks": [], ...}`. Trust `verification.ok`, not the absence
+of warnings on stderr.
 
 `scan --json` emits `{"findings": [...], "summary": {"critical": N, "warning": N,
 "info": N}, "skipped_committed_dirs": [...], "engine": {...}}`. Each finding has
@@ -110,6 +132,8 @@ A `SKIP` can also simply mean the setting is already correct.
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
 | `Code push failed: ...` (exit 1) | The repo exists on GitHub, settings applied, but it is **empty**; branch/tag protection were skipped. Do not re-run `create` (it will fail: repo exists). Fix the cause, then run the recovery commands printed on stderr, ending with `gh-safe-repo fix <owner/repo> --yes`. `Likely cause: your SSH security key did not confirm` means a missed hardware-key touch: ask the user to touch the key and retry the push; it is not a permissions problem. The tool has already retried once (stderr shows `Your SSH security key did not confirm. Touch it when it blinks to retry...`), so this means two touches were missed. |
 | `Code pushed, but local repo not fully wired: ...` | The push succeeded; only the local `origin`/upstream setup was skipped. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose). Report it to the user; do not rewrite their `origin`. The success banner prints the exact `git push -u origin <b>:<b>` to run once it is resolved. |
+| `fix` exits `3`, `✗` rows / `mismatch` checks | The changes were sent but GitHub does not hold them (ignored, or the apply failed with a warning). Run `gh-safe-repo fix <owner/repo> --yes` **once** more. If it still exits `3`, stop and report the rows to the user — an org policy or plan limit is overriding the setting; do not loop. |
+| `fix` warns `could not be read back`, `?` rows / `unknown` checks | The tool already retried for ~7s; the setting may well be applied. Do **not** retry. Tell the user which settings are unconfirmed so they can check the repo's settings page. |
 | Repo created but a later step warned | Creation is not transactional; settings failures are warnings. Re-run `fix <owner/repo> --yes` to converge. |
 
 ## Configuration

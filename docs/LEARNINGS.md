@@ -314,6 +314,57 @@ copies all heads as `refs/heads/*`. The default branch is chosen as
 first, then set explicitly with `PATCH /repos {default_branch}` instead of
 relying on push order.
 
+## Post-Apply Verification (#77)
+
+Success used to mean "no exception escaped the apply loop". `fix` caught
+every `APIError` from `apply()` as a warning and then printed a green
+"Repository updated successfully!" regardless, so a run where every request
+failed looked identical to one where every request worked. A request GitHub
+accepts but ignores (the `security_and_analysis` PATCH without
+`secret_scanning`, `dependency_graph_autosubmit_action`) also never raised.
+`verify.py` now re-reads the settings and compares.
+
+**The `GET /repos` cache is a trap for anything read after an apply.**
+`GitHubClient.get_repo_data()` caches for the life of the process, and
+`RepositoryPlugin` and `SecurityPlugin` read through it, so a post-apply
+audit silently compared against the pre-apply state and reported every
+`PATCH /repos` change as still pending. `get_repo_data(refresh=True)` and
+`forget_repo()` exist for this; `verify._audit()` forgets the entry before
+every read, including each retry. A failed refresh leaves the cache empty,
+not stale.
+
+**Planning reads and verification reads need different strictness.** When
+planning, treating a 403 or 5xx from a toggle endpoint as "off" is harmless:
+`fix` proposes the change and the PUT either works or warns. After an apply,
+the same guess turns "could not read" into a false mismatch and exit `3`, and
+an agent told to re-run `fix` would loop. `fetch_current_state(strict=True)`
+raises instead of guessing (security toggles: anything but 2xx/404; tag and
+branch rulesets: 403 and failed detail reads), and the verifier turns a read
+that keeps failing into `unknown`, which warns but exits `0`. Planning keeps
+`strict=False`, so `fix --dry-run` output is unchanged.
+
+**`GET private-vulnerability-reporting` answers 200 when the feature is off.**
+The body is `{"enabled": false}`. The bare 2xx check above (Security Plugin
+Expansion) read that as enabled, so `fix` never proposed turning it on, and
+a verifier would have passed a PUT that did not stick. `_is_enabled()` now
+honours a boolean `enabled` field in a 2xx body and falls back to "2xx = on"
+when there is none (`vulnerability-alerts` answers 204 with no body).
+
+**Retry budget: 1s/2s/4s, in rounds, about 7s worst case per run.** GitHub is
+briefly inconsistent after a write; the same budget already covers the PATCH
+after `POST /user/repos` in `repository.py`. Retries run in rounds across all
+pending plugins rather than per plugin, so five slow plugins still cost about
+7s, not 35s. Only plugins whose applied plan had a non-SKIP row are read back;
+an all-SKIP plugin (free+private branch protection, say) made no writes and is
+never fetched. The cost is roughly one plugin audit per changed plugin, about
+the same number of GETs as the planning pass.
+
+**Why API reads, not `git ls-remote`.** Verification only uses REST GETs. Over
+SSH, `ls-remote` is a network git operation that can cost a hardware-key touch,
+and a missed touch there would show up as an unknown that says nothing about
+the repo. The code-push checks planned for `create` follow the same rule:
+read refs via `GET git/matching-refs/heads/` and `.../tags/`.
+
 ## Scan Engine Reporting (#77)
 
 `scanner_description` is a plan-time guess: it runs discovery
@@ -338,5 +389,5 @@ silently weaken the scan). `off` and `scan_for_secrets = false` are regex by
 choice and report `fell_back: false`.
 
 Under `create --json` the pre-flight report used to print to stdout ahead of
-the plan document. It is now wrapped in `redirect_stdout(sys.stderr)` so
-stdout carries only JSON.
+the plan document. It now runs inside `prose_to_stderr(json_mode)` (the shared
+`_common.py` helper), so stdout carries only JSON.

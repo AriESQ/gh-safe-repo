@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported (requires-python >= 3.10) and newest stable.
+        python-version: ["3.10", "3.14"]
+    env:
+      # Use the interpreter from setup-python; never download one.
+      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON_DOWNLOADS: never
+      # Some tests make real commits in temp repos.
+      GIT_AUTHOR_NAME: CI
+      GIT_AUTHOR_EMAIL: ci@example.invalid
+      GIT_COMMITTER_NAME: CI
+      GIT_COMMITTER_EMAIL: ci@example.invalid
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv==0.12.21
+
+      - name: Install dev dependencies
+        run: uv sync --locked
+
+      # The runner has docker, so trufflehog_mode = auto would pull the
+      # truffleHog image from ghcr.io. Pin the regex scanner so the e2e scan
+      # tests are deterministic and need no network.
+      - name: Disable truffleHog for the e2e scan tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/xdg/gh-safe-repo"
+          printf '[pre_flight_scan]\ntrufflehog_mode = off\n' \
+            > "$RUNNER_TEMP/xdg/gh-safe-repo/gh-safe-repo.ini"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
+
+      # No GH_TOKEN is exposed, so the tier-2/3 e2e tests (gh auth, live API)
+      # skip themselves.
+      - name: Run tests
+        run: uv run pytest tests/ -v

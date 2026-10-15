@@ -364,3 +364,30 @@ SSH, `ls-remote` is a network git operation that can cost a hardware-key touch,
 and a missed touch there would show up as an unknown that says nothing about
 the repo. The code-push checks planned for `create` follow the same rule:
 read refs via `GET git/matching-refs/heads/` and `.../tags/`.
+
+## Scan Engine Reporting (#77)
+
+`scanner_description` is a plan-time guess: it runs discovery
+(`trufflehog --version`, `which podman`) but not truffleHog itself. A
+discovered engine can still fail at run time (non-0/1 exit, a container that
+cannot start, a binary that vanished), and `_try_trufflehog` then returns
+`None` and `scan()` quietly used regex, visible only under `--debug`. So the
+plan row and scan header could say "truffleHog via podman" for a scan that
+never ran it. `scan()` now records `engine_used` / `fell_back` /
+`fallback_reason`, and both `scan` and the `create` pre-flight print a
+`Scan engine:` line after the scan.
+
+`native` and `docker` are strict (user decision on #77): a fallback is an
+exit `1`, not a warning, because the user asked for a specific engine and
+regex misses most credential types. In `create` this returns a blocked
+`ScanDecision` before the findings prompt, so it rides the existing
+`_abort_on_scan` exit-1 path and nothing is created. In strict modes the
+discovery-time "falling back to regex" warnings are suppressed: they would
+contradict the error that follows. An unrecognised `trufflehog_mode` value is
+treated as strict too, rather than as `auto` (a typo of `native` should not
+silently weaken the scan). `off` and `scan_for_secrets = false` are regex by
+choice and report `fell_back: false`.
+
+Under `create --json` the pre-flight report used to print to stdout ahead of
+the plan document. It now runs inside `prose_to_stderr(json_mode)` (the shared
+`_common.py` helper), so stdout carries only JSON.

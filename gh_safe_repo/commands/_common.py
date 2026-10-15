@@ -330,35 +330,37 @@ def _print_banner(title, inner, colour, file=None):
     print(f"{colour}{bottom}{_RESET}\n", file=out)
 
 
-def format_findings_json(findings, skipped_committed_dirs=()):
+def format_findings_json(findings, skipped_committed_dirs=(), engine=None):
     """Serialise scan findings to a JSON string for `scan --json`.
 
     Severities are lower-cased so they match the casing of the change types in
-    `format_plan_json`; `summary` always carries all three keys.
+    `format_plan_json`; `summary` always carries all three keys. `engine` is
+    `SecurityScanner.engine_report()` and is emitted as the `engine` key when
+    given.
     """
     counts = {"critical": 0, "warning": 0, "info": 0}
     for f in findings:
         counts[f.severity.value.lower()] += 1
-    return json.dumps(
-        {
-            "findings": [
-                {
-                    "severity": f.severity.value.lower(),
-                    "category": f.category.value,
-                    "file_path": f.file_path,
-                    "line_number": f.line_number,
-                    "rule": f.rule,
-                    "match": f.match,
-                    "commit": f.commit,
-                    "timestamp": f.timestamp,
-                }
-                for f in findings
-            ],
-            "summary": counts,
-            "skipped_committed_dirs": list(skipped_committed_dirs),
-        },
-        indent=2,
-    )
+    doc = {
+        "findings": [
+            {
+                "severity": f.severity.value.lower(),
+                "category": f.category.value,
+                "file_path": f.file_path,
+                "line_number": f.line_number,
+                "rule": f.rule,
+                "match": f.match,
+                "commit": f.commit,
+                "timestamp": f.timestamp,
+            }
+            for f in findings
+        ],
+        "summary": counts,
+        "skipped_committed_dirs": list(skipped_committed_dirs),
+    }
+    if engine is not None:
+        doc["engine"] = engine
+    return json.dumps(doc, indent=2)
 
 
 def print_success(owner, repo, local_push=False, protocol="https", wiring=None, file=None):
@@ -568,6 +570,20 @@ def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs
     return ScanDecision(proceed=proceed)
 
 
+def _engine_decision(scanner):
+    """Report the engine scan() used; block if an explicit mode fell back.
+
+    Returns a blocked ScanDecision when trufflehog_mode = native/docker could
+    not run truffleHog (the run must exit 1 before anything is created), else
+    None. An `auto` fallback is reported but never blocks.
+    """
+    print(_c(_DIM, f"  Scan engine: {scanner.engine_summary}"))
+    msg = scanner.engine_error()
+    if msg:
+        return ScanDecision(proceed=False, blocked=True, reason=msg)
+    return None
+
+
 def run_preflight_scan(client, owner, from_repo, config, debug=False, scanner=None, yes=False):
     """
     Clone from_repo, scan locally, display findings, prompt user.
@@ -582,6 +598,9 @@ def run_preflight_scan(client, owner, from_repo, config, debug=False, scanner=No
         client.clone_for_scan(owner, from_repo, scan_dir)
         findings = scanner.scan(scan_dir)
 
+    blocked = _engine_decision(scanner)
+    if blocked:
+        return blocked
     return _scan_findings_prompt(
         scanner, findings, config, warn_skipped_committed_dirs=True, yes=yes
     )
@@ -593,6 +612,9 @@ def run_preflight_scan_local(scan_path, config, debug=False, scanner=None, yes=F
         scanner = SecurityScanner(config, debug=debug)
     print(f"\n{_c(_BOLD, f'Running pre-flight security scan... ({scanner.scanner_description})')}")
     findings = scanner.scan(scan_path)
+    blocked = _engine_decision(scanner)
+    if blocked:
+        return blocked
     return _scan_findings_prompt(
         scanner, findings, config, warn_skipped_committed_dirs=False, yes=yes
     )

@@ -27,6 +27,14 @@ uv run pytest tests/test_plugins.py::TestRepositoryPlugin::test_plan_creates_rep
 uv run pytest tests/ -x
 ```
 
+CI (`.github/workflows/ci.yml`) runs `uv run pytest tests/ -v` on Python 3.10 and 3.14
+for every push to `master` and every pull request. CI has no GitHub token, so the Tier 2
+and Tier 3 E2E tests below skip themselves. CI also sets `trufflehog_mode = off` through an
+`XDG_CONFIG_HOME` config file, because the runner has docker and `auto` would pull the
+truffleHog image. New tests must pass without network access or a token. CI sets
+`GIT_AUTHOR_*`/`GIT_COMMITTER_*`, but tests that commit should still pass
+`-c user.name=... -c commit.gpgsign=false` so they work on any machine.
+
 ## Test files
 
 | File | What it covers |

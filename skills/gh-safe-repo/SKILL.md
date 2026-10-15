@@ -93,9 +93,16 @@ on `--dry-run` and when the prompt is declined; with nothing to change it is
 of warnings on stderr.
 
 `scan --json` emits `{"findings": [...], "summary": {"critical": N, "warning": N,
-"info": N}, "skipped_committed_dirs": [...]}`. Each finding has `severity`
-(lower-case), `category`, `file_path`, `line_number`, `rule`, `match` (secrets
-are `[redacted]`), `commit`, `timestamp`.
+"info": N}, "skipped_committed_dirs": [...], "engine": {...}}`. Each finding has
+`severity` (lower-case), `category`, `file_path`, `line_number`, `rule`, `match`
+(secrets are `[redacted]`), `commit`, `timestamp`.
+
+`engine` is what actually ran: `{"configured": "auto|native|docker|off", "used":
+"trufflehog-native|trufflehog-container|regex", "fell_back": bool}`.
+`fell_back: true` means truffleHog was attempted but failed, so only the regex
+scanner checked for secrets. Tell the user when that happens: regex misses
+credential types truffleHog detects. `scan` exiting `1` with
+`summary.critical == 0` means an explicit mode fell back (see Failure modes).
 
 ## `SKIP` is normal — do not retry it
 
@@ -121,6 +128,7 @@ A `SKIP` can also simply mean the setting is already correct.
 | `You do not have admin permissions` | `fix` needs admin even to *read* settings. Auditing someone else's public repo is not possible — this is by design. |
 | `Repository already exists` | Use `fix` instead of `create`. |
 | Pre-flight scan blocked the run (exit 1) | Real secrets were found. Show the findings, let the user remove them; do not re-run with different flags to bypass. |
+| `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `create` stopped before creating anything. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
 | `Code push failed: ...` (exit 1) | The repo exists on GitHub, settings applied, but it is **empty**; branch/tag protection were skipped. Do not re-run `create` (it will fail: repo exists). Fix the cause, then run the recovery commands printed on stderr, ending with `gh-safe-repo fix <owner/repo> --yes`. `Likely cause: your SSH security key did not confirm` means a missed hardware-key touch: ask the user to touch the key and retry the push; it is not a permissions problem. The tool has already retried once (stderr shows `Your SSH security key did not confirm. Touch it when it blinks to retry...`), so this means two touches were missed. |
 | `Code pushed, but local repo not fully wired: ...` | The push succeeded; only the local `origin`/upstream setup was skipped. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose). Report it to the user; do not rewrite their `origin`. The success banner prints the exact `git push -u origin <b>:<b>` to run once it is resolved. |

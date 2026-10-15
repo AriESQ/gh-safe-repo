@@ -31,7 +31,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()` |
 | `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block) and `verify_plugins()`, which re-audits plugins after apply with 1s/2s/4s retry rounds and maps the audit plan to `ok` / `mismatch` / `unknown` checks |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |
-| `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` (tracked files only in git repos, NUL-byte binary sniff, TTY progress line) |
+| `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` (tracked files only in git repos, NUL-byte binary sniff, TTY progress line). `scan()` records the engine that ran (`engine_used`, `fell_back`, `fallback_reason`); `engine_error()` turns a fallback under explicit `native`/`docker` into an error message |
 | `plugins/base.py` | Abstract `BasePlugin` — defines the `fetch_current_state(strict=False)` / `plan()` / `apply()` interface |
 | `plugins/repository.py` | Repo creation (`POST /user/repos`) and basic repo settings (`PATCH`) |
 | `plugins/actions.py` | GitHub Actions permissions (allowed actions, workflow perms, SHA pinning) |

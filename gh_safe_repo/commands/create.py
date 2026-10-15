@@ -27,6 +27,7 @@ from ._common import (
     _c,
     _resolve_branches,
     add_common_args,
+    ask,
     build_context,
     check_repo_exists,
     error,
@@ -35,6 +36,8 @@ from ._common import (
     parse_repo_arg,
     print_plan,
     print_success,
+    prose_stream,
+    prose_to_stderr,
     run_preflight_scan,
     run_preflight_scan_local,
     warn,
@@ -264,10 +267,13 @@ def run(args):
     # Pre-flight security scan (--from workflow, non-dry-run only)
     if args.from_repo and not args.dry_run:
         try:
-            decision = run_preflight_scan(
-                client, from_owner, from_repo, config,
-                debug=args.debug, scanner=scanner, yes=args.yes,
-            )
+            # The scan report and its prompt print to stdout; under --json
+            # stdout is reserved for the plan document.
+            with prose_to_stderr(json_mode):
+                decision = run_preflight_scan(
+                    client, from_owner, from_repo, config,
+                    debug=args.debug, scanner=scanner, yes=args.yes,
+                )
         except APIError as e:
             error(f"Pre-flight scan failed (clone error): {e}")
             sys.exit(1)
@@ -276,9 +282,10 @@ def run(args):
 
     # Pre-flight security scan (--local workflow, non-dry-run only)
     if local_path and not args.dry_run:
-        decision = run_preflight_scan_local(
-            local_path, config, debug=args.debug, scanner=scanner, yes=args.yes
-        )
+        with prose_to_stderr(json_mode):
+            decision = run_preflight_scan_local(
+                local_path, config, debug=args.debug, scanner=scanner, yes=args.yes
+            )
         if not decision.proceed:
             _abort_on_scan(decision, _info)
 
@@ -383,11 +390,12 @@ def run(args):
     # Prompt confirmation (skip with --yes)
     if not args.yes:
         try:
-            answer = input(
-                f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: "
+            answer = ask(
+                f"\nCreate {owner}/{repo_name} and apply {actionable} change(s)? [y/N]: ",
+                json_mode=json_mode,
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            print(file=prose_stream(json_mode))
             sys.exit(0)
         if answer not in ("y", "yes"):
             _info(_c(_YELLOW, "Aborted."))
@@ -504,5 +512,5 @@ def run(args):
     )
     print_success(
         owner, repo_name, local_push=bool(args.local_path), protocol=protocol,
-        wiring=wiring,
+        wiring=wiring, file=prose_stream(json_mode),
     )

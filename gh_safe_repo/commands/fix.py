@@ -24,9 +24,14 @@ from ._common import (
     info,
     parse_repo_arg,
     print_plan,
+    ask,
     print_success_fix,
+    print_verification,
+    prose_stream,
+    prose_to_stderr,
     warn,
 )
+from ..verify import Verification, verify_plugins
 
 NAME = "fix"
 HELP = "Audit an existing repo and apply safe defaults"
@@ -141,20 +146,28 @@ def run(args):
     ]
 
     full_plan = Plan()
+    plugin_plans = []  # (plugin, its own plan) — verification re-audits per plugin
     for plugin in plugins:
         try:
             current_state = plugin.fetch_current_state()
             plugin_plan = plugin.plan(current_state=current_state)
             full_plan.merge(plugin_plan)
+            plugin_plans.append((plugin, plugin_plan))
         except SafeRepoError as e:
             error(f"Planning failed: {e}")
             sys.exit(1)
 
-    # Print plan
-    if json_mode:
+    # Under --json, stdout carries exactly one document. --dry-run prints the
+    # plan right away (unchanged); a real run prints it once at the end, with
+    # the verification block (#77).
+    if json_mode and args.dry_run:
         print(format_plan_json(full_plan))
-    else:
+    elif not json_mode:
         print_plan(full_plan)
+    elif not args.yes and full_plan.actionable_changes:
+        # Interactive --json: show the table on stderr so the prompt has context.
+        with prose_to_stderr(json_mode):
+            print_plan(full_plan)
 
     counts = full_plan.count_by_type()
     actionable_count = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
@@ -169,19 +182,24 @@ def run(args):
     actionable = full_plan.actionable_changes
     if not actionable:
         _info(_c(_GREEN, "\nAlready at desired state — nothing to do."))
+        if json_mode:
+            print(format_plan_json(full_plan, verification=Verification()))
         sys.exit(0)
 
     # Prompt confirmation (skip with --yes)
     if not args.yes:
         try:
-            answer = input(
-                f"\nApply {len(actionable)} change(s) to {owner}/{repo_name}? [y/N]: "
+            answer = ask(
+                f"\nApply {len(actionable)} change(s) to {owner}/{repo_name}? [y/N]: ",
+                json_mode=json_mode,
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
+            print(file=prose_stream(json_mode))
             sys.exit(0)
         if answer not in ("y", "yes"):
             _info(_c(_YELLOW, "Aborted."))
+            if json_mode:
+                print(format_plan_json(full_plan))
             sys.exit(0)
 
     # Apply settings
@@ -191,4 +209,31 @@ def run(args):
         except APIError as e:
             warn(f"Some settings failed to apply: {e}")
 
-    print_success_fix(owner, repo_name)
+    # Verify: re-read every plugin that had something to change. The apply
+    # loop above only proves no exception escaped; it says nothing about what
+    # GitHub now holds (#77).
+    _info(_c(_DIM, "\nVerifying..."))
+    verification = verify_plugins(
+        plugin_plans,
+        remediation=(
+            f"Run `gh-safe-repo fix {owner}/{repo_name} --yes` once more; if it "
+            "still does not stick, an organization policy or plan limit is "
+            "overriding it — check the repo settings page."
+        ),
+    )
+
+    out = prose_stream(json_mode)
+    print_verification(verification, file=out)
+    if verification.unknowns:
+        warn(
+            f"{len(verification.unknowns)} setting(s) could not be read back to "
+            "confirm they were applied (see above). Not retrying further."
+        )
+    print_success_fix(owner, repo_name, verification=verification, file=out)
+
+    if json_mode:
+        print(format_plan_json(full_plan, verification=verification))
+
+    code = verification.exit_code()
+    if code:
+        sys.exit(code)

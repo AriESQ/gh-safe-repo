@@ -156,6 +156,8 @@ gh-safe-repo fix <owner/repo> --yes       # no prompt, for scripts
 
 `fix` fetches each setting's current value, shows `UPDATE` for what differs and `SKIP` for what's already correct, and makes no API calls for no-ops. It's settings-only — no secret scanning. You need admin on the repo, which can be one owned by an org or another account.
 
+After applying, `fix` reads every changed setting back from GitHub and prints a **Verified** section (see [Verification](#verification)). It exits `3` if a setting did not stick, so "Done" means GitHub actually holds the settings, not just that no request failed.
+
 ### Scan without touching GitHub
 
 ```bash
@@ -212,7 +214,7 @@ All commands that interact with GitHub require the `owner/repo` format (e.g. `my
 | `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use) |
 | `--dry-run` | Show settings diff without applying changes |
 | `--migrate-branch-protection` | Convert existing classic branch protection to a ruleset (see [Branch protection](#branch-protection-public-repos-or-any-repo-on-a-paid-plan)) |
-| `--json` | Emit the plan as JSON to stdout instead of the ANSI table |
+| `--json` | Emit the plan as JSON to stdout instead of the ANSI table; on a real run, printed once at the end with a `verification` block |
 | `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
 | `--debug` | *(global)* Print every API call and response, plus resolved repo identity (id, full name, owner type) |
 
@@ -235,7 +237,7 @@ gh-safe-repo create <owner/repo> --dry-run --json
 gh-safe-repo fix <owner/repo> --dry-run --json
 ```
 
-When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer) go to stderr, so the output is clean for piping or scripting.
+When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer, the closing banner) go to stderr, so the output is clean for piping or scripting. With `--dry-run` the document is printed immediately. On a real `fix` run it is printed once, at the end, with a `verification` block added (see [Verification](#verification)).
 
 **Change types** (the `Type` column, colourised in a terminal):
 
@@ -308,14 +310,60 @@ thing on stdout; progress, warnings and errors go to stderr.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success, or the user declined at an interactive prompt |
+| `0` | Success, or the user declined at an interactive prompt. For `fix`, success means every changed setting was read back and verified (settings that could not be read back are warned about but do not fail the run) |
 | `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `scan`, also "critical findings present" |
 | `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
+| `3` | `fix` applied the changes, but at least one setting did not stick when read back (see [Verification](#verification)) |
 | `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
 
 A run that cannot ask for confirmation never exits `0` without doing the work:
 if there is no terminal and no `--yes`, or `--yes` is set but the pre-flight
 scan found critical secrets, the command reports the reason and exits `1`.
+
+### Verification
+
+A `fix` run that applies changes then reads each changed setting back from the
+GitHub API, the same way `fix --dry-run` audits a repo, and prints one row per
+setting:
+
+```
+Verified
+  ✓ security/dependabot_alerts
+  ✗ repo/has_wiki: expected False, GitHub has True
+  ? actions/fork_pr_approval_policy: could not read it back
+  → Run `gh-safe-repo fix alice/demo --yes` once more; if it still does not stick, ...
+```
+
+| Mark | Status | Meaning | Exit |
+|---|---|---|---|
+| `✓` | `ok` | GitHub holds the value that was asked for | `0` |
+| `✗` | `mismatch` | GitHub holds something else (the request was ignored, or it failed and was reported as a warning) | `3` |
+| `?` | `unknown` | The setting could not be read back (permission or server error) | `0`, with a warning |
+
+GitHub is briefly inconsistent right after a write, so a setting that reads
+wrong or cannot be read is read again after 1s, 2s and 4s (about 7s at worst
+for the whole run) before it is reported. Only settings `fix` changed are
+read back; `SKIP` rows are never re-checked. The closing banner is green
+`Done` only when every check is `ok`; otherwise it is yellow
+`Done with problems`.
+
+With `--json`, the document gains a top-level `verification` block:
+
+```json
+"verification": {
+  "ok": false,
+  "checks": [
+    { "category": "repo", "key": "has_wiki", "status": "mismatch",
+      "expected": false, "actual": true, "fatal": false,
+      "remediation": "Run `gh-safe-repo fix alice/demo --yes` once more; ..." }
+  ],
+  "summary": { "ok": 3, "mismatch": 1, "unknown": 0 }
+}
+```
+
+All three `summary` keys are always present. `actual` is `null` for `unknown`.
+The block is absent on `--dry-run` and when you decline the prompt; when there
+is nothing to change it is present with no checks and `"ok": true`.
 
 ### Safe defaults in full
 

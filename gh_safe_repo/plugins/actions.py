@@ -55,7 +55,7 @@ class ActionsPlugin(BasePlugin):
         super().__init__(client, owner, repo, config)
         self.is_public = is_public
 
-    def fetch_current_state(self) -> dict:
+    def fetch_current_state(self, strict: bool = False) -> dict:
         perms_path = self.client.repo_path(self.owner, self.repo, "actions/permissions")
         perms = self.client.get_json(perms_path)
         workflow_path = self.client.repo_path(
@@ -99,6 +99,8 @@ class ActionsPlugin(BasePlugin):
                     GITHUB_DEFAULTS["fork_pr_approval_policy"],
                 )
             except APIError:
+                if strict:
+                    raise
                 state["fork_pr_approval_policy"] = None
         else:
             state["fork_pr_approval_policy"] = None

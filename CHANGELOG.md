@@ -9,7 +9,24 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- `fix` reads every changed setting back from GitHub after applying it and
+  prints a `Verified` section, one `✓`/`✗`/`?` row per setting (#77).
+  Settings that read wrong or cannot be read are re-read after 1s, 2s and
+  4s before they are reported. A new exit code `3` means the changes were
+  applied but at least one did not stick; re-running `fix --yes` once is the
+  remedy. A setting that still cannot be read back is a warning, not a
+  failure.
+- `fix --json` (without `--dry-run`) prints its document once, at the end,
+  with a top-level `verification` block: `ok`, one entry per check
+  (`status` is `ok`, `mismatch` or `unknown`, with `expected`, `actual` and
+  `remediation`), and an `ok`/`mismatch`/`unknown` `summary`. `--dry-run
+  --json` is unchanged.
+
 ### Changed
+- `fix` builds its closing banner from the verification result: green
+  `Done` only when every setting checks out, otherwise yellow `Done with
+  problems` (#77).
 - `create --local`/`--from` verify git credentials after the confirmation
   prompt, right before the repo is created, instead of before the scan (#79).
   A hardware security key's touch only proves the key answered at that moment,
@@ -24,6 +41,15 @@ since the initial release.
   mirror, or source clone is retried once, after printing `Your SSH security
   key did not confirm. Touch it when it blinks to retry...` on stderr (#79).
   Other git failures are not retried.
+- `fix` no longer reports `Repository updated successfully!` when the
+  changes failed to apply; it used to print that even when every apply
+  raised (#77).
+- Under `--json`, `create` and `fix` keep stdout to the JSON document: the
+  closing banner, the confirmation prompt and the pre-flight scan report now
+  go to stderr (#77).
+- `fix` no longer reads private vulnerability reporting as enabled when
+  GitHub answers `200 {"enabled": false}`, so a repo with it switched off is
+  now planned for an update.
 
 ## [0.7.0] - 2026-10-14
 

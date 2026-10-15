@@ -1432,6 +1432,60 @@ class TestSecurityPluginAudit:
         assert pp.old is False
         assert pp.new is True
 
+    # ── Read strictness (#77) ────────────────────────────────────────────────
+
+    def test_pvr_200_with_enabled_false_is_disabled(self):
+        """GET private-vulnerability-reporting answers 200 {"enabled": false}
+        when off; a bare 2xx check used to read that as enabled."""
+        client = make_mock_client()
+        client.call_api.side_effect = [
+            (204, ""), (200, '{"enabled": true, "paused": false}'),
+            (200, '{"enabled": false}'),
+        ]
+        client.get_repo_data.return_value = {"security_and_analysis": {}}
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        state = plugin.fetch_current_state()
+        assert state["dependabot_security_updates"] is True
+        assert state["private_vulnerability_reporting"] is False
+
+    def test_non_strict_403_still_reads_as_disabled(self):
+        """Planning behaviour is unchanged: an unreadable toggle is proposed."""
+        client = make_mock_client()
+        client.call_api.side_effect = [(403, ""), (500, ""), (None, "")]
+        client.get_repo_data.side_effect = APIError("boom", status_code=502)
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        state = plugin.fetch_current_state()
+        assert state["dependabot_alerts"] is False
+        assert state["dependabot_security_updates"] is False
+        assert state["private_vulnerability_reporting"] is False
+        assert state["enable_secret_scanning_push_protection"] is False
+
+    @pytest.mark.parametrize("status", [403, 500, None])
+    def test_strict_ambiguous_status_raises(self, status):
+        client = make_mock_client()
+        client.call_api.side_effect = [(status, "")]
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)
+
+    def test_strict_404_is_a_definite_disabled(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(404, ""), (404, ""), (404, "")]
+        client.get_repo_data.return_value = {"security_and_analysis": {}}
+        plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        state = plugin.fetch_current_state(strict=True)
+        assert state["dependabot_alerts"] is False
+
+    def test_strict_repo_read_failure_raises(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(204, ""), (200, ""), (200, "")]
+        client.get_repo_data.side_effect = APIError("boom", status_code=502)
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)
+
 
 # ── TagProtectionPlugin ──────────────────────────────────────────────────────
 
@@ -1615,3 +1669,61 @@ class TestTagProtectionPluginAudit:
         assert len(updates) == 2
         assert any(c.key == "prevent_tag_deletion" for c in updates)
         assert any(c.key == "prevent_tag_update" for c in updates)
+
+    # ── Read strictness (#77) ────────────────────────────────────────────────
+
+    def test_403_reads_as_unprotected_when_planning(self):
+        client = make_mock_client()
+        client.call_api.return_value = (403, "")
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        assert plugin.fetch_current_state()["prevent_tag_deletion"] is False
+
+    def test_403_raises_when_strict(self):
+        client = make_mock_client()
+        client.call_api.return_value = (403, "")
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)
+
+    def test_detail_failure_raises_when_strict(self):
+        client = make_mock_client()
+        listing = json.dumps([{"id": 7, "name": "gh-safe-repo tag defaults", "target": "tag"}])
+        client.call_api.side_effect = [(200, listing), (500, "")]
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)
+
+    def test_strict_404_is_definite(self):
+        client = make_mock_client()
+        client.call_api.return_value = (404, "")
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        assert plugin.fetch_current_state(strict=True)["prevent_tag_update"] is False
+
+
+class TestBranchProtectionStrictReads:
+    def _plugin(self, client):
+        return BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(),
+            is_public=True, branches=["main"],
+        )
+
+    def test_rulesets_403_planning_reads_as_unprotected(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(404, ""), (403, "")]  # classic probe, rulesets
+        state = self._plugin(client).fetch_current_state()
+        assert state["allow_deletions"] is True
+
+    def test_rulesets_403_raises_when_strict(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(404, ""), (403, "")]
+        plugin = self._plugin(client)
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)
+        # Strictness does not leak into later non-strict calls (e.g. apply).
+        assert plugin._strict is False
+
+    def test_classic_probe_5xx_raises_when_strict(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(502, "")]
+        with pytest.raises(APIError):
+            self._plugin(client).fetch_current_state(strict=True)

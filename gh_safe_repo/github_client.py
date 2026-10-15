@@ -88,12 +88,22 @@ class GitHubClient:
             self._user_data = self.get_json("/user")
         return self._user_data
 
-    def get_repo_data(self, owner: str, repo: str) -> dict:
-        """Fetch /repos/{owner}/{repo} once and cache; returns the raw response dict."""
+    def get_repo_data(self, owner: str, repo: str, refresh: bool = False) -> dict:
+        """Fetch /repos/{owner}/{repo} once and cache; returns the raw response dict.
+
+        The cache lives for the whole process, so anything read after an apply
+        (post-condition verification, #77) must pass ``refresh=True`` or call
+        ``forget_repo()`` first, otherwise it sees the pre-apply state.
+        """
         key = (owner, repo)
-        if key not in self._repo_cache:
+        if refresh or key not in self._repo_cache:
+            self._repo_cache.pop(key, None)
             self._repo_cache[key] = self.get_json(self.repo_path(owner, repo))
         return self._repo_cache[key]
+
+    def forget_repo(self, owner: str, repo: str) -> None:
+        """Drop the cached GET /repos/{owner}/{repo}; the next read refetches."""
+        self._repo_cache.pop((owner, repo), None)
 
     def get_owner(self):
         """Return the authenticated user's login."""

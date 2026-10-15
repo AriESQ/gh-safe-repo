@@ -469,6 +469,48 @@ class TestGetRepoData:
                 client.get_repo_data("alice", "missing-repo")
         assert exc_info.value.status_code == 404
 
+    def test_refresh_refetches_and_replaces_cache(self):
+        """#77: post-apply reads must not see the pre-apply cached repo."""
+        client = self._make_client()
+        before = {"name": "my-repo", "has_wiki": True}
+        after = {"name": "my-repo", "has_wiki": False}
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                make_completed_process(stdout=json.dumps(before), stderr=""),
+                make_completed_process(stdout=json.dumps(after), stderr=""),
+            ]
+            assert client.get_repo_data("alice", "my-repo")["has_wiki"] is True
+            assert client.get_repo_data("alice", "my-repo", refresh=True)["has_wiki"] is False
+            # The refreshed value is what the cache now serves.
+            assert client.get_repo_data("alice", "my-repo")["has_wiki"] is False
+        assert mock_run.call_count == 2
+
+    def test_forget_repo_drops_cache_entry(self):
+        client = self._make_client()
+        data = {"name": "my-repo"}
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(
+                stdout=json.dumps(data), stderr=""
+            )
+            client.get_repo_data("alice", "my-repo")
+            client.forget_repo("alice", "my-repo")
+            client.forget_repo("alice", "never-cached")  # no error
+            client.get_repo_data("alice", "my-repo")
+        assert mock_run.call_count == 2
+
+    def test_failed_refresh_does_not_serve_stale_data(self):
+        client = self._make_client()
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                make_completed_process(stdout=json.dumps({"name": "x"}), stderr=""),
+                make_completed_process(stdout="", stderr="HTTP 502 Bad Gateway", returncode=1),
+                make_completed_process(stdout=json.dumps({"name": "y"}), stderr=""),
+            ]
+            client.get_repo_data("alice", "my-repo")
+            with pytest.raises(APIError):
+                client.get_repo_data("alice", "my-repo", refresh=True)
+            assert client.get_repo_data("alice", "my-repo")["name"] == "y"
+
 
 class TestGetDefaultBranch:
     def _make_client(self):

@@ -47,19 +47,30 @@ class BranchProtectionPlugin(BasePlugin):
         self.migrate = migrate
         # Set during fetch_current_state() in rulesets mode; gates migration.
         self._classic_present = False
+        # True only while a strict (verification) fetch_current_state() runs.
+        self._strict = False
 
     def _use_rulesets(self) -> bool:
         return self.config.getbool("branch_protection", "use_rulesets", fallback=True)
 
     # ── State reads ───────────────────────────────────────────────────────────
 
-    def fetch_current_state(self) -> dict:
-        if self._use_rulesets():
-            # Record any pre-existing classic protection so plan() can gate the
-            # migration behind --migrate-branch-protection.
-            self._classic_present = self._classic_protection_present()
-            return self._fetch_ruleset_state()
-        return self._fetch_classic_state()
+    def fetch_current_state(self, strict: bool = False) -> dict:
+        self._strict = strict
+        try:
+            if self._use_rulesets():
+                # Record any pre-existing classic protection so plan() can gate
+                # the migration behind --migrate-branch-protection.
+                self._classic_present = self._classic_protection_present()
+                return self._fetch_ruleset_state()
+            return self._fetch_classic_state()
+        finally:
+            self._strict = False
+
+    def _ambiguous(self, path, status):
+        """In strict mode a 403/odd status is "could not read", not "absent"."""
+        if self._strict:
+            raise APIError(f"GET {path} returned {status}", status_code=status)
 
     def _classic_protection_present(self) -> bool:
         """True if any configured branch has classic protection configured.
@@ -75,6 +86,8 @@ class BranchProtectionPlugin(BasePlugin):
             status, _ = self.client.call_api("GET", path)
             if status == 200:
                 return True
+            if status != 404:
+                self._ambiguous(path, status)
         return False
 
     def _fetch_classic_state(self) -> dict:
@@ -86,6 +99,7 @@ class BranchProtectionPlugin(BasePlugin):
             return dict(GITHUB_DEFAULTS)
         if status == 403:
             # Feature not available (private repo on free plan) — plan() will SKIP
+            self._ambiguous(path, status)
             return dict(GITHUB_DEFAULTS)
         if status and status >= 400:
             raise APIError(f"GET {path} returned {status}", status_code=status)
@@ -187,17 +201,23 @@ class BranchProtectionPlugin(BasePlugin):
         detail_path = self.client.repo_path(self.owner, self.repo, f"rulesets/{ruleset_id}")
         status, text = self.client.call_api("GET", detail_path)
         if status and status >= 400:
+            self._ambiguous(detail_path, status)
             return None
         try:
             return json.loads(text)
         except (json.JSONDecodeError, ValueError):
+            if self._strict:
+                raise APIError(f"GET {detail_path} returned non-JSON response")
             return None
 
     def _find_ruleset_id(self):
         """Return the id of our branch ruleset, or None if it doesn't exist."""
         path = self.client.repo_path(self.owner, self.repo, "rulesets")
         status, text = self.client.call_api("GET", path)
-        if status == 404 or status == 403:
+        if status == 403:
+            self._ambiguous(path, status)
+            return None
+        if status == 404:
             return None
         if status and status >= 400:
             raise APIError(f"GET {path} returned {status}", status_code=status)

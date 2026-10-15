@@ -53,7 +53,8 @@ class RepositoryPlugin(BasePlugin):
         self._suppress_readme = suppress_readme
         self.created_default_branch = None
 
-    def fetch_current_state(self) -> dict:
+    def fetch_current_state(self, strict: bool = False) -> dict:
+        # get_repo_data raises on any failed read, so strict needs nothing extra.
         data = self.client.get_repo_data(self.owner, self.repo)
         return {
             "private": data.get("private", False),

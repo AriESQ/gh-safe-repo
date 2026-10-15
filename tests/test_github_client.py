@@ -233,10 +233,12 @@ class TestPushLocal:
         assert any(c[0] == "git" and "clone" in c and "/some/local/repo" in c for c in cmds)
         # remote set-url in temp clone (clone already created origin pointing at local_path)
         assert any("remote" in c and "set-url" in c and "origin" in c for c in cmds)
-        # push --all
-        assert any("push" in c and "--all" in c for c in cmds)
-        # push --tags
-        assert any("push" in c and "--tags" in c for c in cmds)
+        # one push carrying every branch and the tags (#79)
+        pushes = [c for c in cmds if "push" in c]
+        assert len(pushes) == 1
+        assert "refs/heads/master:refs/heads/master" in pushes[0]
+        assert "refs/heads/feat:refs/heads/feat" in pushes[0]
+        assert "refs/tags/*:refs/tags/*" in pushes[0]
         # remote add on original local repo
         assert any(
             "remote" in c and "add" in c and "origin" in c and "/some/local/repo" in c
@@ -311,6 +313,8 @@ class TestPushLocal:
             def side_effect(cmd, **kwargs):
                 if "diff" in cmd and "--cached" in cmd:
                     return make_completed_process(returncode=1)
+                if "for-each-ref" in cmd:
+                    return make_completed_process(stdout="main abc123\n")
                 return make_completed_process()
             mock_run.side_effect = side_effect
             client.push_local("/some/plain/dir", "alice", "dest-repo")
@@ -319,7 +323,7 @@ class TestPushLocal:
         assert any("init" in c for c in cmds)
         assert any("add" in c and "-A" in c for c in cmds)
         assert any("commit" in c for c in cmds)
-        assert any("push" in c and "--all" in c for c in cmds)
+        assert any("push" in c and "refs/heads/main:refs/heads/main" in c for c in cmds)
 
     def test_push_local_non_git_empty_dir_skips_push(self):
         client = self._make_client()
@@ -335,7 +339,7 @@ class TestPushLocal:
             client.push_local("/empty/dir", "alice", "dest-repo")
 
         cmds = [call.args[0] for call in mock_run.call_args_list]
-        assert not any("push" in c and "--all" in c for c in cmds)
+        assert not any("push" in c for c in cmds)
 
     def test_push_local_raises_api_error_on_clone_failure(self):
         client = self._make_client()
@@ -566,8 +570,10 @@ class TestPushLocalAllBranches(TestPushLocal):
              patch.object(client, "call_api", return_value=(200, "{}")) as mock_api:
             wiring = client.push_local("/repo", "alice", "dest-repo", default_branch="master")
         pushes = [c.args[0] for c in mock_run.call_args_list if "push" in c.args[0]]
-        assert pushes[0][-1] == "refs/heads/master:refs/heads/master"
-        assert any("--all" in p for p in pushes[1:])
+        assert len(pushes) == 1
+        refspecs = [a for a in pushes[0] if a.startswith("refs/")]
+        assert refspecs[0] == "refs/heads/master:refs/heads/master"
+        assert "refs/heads/feat:refs/heads/feat" in refspecs
         mock_api.assert_called_once_with(
             "PATCH", "/repos/alice/dest-repo", {"default_branch": "master"}
         )

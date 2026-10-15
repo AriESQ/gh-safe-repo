@@ -132,6 +132,22 @@ class GitTransport:
             env=self.env(),
         )
 
+    def run_remote(self, cmd: list, **kwargs) -> subprocess.CompletedProcess:
+        """Run a git command that talks to the host, retrying a missed key tap.
+
+        A FIDO (`*-SK`) key needs a touch for every connection, so a passing
+        preflight does not mean the push will authenticate (#79). A missed
+        touch is worth one more try; any other failure is raised as-is.
+        """
+        try:
+            return self.run(cmd, **kwargs)
+        except subprocess.CalledProcessError as e:
+            if not security_key_hint(e.stderr or ""):
+                raise
+            print("Your SSH security key did not confirm. "
+                  "Touch it when it blinks to retry...", file=sys.stderr)
+            return self.run(cmd, **kwargs)
+
     # ------------------------------------------------------------- preflight
 
     def preflight(self) -> None:

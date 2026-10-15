@@ -9,6 +9,22 @@ since the initial release.
 
 ## [Unreleased]
 
+### Changed
+- `create --local`/`--from` verify git credentials after the confirmation
+  prompt, right before the repo is created, instead of before the scan (#79).
+  A hardware security key's touch only proves the key answered at that moment,
+  so the check now runs as close to the real push as possible. A credential
+  failure still exits `1` before anything is created.
+- `create --local` pushes every branch and tag in one `git push` instead of
+  three, so a hardware security key needs one touch, not three, and a missed
+  touch can no longer leave a half-pushed repo.
+
+### Fixed
+- A missed security-key touch (`signing failed for ...-SK`) during the push,
+  mirror, or source clone is retried once, after printing `Your SSH security
+  key did not confirm. Touch it when it blinks to retry...` on stderr (#79).
+  Other git failures are not retried.
+
 ## [0.7.0] - 2026-10-14
 
 ### Added

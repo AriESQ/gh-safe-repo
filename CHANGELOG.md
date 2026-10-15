@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-14
+
 ### Added
 - `scan --json` emits findings as JSON on stdout (progress and warnings move to
   stderr), matching the `--json` convention already used by `create` and `fix`.

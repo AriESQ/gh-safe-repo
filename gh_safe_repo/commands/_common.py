@@ -363,8 +363,43 @@ def format_findings_json(findings, skipped_committed_dirs=(), engine=None):
     return json.dumps(doc, indent=2)
 
 
-def print_success(owner, repo, local_push=False, protocol="https", wiring=None, file=None):
+def _problem_lines(verification):
+    """Banner lines naming what verification could not confirm ([] if ok)."""
+    if verification is None or verification.ok:
+        return []
+    s = verification.summary()
+    lines = []
+    if s["mismatch"]:
+        lines.append(f"{s['mismatch']} setting(s) did not stick.")
+    if s["unknown"]:
+        lines.append(f"{s['unknown']} setting(s) could not be read back.")
+    return lines
+
+
+def print_success(owner, repo, local_push=False, protocol="https", wiring=None,
+                  file=None, verification=None):
+    """Closing banner for `create`.
+
+    With `verification`: a failed fatal check (repo missing, wrong
+    visibility) prints a red "Failed" banner naming it and nothing else; any
+    other mismatch or unknown turns the green "Done" into a yellow "Done with
+    problems" whose first lines say how many settings did not stick. The
+    remote/clone/tracking hints below are unchanged either way.
+    """
     url = f"https://github.com/{owner}/{repo}"
+    if verification is not None and verification.has_fatal:
+        failed = [c for c in verification.checks if c.fatal and c.status != "ok"]
+        rest = type(verification)([c for c in verification.checks if c not in failed])
+        lines = ["Repository created, but failed verification:"]
+        lines += [f"  {_MARKS['mismatch']} {c.name}" for c in failed]
+        lines += _problem_lines(rest) + [url]
+        _print_banner("Failed", "\n".join(f"  {l}  " for l in lines), _RED, file=file)
+        return
+    problems = _problem_lines(verification)
+    headline = (
+        "".join(f"  {l}  \n" for l in ["Repository created."] + problems)
+        if problems else "  Repository created successfully!  \n"
+    )
     https_url = f"https://github.com/{owner}/{repo}.git"
     ssh_url = f"git@github.com:{owner}/{repo}.git"
     # Order remote suggestions by the user's preferred git protocol (#19),
@@ -392,15 +427,15 @@ def print_success(owner, repo, local_push=False, protocol="https", wiring=None, 
                 f"  git clone {ordered[0][1]}  "
             )
         inner = (
-            f"  Repository created successfully!  \n"
-            f"  {url}  \n"
+            headline
+            + f"  {url}  \n"
             f"  \n"
             + next_step
         )
     else:
         inner = (
-            f"  Repository created successfully!  \n"
-            f"  {url}  \n"
+            headline
+            + f"  {url}  \n"
             f"  \n"
             f"  Add remote to existing repo:  \n"
             f"  {ordered[0][0]}: git remote add origin {ordered[0][1]}  \n"
@@ -410,7 +445,10 @@ def print_success(owner, repo, local_push=False, protocol="https", wiring=None, 
             f"  {ordered[0][0]}: git clone {ordered[0][1]}  \n"
             f"  {ordered[1][0]}: git clone {ordered[1][1]}  "
         )
-    _print_banner("Done", inner, _GREEN, file=file)
+    if problems:
+        _print_banner("Done with problems", inner, _YELLOW, file=file)
+    else:
+        _print_banner("Done", inner, _GREEN, file=file)
 
 
 def print_success_fix(owner, repo, verification=None, file=None):
@@ -428,12 +466,7 @@ def print_success_fix(owner, repo, verification=None, file=None):
         inner = f"  {status}  \n  {url}  "
         _print_banner("Done", inner, _GREEN, file=file)
         return
-    s = verification.summary()
-    lines = []
-    if s["mismatch"]:
-        lines.append(f"{s['mismatch']} setting(s) did not stick.")
-    if s["unknown"]:
-        lines.append(f"{s['unknown']} setting(s) could not be read back.")
+    lines = _problem_lines(verification)
     inner = "\n".join(f"  {l}  " for l in lines + [url])
     _print_banner("Done with problems", inner, _YELLOW, file=file)
 

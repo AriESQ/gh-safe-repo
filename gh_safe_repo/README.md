@@ -29,7 +29,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `git_transport.py` | Frozen `GitTransport` (protocol, env, URLs, redaction, `preflight()`, `run_remote()` which retries a missed `*-SK` touch once) built by `discover_transport()`; `security_key_hint()` names a missed `*-SK` hardware-key touch in git errors |
 | `config_manager.py` | INI config parsing via `configparser`; holds `SAFE_DEFAULTS` |
 | `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()` |
-| `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block) and `verify_plugins()`, which re-audits plugins after apply with 1s/2s/4s retry rounds and maps the audit plan to `ok` / `mismatch` / `unknown` checks |
+| `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block), `verify_plugins()` (re-audits plugins after apply, `fix`), `Probe` + `verify()` (plugin audits and dedicated reads in one set of 1s/2s/4s retry rounds), and `create_probes()` / `verify_create()` (`create`: repo exists, visibility, README removed, `--from` description/topics, protection presence; repo-exists runs first and short-circuits) |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |
 | `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` (tracked files only in git repos, NUL-byte binary sniff, TTY progress line). `scan()` records the engine that ran (`engine_used`, `fell_back`, `fallback_reason`); `engine_error()` turns a fallback under explicit `native`/`docker` into an error message |
 | `plugins/base.py` | Abstract `BasePlugin` — defines the `fetch_current_state(strict=False)` / `plan()` / `apply()` interface |
@@ -72,19 +72,25 @@ cli.main()
   ├─ print plan table
   ├─ each plugin.apply() →  API calls for non-SKIP changes
   └─ verify_plugins()    →  fetch_current_state(strict=True) + plan() again (fix)
+     verify_create()     →  the same, plus create_probes() for CREATE_ONLY_KEYS (create)
 ```
 
 ### Plugin contract for verification
 
-`fix` verifies an apply by running the same plugin's audit again
-(`verify.verify_plugins()`), so every plugin must satisfy two rules:
+`fix` and `create` verify an apply by running the same plugin's audit again
+(`verify.verify_plugins()` / `verify.verify_create()`), so every plugin must
+satisfy two rules:
 
 - **The post-apply audit plan must be empty.** After a successful `apply()`,
   `plan(current_state=fetch_current_state())` returns only `SKIP` rows. Any
   other row is reported as a `mismatch` (expected = `new`, actual = `old`) and
   makes `fix` exit `3`. A new setting whose audit cannot express "done" (it
   always emits an `UPDATE`) breaks this; a create-only row the audit never
-  emits must be listed in `verify.CREATE_ONLY_KEYS`.
+  emits must be listed in `verify.CREATE_ONLY_KEYS` **and** get a probe in
+  `verify.create_probes()`, or `create` silently never checks it. `create`
+  passes its create-mode plan (no `current_state`) per plugin; the audit is
+  still `fetch_current_state(strict=True)` + `plan(current_state=...)`, and the
+  create-mode `ADD` rows map to the audit's rows by `(category, key)`.
 - **`fetch_current_state(strict=True)` must not guess.** When a read cannot
   tell "off" from "could not read" (403, 5xx, missing status, unparseable
   body), raise `APIError` instead of returning GitHub's default. Only a
@@ -93,6 +99,15 @@ cli.main()
   not fail the run. `strict=False` (planning) keeps the lenient behaviour.
   Reads must not be served from a stale cache: the verifier calls
   `client.forget_repo()` first, so read `GET /repos` via `get_repo_data()`.
+
+Presence reads used by `create`'s probes follow the same strictness:
+`BranchProtectionPlugin.protected_branches()` (the ruleset's include list, or
+the branches whose classic protection answers 200) and
+`TagProtectionPlugin.protected_tags()` return `[]` only on a definite "none"
+and raise `APIError` otherwise. A `verify.Probe` is `(category, key,
+expected, read, matches=None, fatal=False, remediation)`; `read()` raising
+means unknown. `verify_create(..., extra_probes=...)` is the hook for further
+create checks (code push, local wiring).
 
 ## Adding a new setting
 

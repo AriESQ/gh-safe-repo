@@ -18,6 +18,7 @@ from ..plugins.repository import RepositoryPlugin
 from ..plugins.security import SecurityPlugin
 from ..plugins.tag_protection import TagProtectionPlugin
 from ..security_scanner import SecurityScanner
+from ..verify import verify_create
 from ._common import (
     _BOLD,
     _DIM,
@@ -36,6 +37,7 @@ from ._common import (
     parse_repo_arg,
     print_plan,
     print_success,
+    print_verification,
     prose_stream,
     prose_to_stderr,
     run_preflight_scan,
@@ -321,10 +323,15 @@ def run(args):
     ]
 
     full_plan = Plan()
+    plugin_plans = []  # (plugin, its own plan) — verification re-audits per plugin
     for plugin in plugins:
         try:
             plugin_plan = plugin.plan()
             full_plan.merge(plugin_plan)
+            # Keep a Plan of exactly this plugin's rows for verification.
+            own = Plan()
+            own.merge(plugin_plan)
+            plugin_plans.append((plugin, own))
         except SafeRepoError as e:
             error(f"Planning failed: {e}")
             sys.exit(1)
@@ -371,11 +378,17 @@ def run(args):
             ),
         ))
 
-    # Print the plan
-    if json_mode:
+    # Under --json, stdout carries exactly one document. --dry-run prints the
+    # plan right away (unchanged); a real run prints it once at the end, with
+    # the verification block (#77), same as `fix`.
+    if json_mode and args.dry_run:
         print(format_plan_json(full_plan))
-    else:
+    elif not json_mode:
         print_plan(full_plan)
+    elif not args.yes:
+        # Interactive --json: show the table on stderr so the prompt has context.
+        with prose_to_stderr(json_mode):
+            print_plan(full_plan)
 
     counts = full_plan.count_by_type()
     actionable = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
@@ -399,6 +412,8 @@ def run(args):
             sys.exit(0)
         if answer not in ("y", "yes"):
             _info(_c(_YELLOW, "Aborted."))
+            if json_mode:
+                print(format_plan_json(full_plan))
             sys.exit(0)
 
     # Verify git credentials before creating the repo, so a credential failure
@@ -505,6 +520,31 @@ def run(args):
     except APIError as e:
         warn(f"Tag protection failed: {e}")
 
+    # Verify: re-read what GitHub now holds. The apply steps above only prove
+    # no exception escaped (#77). Settings use each plugin's own audit (the
+    # same instances, so bp_plugin.branches is already narrowed); create-only
+    # rows (repo exists, visibility, README removed, --from description and
+    # topics, protection presence) get dedicated probes. Code and local-wiring
+    # checks will join through `extra_probes`.
+    _info(_c(_DIM, "\nVerifying..."))
+    verification = verify_create(
+        plugin_plans,
+        private=not is_public,
+        remediation=(
+            f"Run `gh-safe-repo fix {owner}/{repo_name} --yes` once; if it "
+            "still does not stick, an organization policy or plan limit is "
+            "overriding it — check the repo settings page."
+        ),
+    )
+
+    out = prose_stream(json_mode)
+    print_verification(verification, file=out)
+    if verification.unknowns:
+        warn(
+            f"{len(verification.unknowns)} setting(s) could not be read back to "
+            "confirm they were applied (see above). Not retrying further."
+        )
+
     protocol = (
         client.transport.protocol
         if getattr(client, "transport", None) is not None
@@ -512,5 +552,12 @@ def run(args):
     )
     print_success(
         owner, repo_name, local_push=bool(args.local_path), protocol=protocol,
-        wiring=wiring, file=prose_stream(json_mode),
+        wiring=wiring, file=out, verification=verification,
     )
+
+    if json_mode:
+        print(format_plan_json(full_plan, verification=verification))
+
+    code = verification.exit_code()
+    if code:
+        sys.exit(code)

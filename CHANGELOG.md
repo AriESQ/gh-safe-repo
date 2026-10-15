@@ -22,6 +22,16 @@ since the initial release.
   (`status` is `ok`, `mismatch` or `unknown`, with `expected`, `actual` and
   `remediation`), and an `ok`/`mismatch`/`unknown` `summary`. `--dry-run
   --json` is unchanged.
+- `create` verifies its settings the same way (#77): after applying, it
+  re-reads every setting it changed and prints a `Verified` section before
+  the banner. It also checks what only a new repo has: the repo exists and
+  has the visibility you asked for, the auto-generated README was removed,
+  `--from` copied the description and topics, and branch and tag protection
+  cover the default branch and tag patterns. A setting that did not stick
+  exits `3`; a missing repo or wrong visibility exits `1` (a repo meant to
+  be private that came out public needs attention now, and the remediation
+  is the exact `gh repo edit --visibility` command). The banner turns
+  yellow `Done with problems`, or red `Failed` for a fatal check.
 - `scan` and the `create --local`/`--from` pre-flight print the engine that
   actually ran (`Scan engine: truffleHog v3.93.4`, or `regex (fell back from
   truffleHog: ...)`) after the scan (#77). The header shown before the scan is
@@ -31,6 +41,13 @@ since the initial release.
   bool}`. Existing keys are unchanged.
 
 ### Changed
+- `create --json` (without `--dry-run`) prints its document once, at the
+  end, with the `verification` block, instead of printing the plan before
+  the prompt (#77). Without `--yes` the plan table goes to stderr before the
+  prompt; declining prints the document without `verification`. A run that
+  exits `1` before or during the apply (repo exists, blocked scan,
+  credential pre-flight, failed push) prints no document. `--dry-run --json`
+  is unchanged.
 - `fix` builds its closing banner from the verification result: green
   `Done` only when every setting checks out, otherwise yellow `Done with
   problems` (#77).

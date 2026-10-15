@@ -1727,3 +1727,64 @@ class TestBranchProtectionStrictReads:
         client.call_api.side_effect = [(502, "")]
         with pytest.raises(APIError):
             self._plugin(client).fetch_current_state(strict=True)
+
+
+class TestProtectionPresenceReads:
+    """protected_branches() / protected_tags(): create's presence probes (#77)."""
+
+    def _bp(self, client, **cfg):
+        overrides = {("branch_protection", k): v for k, v in cfg.items()}
+        return BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(overrides or None),
+            is_public=True, branches=["main"],
+        )
+
+    def test_ruleset_include_list(self):
+        client = make_mock_client()
+        listing = json.dumps([{"id": 7, "name": "gh-safe-repo defaults", "target": "branch"}])
+        detail = json.dumps({"conditions": {"ref_name": {
+            "include": ["refs/heads/main", "refs/heads/dev"], "exclude": []}}})
+        client.call_api.side_effect = [(200, listing), (200, detail)]
+        assert self._bp(client).protected_branches() == ["main", "dev"]
+
+    def test_no_ruleset_is_empty(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(200, "[]")]
+        assert self._bp(client).protected_branches() == []
+
+    def test_ruleset_403_raises_and_resets_strict(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(403, "")]
+        plugin = self._bp(client)
+        with pytest.raises(APIError):
+            plugin.protected_branches()
+        assert plugin._strict is False
+
+    def test_classic_mode(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(200, "{}")]
+        assert self._bp(client, use_rulesets="false").protected_branches() == ["main"]
+        client.call_api.side_effect = [(404, "")]
+        assert self._bp(client, use_rulesets="false").protected_branches() == []
+        client.call_api.side_effect = [(500, "")]
+        with pytest.raises(APIError):
+            self._bp(client, use_rulesets="false").protected_branches()
+
+    def _tag(self, client):
+        return TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+
+    def test_tag_patterns(self):
+        client = make_mock_client()
+        listing = json.dumps([{"id": 9, "name": "gh-safe-repo tag defaults", "target": "tag"}])
+        client.call_api.side_effect = [(200, listing)]
+        client.get_json.return_value = {"conditions": {"ref_name": {"include": ["refs/tags/*"]}}}
+        assert self._tag(client).protected_tags() == ["*"]
+        client.get_json.assert_called_with("/repos/alice/my-repo/rulesets/9")
+
+    def test_tag_absent_and_unreadable(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(200, "[]")]
+        assert self._tag(client).protected_tags() == []
+        client.call_api.side_effect = [(403, "")]
+        with pytest.raises(APIError):
+            self._tag(client).protected_tags()

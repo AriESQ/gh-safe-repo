@@ -21,7 +21,9 @@ always runs a pre-flight secret scan first.
 1. **Always plan first.** Run with `--dry-run --json`, show the user what will
    change, and only then apply. `--dry-run` makes zero API calls.
 2. **Always pass `--yes` when applying.** Without a TTY the confirmation
-   prompt cannot be answered.
+   prompt cannot be answered: with stdin closed, `create` and `fix` print
+   `--yes is required for unattended runs` and exit `1` with nothing done.
+   Do not pipe `y` in instead; it works, but `--yes` is the contract.
 3. **Never target a repo the user did not name.** Do not guess the owner, do
    not "fix" neighbouring repos.
 4. `scan` is read-only and safe to run unprompted; `create` and `fix` are not.
@@ -45,8 +47,8 @@ drops ANSI codes when stdout is not a terminal.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success — **or** the user declined at an interactive prompt. For `fix`, every changed setting was read back and verified (`unknown` checks warn but still exit `0`) |
-| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes) |
+| `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `fix`, every changed setting was read back and verified (`unknown` checks warn but still exit `0`) |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `--local`/`--from` (the repo **was** created; see Failure modes) |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--local` with `--from` |
 | `3` | `fix` applied the changes but at least one setting did not stick when read back (a `mismatch` check). See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
@@ -127,6 +129,7 @@ A `SKIP` can also simply mean the setting is already correct.
 | `fix` reports the repo does not exist (404) | Ambiguous: missing repo, or private and invisible to the *active* account. Confirm the active `gh` account before concluding it is gone. |
 | `You do not have admin permissions` | `fix` needs admin even to *read* settings. Auditing someone else's public repo is not possible — this is by design. |
 | `Repository already exists` | Use `fix` instead of `create`. |
+| `--yes is required for unattended runs` (exit 1) | You ran `create`/`fix` without `--yes` and stdin was closed, so the confirmation prompt got no answer. Nothing was created or changed. If the user has agreed to the plan, re-run the same command with `--yes`; otherwise show them the `--dry-run --json` plan first. |
 | Pre-flight scan blocked the run (exit 1) | Real secrets were found. Show the findings, let the user remove them; do not re-run with different flags to bypass. |
 | `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `create` stopped before creating anything. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |

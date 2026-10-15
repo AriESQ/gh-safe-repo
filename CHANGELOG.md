@@ -51,6 +51,12 @@ since the initial release.
   touch can no longer leave a half-pushed repo.
 
 ### Fixed
+- `create` and `fix` run without `--yes` and with stdin closed (`< /dev/null`,
+  a CI job, an agent subprocess) exited `0` at the confirmation prompt with
+  nothing done, indistinguishable from success (#93). They now print
+  `--yes is required for unattended runs` on stderr and exit `1`. Typing `n`
+  (or an empty line, or Ctrl-C) at the prompt still exits `0`, and an answer
+  piped on stdin (`echo y | gh-safe-repo fix ...`) is still honoured.
 - The plan-limits tables in the README and the agent skill listed private
   vulnerability reporting as available on free plans with private repos. GitHub
   returns 404 for it there, so `create` and `fix` skip it, as the plan already

@@ -21,7 +21,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | Module | Purpose |
 |---|---|
 | `cli.py` | `build_parser()` / `main()` — subparser dispatch to `create`, `fix`, `scan` commands |
-| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()`, plan and findings formatting (`format_plan_json(plan, verification=None)`, `format_findings_json()`), the pre-flight `ScanDecision`, `print_verification()` and the banners, `--json` stdout discipline (`prose_stream()`, `prose_to_stderr()`, `ask()`), ANSI output (auto-disabled off a TTY / under `NO_COLOR`) |
+| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()`, plan and findings formatting (`format_plan_json(plan, verification=None)`, `format_findings_json()`), the pre-flight `ScanDecision`, the `create`/`fix` confirmation prompt (`confirm()`: EOF → exit 1 naming `--yes`), `print_verification()` and the banners, `--json` stdout discipline (`prose_stream()`, `prose_to_stderr()`, `ask()`), ANSI output (auto-disabled off a TTY / under `NO_COLOR`) |
 | `commands/create.py` | `create` subcommand — new repo with safe defaults |
 | `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections |
 | `commands/scan.py` | `scan` subcommand — local-only secret scanning |
@@ -120,4 +120,5 @@ cli.main()
   `forget_repo()` first, or it sees the pre-apply state.
 - **Under `--json`, stdout carries exactly one JSON document.** Route prose
   through `info(..., json_mode=)`, `prose_stream(json_mode)` or
-  `prose_to_stderr(json_mode)`, and prompts through `ask()`.
+  `prose_to_stderr(json_mode)`, and prompts through `ask()` (or `confirm()`
+  for a `[y/N]` that must fail, not decline, on EOF).

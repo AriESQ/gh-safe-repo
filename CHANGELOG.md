@@ -51,6 +51,10 @@ since the initial release.
   touch can no longer leave a half-pushed repo.
 
 ### Fixed
+- The plan-limits tables in the README and the agent skill listed private
+  vulnerability reporting as available on free plans with private repos. GitHub
+  returns 404 for it there, so `create` and `fix` skip it, as the plan already
+  showed; the tables now say so.
 - `create --json --local`/`--from` printed the pre-flight scan report on
   stdout ahead of the JSON plan. It now goes to stderr.
 - A missed security-key touch (`signing failed for ...-SK`) during the push,

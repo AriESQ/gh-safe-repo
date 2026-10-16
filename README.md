@@ -2,67 +2,94 @@
 
 [![CI](https://github.com/AriESQ/gh-safe-repo/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/AriESQ/gh-safe-repo/actions/workflows/ci.yml)
 
-Create GitHub repositories with safe defaults applied automatically. Replaces the five-minute post-creation settings checklist with a single command.
+Create GitHub repositories with safe defaults applied, in one command.
 
 ```
 gh-safe-repo create <owner/repo>
 ```
 
-Branch protection, immutable tags, Dependabot, restricted Actions permissions, and secret scanning with push protection — all configured before you write your first line of code.
+Branch protection, immutable tags, locked-down Actions, Dependabot, secret
+scanning with push protection, and private vulnerability reporting are all
+configured before you push your first commit. The same tool audits and fixes
+repos you already have, and scans local code for secrets before it leaves
+your machine.
 
-> **Status:** gh-safe-repo is undergoing heavy development. It works well for the core use case — creating a new repo with secure defaults — but the CLI options are still being polished to better match user expectations. Expect breaking changes until releases and CI/CD are nailed down. ✌️
+> **Status:** the core workflow is stable and verified end to end, but the
+> CLI is still being polished. Expect occasional breaking changes before 1.0.
 
----
+## Contents
+
+- [What you get](#what-you-get)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [CLI reference](#cli-reference)
+- [Output](#output) — plan table, JSON, verification, exit codes
+- [Safe defaults](#safe-defaults)
+- [Pushing code](#pushing-code) — `--local` and `--from`
+- [Pre-flight scanner](#pre-flight-scanner)
+- [Configuration](#configuration)
+- [GitHub plan limitations](#github-plan-limitations)
+- [Using with an AI agent](#using-with-an-ai-agent)
+- [How it works](#how-it-works)
+- [Development](#development)
 
 ## What you get
 
-GitHub's defaults are optimised for discoverability and flexibility, not security: every new repo ships with no branch protection, no Dependabot, and Actions that have write access to the repo and can approve their own pull requests.
+GitHub's defaults favour discoverability over safety: a new repo has no
+branch protection, no Dependabot, and Actions that can write to the repo and
+approve their own pull requests. `gh-safe-repo` changes that, and shows you
+the plan before it touches anything:
 
-`gh-safe-repo` fixes all of that in one shot, showing you a plan first:
+- **Private by default.** Pass `--public` to make it public.
+- **Branch protection.** PR required, one approving review, stale reviews
+  dismissed, conversations resolved, no force pushes, no branch deletion.
+- **Immutable tags.** Release tags cannot be rewritten or deleted.
+- **Actions locked down.** Read-only token, no self-approving PRs, SHA-pinned
+  actions, GitHub-owned and verified publishers only.
+- **Dependabot on.** Vulnerability alerts plus automatic fix PRs.
+- **Secret scanning with push protection.** Commits containing supported
+  secrets are blocked.
+- **Private vulnerability reporting.** Researchers can reach you privately.
+- **Pre-flight secret scan.** When pushing existing code, the working tree
+  and git history are scanned locally first.
+- **Opt-in extras.** Wiki, projects and issues are left alone unless you
+  manage them in config.
 
-- **Private by default** — pass `--public` when you want the world to see it
-- **Branch protection** — PR required, 1 approving review, stale reviews dismissed, conversations resolved, no force pushes, no branch deletion
-- **Immutable tags** — release tags can't be rewritten or deleted
-- **Actions locked down** — read-only token, no self-approving PRs, SHA-pinned actions, GitHub-owned and verified publishers only
-- **Dependabot on** — vulnerability alerts plus automatic fix PRs
-- **Secret scanning with push protection** — commits containing supported secrets are blocked
-- **Private vulnerability reporting** — researchers can reach you without going public
-- **Pre-flight secret scan** — when pushing existing code (`--local` / `--from`), your working tree and git history are scanned locally before anything reaches GitHub
-- **Opt-in extras** — wiki, projects, and issues are left alone unless you ask for them to be managed (`has_wiki = false` in config)
-
-Everything is configurable. See [Safe defaults in full](#safe-defaults-in-full) for the exact settings and [Configuration](#configuration) for how to change them.
-
-## Requirements
-
-- **Python 3.10+**
-- **[`gh` CLI](https://cli.github.com/)** authenticated (`gh auth login`), **or** `GITHUB_TOKEN` set in your environment
-- **[`uv`](https://docs.astral.sh/uv/)** for installation from source
-- **truffleHog v3** *(optional)* — used by the pre-flight scanner; auto-detected from PATH or run via podman/docker, with a regex fallback if neither exists
-
-Pushing code with `--local` or `--from` additionally needs your normal git credentials for GitHub — see [Working from local or existing code](#working-from-local-or-existing-code).
+Every setting is configurable. See [Safe defaults](#safe-defaults) for the
+exact values and [Configuration](#configuration) for how to change them.
 
 ## Install
+
+Requirements:
+
+- Python 3.10+
+- [`gh` CLI](https://cli.github.com/) logged in (`gh auth login`), or
+  `GITHUB_TOKEN` set in the environment
+- [`uv`](https://docs.astral.sh/uv/) to install from source
+- truffleHog v3 (optional) for the pre-flight scanner. It is found on `PATH`
+  or run via podman/docker; without either, a regex scanner is used.
+
+Pushing code with `--local` or `--from` also needs your normal git
+credentials for GitHub. See [Pushing code](#pushing-code).
 
 ```bash
 git clone https://github.com/AriESQ/gh-safe-repo
 cd gh-safe-repo
 uv tool install .
-
 gh-safe-repo --help
 ```
 
-This installs `gh-safe-repo` into uv's tool environment and adds it to your `PATH`.
-
-To run it without installing:
+To run without installing:
 
 ```bash
-uv sync                            # creates .venv
+uv sync
 ./gh-safe-repo create <owner/repo>
 ```
 
-## Your first repo
+## Quick start
 
-**1. Preview.** `--dry-run` makes zero API calls — nothing is created:
+**1. Preview.** `--dry-run` makes no API calls and creates nothing.
 
 ```
 $ gh-safe-repo create AriESQ/demo-repo --dry-run
@@ -93,15 +120,19 @@ SKIP    tag_protection     tag_protection                          Tag protectio
 Dry run — no changes made.
 ```
 
-The `SKIP` rows above are a free-plan private repo: those features need a public repo or a paid plan. Nothing fails silently — see [GitHub plan limitations](#github-plan-limitations).
+The `SKIP` rows are what a private repo on a free plan looks like. Those
+features need a public repo or a paid plan, and the tool says so rather than
+failing silently. See [GitHub plan limitations](#github-plan-limitations).
 
-**2. Apply.** Same command without `--dry-run`. You get the same plan, then a confirmation prompt (`--yes` skips it):
+**2. Apply.** Drop `--dry-run`. You see the same plan, then a confirmation
+prompt (`--yes` skips it).
 
 ```bash
 gh-safe-repo create AriESQ/demo-repo
 ```
 
-**3. Start working.** On success you get the repo URL and ready-to-paste remote commands:
+**3. Start working.** On success you get a **Verified** section (every
+setting read back from GitHub) and a banner with ready-to-paste commands:
 
 ```
 ╭─ Done ───────────────────────────────────────────────────╮
@@ -118,20 +149,23 @@ gh-safe-repo create AriESQ/demo-repo
 ╰──────────────────────────────────────────────────────────╯
 ```
 
-Remotes are listed with your preferred protocol first (`gh config get -h github.com git_protocol`).
+Your preferred protocol (`gh config get -h github.com git_protocol`) is
+listed first.
 
-## Common tasks
+## Commands
 
-### Create a repo
+### Create a new repo
 
 ```bash
 gh-safe-repo create <owner/repo>            # private (default)
-gh-safe-repo create <owner/repo> --public   # public — branch and tag protection apply
+gh-safe-repo create <owner/repo> --public   # public: branch and tag protection apply
 ```
 
-A plain `create` initializes the repo so a default branch exists (branch protection needs one), then deletes the auto-generated `README.md` so you start clean. Set `auto_init = true` in config to keep it.
-
-After applying, `create` reads back what it set and prints a **Verified** section before the banner (see [Verification](#verification)): that the repo exists with the visibility you asked for, that the README is gone, every setting it applied, and that branch and tag protection cover the branch and tag patterns. It exits `3` if a setting did not stick and `1` if the repo is missing or has the wrong visibility.
+The repo is initialized so a default branch exists (branch protection needs
+one), then the auto-generated `README.md` is deleted so you start clean. Set
+`auto_init = true` in config to keep it. The owner must match your
+authenticated account; this guards against mistakes on multi-account
+systems.
 
 ### Push an existing local project
 
@@ -139,49 +173,47 @@ After applying, `create` reads back what it set and prints a **Verified** sectio
 gh-safe-repo create <owner/repo> --local ~/projects/myapp
 ```
 
-Scans the directory for secrets first, creates the repo, pushes all branches and tags, then wires up `origin` and upstream tracking in your original directory so `git push` works immediately. An existing `origin` pointing somewhere else is left alone; a warning and the success banner tell you the exact commands to run instead. Afterwards it checks, through the API, that every branch and tag it pushed is on GitHub at the same commit (exit `1` with the push command to re-run if not) and that the default branch is the one it chose, then reads your repo's git config to confirm `origin` and upstream tracking (a mismatch is a warning only). See [Working from local or existing code](#working-from-local-or-existing-code) and [Verification](#verification).
+Scans the directory for secrets, creates the repo, pushes every branch and
+tag, then sets `origin` and upstream tracking in your original directory so
+`git push` works immediately. An `origin` that already points elsewhere is
+left alone and the banner tells you what to run instead. Afterwards every
+pushed branch and tag is checked against GitHub SHA for SHA. Details in
+[Pushing code](#pushing-code).
 
 ### Mirror an existing repo
 
 ```bash
 gh-safe-repo create <owner/repo> --from <owner/source>
-gh-safe-repo create <owner/pub> --from <owner/priv> --public   # the riskiest move — scanned thoroughly
+gh-safe-repo create <owner/pub> --from <owner/priv> --public   # scanned thoroughly first
 ```
 
-Clones the source with full history, scans it, and mirrors it into a fresh repo with safe defaults, then sets the source's default branch on it (a mirror push does not carry one). If you abort at the scan, no code ever reaches the new repo. Afterwards every branch and tag of the source must be on the new repo at the same SHA, or the run exits `1`.
+Clones the source with full history, scans it, mirrors it into the new repo,
+and copies the source's default branch, description and topics. If you abort
+at the scan, no code reaches GitHub.
 
-### Audit a repo you already have
+### Audit and fix a repo you already have
 
 ```bash
-gh-safe-repo fix <owner/repo> --dry-run   # what's out of compliance?
+gh-safe-repo fix <owner/repo> --dry-run   # what is out of compliance?
 gh-safe-repo fix <owner/repo>             # apply the missing defaults
 gh-safe-repo fix <owner/repo> --yes       # no prompt, for scripts
 ```
 
-`fix` fetches each setting's current value, shows `UPDATE` for what differs and `SKIP` for what's already correct, and makes no API calls for no-ops. It's settings-only — no secret scanning. You need admin on the repo, which can be one owned by an org or another account.
+`fix` reads each setting, shows `UPDATE` for what differs and `SKIP` for what
+is already correct, and only calls the API for real changes. It is
+settings-only (no secret scanning). You need admin on the repo, which may be
+owned by an org or another account.
 
-After applying, `fix` reads every changed setting back from GitHub and prints a **Verified** section (see [Verification](#verification)). It exits `3` if a setting did not stick, so "Done" means GitHub actually holds the settings, not just that no request failed.
-
-### Scan without touching GitHub
+### Scan local code
 
 ```bash
 gh-safe-repo scan .
-gh-safe-repo scan ~/projects/myapp
+gh-safe-repo scan . && git push     # exit 1 on critical findings
 ```
 
-Local-only. Exit code `0` when there are no critical findings, `1` when there are (or when an explicit `trufflehog_mode` could not run truffleHog, see [Scanner engine](#scanner-engine)), so it composes:
+Local only. Nothing is sent to GitHub. See [Pre-flight scanner](#pre-flight-scanner).
 
-```bash
-gh-safe-repo scan . && git push
-```
-
-See [Pre-flight security scanner](#pre-flight-security-scanner).
-
----
-
-## Reference
-
-### CLI reference
+## CLI reference
 
 ```
 gh-safe-repo [--config PATH] [--debug] create <owner/repo> [OPTIONS]
@@ -189,72 +221,72 @@ gh-safe-repo [--config PATH] [--debug] fix <owner/repo> [OPTIONS]
 gh-safe-repo [--config PATH] [--debug] scan <path> [OPTIONS]
 ```
 
-`--config` and `--debug` are global: they may be given before or after the
-command (`gh-safe-repo --debug fix owner/repo` and
-`gh-safe-repo fix owner/repo --debug` are equivalent), and the later one wins
-if both are given. All other options are command-specific and must follow the
-command. Note that `--config` takes an optional value, so a bare `--config`
-should come last — `gh-safe-repo --config scan ./src` reads `scan` as the path.
+`--config` and `--debug` are global and may go before or after the command;
+if given twice, the later one wins. Other options must follow the command.
+`--config` takes an optional value, so a bare `--config` should come last:
+`gh-safe-repo --config scan ./src` would read `scan` as the path.
 
-All commands that interact with GitHub require the `owner/repo` format (e.g. `myuser/my-repo`). For `create`, the owner is validated against your authenticated GitHub account to prevent mistakes on multi-account systems. For `fix`, admin permissions on the target repo are required instead, allowing you to fix repos owned by organizations or other accounts where you have admin access.
+All GitHub-targeting commands take `owner/repo` (for example `myuser/my-repo`).
 
-#### `create` — create a new repo
+**Global options**
 
 | Option | Description |
 |---|---|
-| `--public` | Create as a public repo (default: private) |
-| `--local PATH` | Push code from a local git repository into the new repo. Runs pre-flight scan first. Mutually exclusive with `--from`. |
-| `--from OWNER/REPO` | Mirror code from an existing repo into the new repo. Runs pre-flight scan. Mutually exclusive with `--local`. |
-| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Pre-flight scan warnings are accepted automatically; **critical** findings still stop the run (exit `1`). Required when stdin is closed; without it the run exits `1` |
-| `--dry-run` | Print the plan without making any changes |
-| `--json` | Emit the plan as JSON to stdout instead of the ANSI table; on a real run, printed once at the end with a `verification` block |
-| `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | *(global)* Print every API call and response |
+| `--config [PATH]` | Config file to use. Bare `--config` uses built-in defaults only |
+| `--debug` | Print every API call and response. For `fix`, also the resolved repo identity (id, full name, owner type) |
 
-#### `fix` — audit and fix an existing repo
+**`create <owner/repo>`**
 
 | Option | Description |
 |---|---|
-| `--yes` / `-y` | Skip confirmation prompt and apply immediately (for scripting/batch use). Required when stdin is closed; without it the run exits `1` |
-| `--dry-run` | Show settings diff without applying changes |
-| `--migrate-branch-protection` | Convert existing classic branch protection to a ruleset (see [Branch protection](#branch-protection-public-repos-or-any-repo-on-a-paid-plan)) |
-| `--json` | Emit the plan as JSON to stdout instead of the ANSI table; on a real run, printed once at the end with a `verification` block |
-| `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | *(global)* Print every API call and response, plus resolved repo identity (id, full name, owner type) |
+| `--public` | Create a public repo (default: private) |
+| `--local PATH` | Push a local git repository into the new repo. Runs the pre-flight scan. Excludes `--from` |
+| `--from OWNER/REPO` | Mirror an existing repo into the new repo. Runs the pre-flight scan. Excludes `--local` |
+| `--yes`, `-y` | Skip the confirmation prompt. Scan warnings are accepted; critical findings still stop the run (exit `1`). Required when stdin is not a terminal |
+| `--dry-run` | Print the plan and make no API calls |
+| `--json` | Emit the plan as JSON on stdout. On a real run it is printed once at the end with a `verification` block |
 
-#### `scan` — local secret scanning
+**`fix <owner/repo>`**
 
 | Option | Description |
 |---|---|
-| `--json` | Emit findings as JSON to stdout instead of the ANSI report |
-| `--config [PATH]` | *(global)* Path to config file; bare `--config` uses built-in defaults only |
-| `--debug` | *(global)* Show scanner details |
+| `--yes`, `-y` | Skip the confirmation prompt. Required when stdin is not a terminal |
+| `--dry-run` | Show the settings diff without applying it |
+| `--migrate-branch-protection` | Convert classic branch protection to a ruleset. See [Branch protection](#branch-protection) |
+| `--json` | Emit the plan as JSON on stdout. On a real run it is printed once at the end with a `verification` block |
 
-Exit code is `0` if no critical findings, `1` if criticals are found or if
-`trufflehog_mode = native`/`docker` could not run truffleHog (the findings are
-still printed; the error names the reason).
+**`scan <path>`**
 
-### Plan output and JSON
+| Option | Description |
+|---|---|
+| `--json` | Emit findings as JSON on stdout |
 
-`--dry-run` shows exactly what `gh-safe-repo` would do, without making any changes or API calls. Combine with `--json` for machine-readable plan output:
+## Output
 
-```bash
-gh-safe-repo create <owner/repo> --dry-run --json
-gh-safe-repo fix <owner/repo> --dry-run --json
-```
+### Plan table
 
-When `--json` is active, the plan is written to stdout as a JSON object and all other messages (progress, warnings, the "Dry run" footer, the closing banner) go to stderr, so the output is clean for piping or scripting. With `--dry-run` the document is printed immediately. On a real `create` or `fix` run it is printed once, at the end, with a `verification` block added (see [Verification](#verification)); without `--yes`, the plan table is shown on stderr before the prompt instead. If you decline the prompt, the document is printed without `verification`. A run that stops with exit `1` before or during the apply (repo already exists, blocked pre-flight scan, unanswered confirmation prompt, credential pre-flight, failed code push) prints no document: stdout is empty and the error is on stderr.
-
-**Change types** (the `Type` column, colourised in a terminal):
+The `Type` column is colourised in a terminal. Colour is dropped when stdout
+is not a terminal or `NO_COLOR` is set.
 
 | Type | Meaning |
 |---|---|
-| `ADD` (green) | New setting being applied |
-| `UPDATE` (yellow) | Existing setting being changed |
-| `DELETE` (red) | Setting or file being removed |
-| `SKIP` (dim) | No action needed — already at the desired value, or feature unavailable on your plan/visibility combination |
+| `ADD` | New setting being applied |
+| `UPDATE` | Existing setting being changed |
+| `DELETE` | Setting or file being removed |
+| `SKIP` | Nothing to do: already correct, or unavailable on this plan/visibility |
 
-**JSON output** (`--json`):
+### JSON
+
+With `--json`, the document is the only thing on stdout. Progress, warnings,
+prompts and the banner go to stderr.
+
+- `--dry-run --json` prints the plan immediately.
+- A real `create`/`fix` run prints the plan once at the end with a
+  `verification` block. Without `--yes` the plan table is shown on stderr
+  before the prompt. Declining the prompt prints the document without
+  `verification`.
+- A run that stops with exit `1` before or during the apply prints no
+  document: stdout is empty and the error is on stderr.
 
 ```json
 {
@@ -266,9 +298,10 @@ When `--json` is active, the plan is written to stdout as a JSON object and all 
 }
 ```
 
-`summary` only includes types that are present in the plan. Consumers should use `.get("delete", 0)` etc. rather than assuming all four keys are present.
+`summary` only lists types present in the plan; use `.get("delete", 0)`
+rather than assuming all four keys.
 
-**Scan findings** (`scan --json`):
+`scan --json`:
 
 ```json
 {
@@ -282,68 +315,20 @@ When `--json` is active, the plan is written to stdout as a JSON object and all 
 }
 ```
 
-Unlike the plan `summary`, all three severity keys are always present. Secret
-matches are `[redacted]`; `commit` and `timestamp` are populated only for
-findings truffleHog located in git history.
-
-`engine` records what actually ran, not what was planned. `configured` is the
-effective `trufflehog_mode` (`auto`, `native`, `docker`, `off`; a legacy
-`use_trufflehog = false` shows as `off`). `used` is `trufflehog-native`,
-`trufflehog-container` or `regex`. `fell_back` is `true` when truffleHog was
-attempted but could not run, so the regex scanner covered secrets instead.
-`off`, and `scan_for_secrets = false`, report `regex` with `fell_back: false`.
-
-### Using with an AI agent
-
-Everything the tool does is available non-interactively, and
-[`skills/gh-safe-repo/SKILL.md`](skills/gh-safe-repo/SKILL.md) teaches a coding
-agent the rules. It deliberately does **not** live in `.claude/skills/`, so it
-never auto-loads while you are working in this checkout — you invoke it
-explicitly, either way:
-
-```bash
-# Ad hoc, no install: point a session at the file
-#   "follow ~/path/to/gh-safe-repo/skills/gh-safe-repo/SKILL.md"
-
-# Or install it once, to invoke as /gh-safe-repo from any directory
-ln -s "$PWD/skills/gh-safe-repo" ~/.claude/skills/gh-safe-repo
-```
-
-The recipe the skill enforces — plan, show the user, then apply:
-
-```bash
-gh-safe-repo create alice/my-repo --local . --dry-run --json   # zero API calls
-gh-safe-repo create alice/my-repo --local . --yes              # apply
-```
-
-ANSI colour is dropped automatically when stdout is not a terminal, and
-honours `NO_COLOR`. With `--json`, the machine-readable document is the only
-thing on stdout; progress, warnings and errors go to stderr.
-
-**Exit codes**, common to all three commands:
-
-| Code | Meaning |
-|---|---|
-| `0` | Success, or the user declined at an interactive prompt. For `create` and `fix`, success means everything applied was read back and verified (settings that could not be read back, and a `create --local` repo whose `origin`/tracking is not wired to the new remote, are warned about but do not fail the run) |
-| `1` | Operational failure — auth, permissions, API error, a pre-flight scan that blocked the run (including an explicit `trufflehog_mode` that could not run truffleHog), a `create`/`fix` confirmation prompt that hit end of input without `--yes`, or a failed code push on `create --local`/`--from` (the repo was created but is empty; recovery commands are printed). For `create`, also a fatal verification check: the new repo cannot be found, its visibility is not what was asked for, or (`--local`/`--from`) a pushed branch or tag is missing from GitHub or at a different SHA. For `scan`, also "critical findings present" |
-| `2` | Usage error — bad `owner/repo`, path is not a directory, `--local` together with `--from` |
-| `3` | `create` or `fix` applied the changes, but at least one setting did not stick when read back, including a `create --local`/`--from` default branch that is not the one chosen (see [Verification](#verification)) |
-| `130` | Interrupted with Ctrl-C (prints `Interrupted.`, no traceback) |
-
-A run that cannot ask for confirmation never exits `0` without doing the work:
-if there is no terminal and no `--yes`, or `--yes` is set but the pre-flight
-scan found critical secrets, the command reports the reason and exits `1`.
-The same goes for the `create`/`fix` confirmation prompt: if stdin is closed
-(`< /dev/null`, a CI job or agent subprocess with no input), the command
-prints `--yes is required for unattended runs` and exits `1`. An answer piped
-on stdin counts as an answer: `echo y | gh-safe-repo fix <owner/repo>` applies,
-and `n`, an empty line or Ctrl-C at the prompt is a decline (exit `0`).
+All three severity keys are always present. Secret matches are `[redacted]`.
+`commit` and `timestamp` are set only for findings truffleHog located in git
+history. `engine` records what actually ran: `configured` is the effective
+`trufflehog_mode`, `used` is `trufflehog-native`, `trufflehog-container` or
+`regex`, and `fell_back` is `true` when truffleHog was attempted but could
+not run.
 
 ### Verification
 
-A `create` or `fix` run that applies changes then reads each changed setting
-back from the GitHub API, the same way `fix --dry-run` audits a repo, and
-prints one row per setting:
+After applying, `create` and `fix` read every changed setting back from
+GitHub and print one row per setting. Only settings the run changed are
+re-read; `SKIP` rows are not. GitHub is briefly inconsistent after a write,
+so a wrong or unreadable value is re-read after 1s, 2s and 4s before it is
+reported.
 
 ```
 Verified
@@ -355,38 +340,29 @@ Verified
 
 | Mark | Status | Meaning | Exit |
 |---|---|---|---|
-| `✓` | `ok` | GitHub holds the value that was asked for | `0` |
-| `✗` | `mismatch` | GitHub holds something else (the request was ignored, or it failed and was reported as a warning) | `3` |
-| `?` | `unknown` | The setting could not be read back (permission or server error) | `0`, with a warning |
+| `✓` | `ok` | GitHub holds the requested value | `0` |
+| `✗` | `mismatch` | GitHub holds something else | `3` |
+| `?` | `unknown` | Could not be read back (permission or server error) | `0`, with a warning |
 
-`create` adds checks for what only a new repo has:
+`create` adds checks that only a new repo needs:
 
-| Check | Passes when | Fails with |
+| Check | Passes when | On failure |
 |---|---|---|
-| `repo/repository` | `GET /repos` finds the new repo | exit `1` (fatal); nothing else is checked |
-| `repo/visibility` | it is `private` (or `public` with `--public`) | exit `1` (fatal): a repo meant to be private that came out public needs fixing now, and the remediation is the exact `gh repo edit … --visibility` command |
-| `file/readme` | the auto-generated `README.md` is gone (plain `create` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
-| `repo/description`, `repo/topics` | `--from`: the source's description and topics were copied | exit `3`, with the `gh repo edit` command |
-| `branch_protection/protected_branches`, `tag_protection/protected_tags` | the ruleset (or classic protection) covers the default branch and the configured tag patterns | exit `3` |
-| `code/branches` | `--local`: every pushed branch is on GitHub at the pushed SHA (a directory that was not a git repo: at least one branch exists). `--from`: every branch of the source is on the new repo at the source's SHA | exit `1` (fatal), with the push (or mirror) command to re-run and `fix --yes` for protection |
-| `code/tags` | the same for tags, when any were pushed. An annotated tag is compared by its tag object SHA, not the commit it points at | exit `1` (fatal) |
-| `repo/default_branch` | `--local`/`--from`: the default branch is the one create chose (or the source's) | exit `3`, with the `gh repo edit --default-branch` command |
-| `local/origin`, `local/tracking` | `--local` on a git repo: your repo's `remote.origin.url` is the new repo, and `branch.<b>.remote`/`.merge` are `origin`/`refs/heads/<b>` for the current branch. Read from local git config only | a warning, exit unchanged (`"advisory": true`); the remediation is the exact `git remote add`/`set-url` or `git push -u origin <b>:<b>` command. An `origin` that already pointed elsewhere was left alone on purpose: it is reported here with that explanation, and no tracking check is made |
+| `repo/repository` | the new repo is found | exit `1`; nothing else is checked |
+| `repo/visibility` | visibility is what you asked for | exit `1`, with the `gh repo edit --visibility` command |
+| `file/readme` | the auto-generated README is gone (plain `create` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
+| `repo/description`, `repo/topics` | `--from`: copied from the source | exit `3`, with the `gh repo edit` command |
+| `branch_protection/protected_branches`, `tag_protection/protected_tags` | the ruleset covers the default branch and configured tag patterns | exit `3` |
+| `code/branches`, `code/tags` | `--local`: every pushed ref is on GitHub at the pushed SHA. `--from`: every ref of the source is on the new repo at the source's SHA. Annotated tags compare by tag object SHA | exit `1`, with the push or mirror command to re-run |
+| `repo/default_branch` | `--local`/`--from`: the default branch is the one chosen | exit `3`, with the `gh repo edit --default-branch` command |
+| `local/origin`, `local/tracking` | `--local`: your repo's `origin` is the new repo and the current branch tracks it | warning only (`"advisory": true`), with the `git remote` or `git push -u` command. An `origin` that already pointed elsewhere is reported as left alone |
 
-Remote refs are read with the REST API (`GET /repos/{owner}/{repo}/git/matching-refs/heads/` and `.../tags/`, paginated), never `git ls-remote`, so verification costs no extra SSH connection and no hardware-key touch. The banner's "Local repo wired up" / "Set your tracking branch" lines come from these checks, not from what the push step reported.
+Remote refs are read through the REST API, not `git ls-remote`, so
+verification costs no extra SSH connection or hardware-key touch. The banner
+is green `Done` when every check is `ok` (advisory warnings aside), yellow
+`Done with problems` on a mismatch, and red `Failed` on a fatal check.
 
-Checks marked fatal carry `"fatal": true` in JSON. A fatal check that could
-not be read is `unknown`, not a failure; if `repo/repository` itself cannot be
-read, the other checks are skipped (they would only fail the same way).
-
-GitHub is briefly inconsistent right after a write, so a setting that reads
-wrong or cannot be read is read again after 1s, 2s and 4s (about 7s at worst
-for the whole run) before it is reported. Only settings the run changed are
-read back; `SKIP` rows are never re-checked. The closing banner is green
-`Done` only when every check is `ok` (advisory `local/*` warnings aside);
-otherwise it is yellow `Done with problems`, or red `Failed` for a fatal check.
-
-With `--json`, the document gains a top-level `verification` block:
+With `--json`:
 
 ```json
 "verification": {
@@ -400,41 +376,56 @@ With `--json`, the document gains a top-level `verification` block:
 }
 ```
 
-All three `summary` keys are always present. `actual` is `null` for `unknown`.
-`advisory: true` marks a warning-only check (local wiring): it counts as a
-`mismatch` in `summary` and makes `ok` false, but never changes the exit code.
-For `code/branches` and `code/tags`, `expected` is the `{name: sha}` map that
-was pushed and `actual` GitHub's SHA for each of those names (`null` when
-missing).
-The block is absent on `--dry-run` and when you decline the prompt; when there
-is nothing to change it is present with no checks and `"ok": true`.
+All three `summary` keys are always present. `actual` is `null` for
+`unknown`. An advisory check counts as a `mismatch` and makes `ok` false but
+never changes the exit code. For `code/branches` and `code/tags`, `expected`
+is the `{name: sha}` map that was pushed and `actual` is GitHub's SHA for
+each name (`null` when missing). The block is absent on `--dry-run` and when
+you decline the prompt; when there is nothing to change it is present with
+no checks and `"ok": true`.
 
-### Safe defaults in full
+### Exit codes
 
-#### Repository settings
+| Code | Meaning |
+|---|---|
+| `0` | Success, or the user declined at an interactive prompt. For `create` and `fix`, success means everything applied was read back and verified |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure, or a failed code push (the repo exists but is empty; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
+| `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, `--local` with `--from` |
+| `3` | `create` or `fix` applied the changes but at least one did not stick when read back |
+| `130` | Interrupted with Ctrl-C |
+
+An unattended run never exits `0` without doing the work. With no terminal
+and no `--yes`, or with `--yes` and critical scan findings, the command
+reports why and exits `1`. If stdin is closed (`< /dev/null`, a CI job, an
+agent subprocess) it prints `--yes is required for unattended runs` and
+exits `1`. An answer piped on stdin counts: `echo y | gh-safe-repo fix
+<owner/repo>` applies, and `n`, an empty line or Ctrl-C at the prompt
+declines (exit `0`).
+
+## Safe defaults
+
+### Repository
 
 | Setting | GitHub default | Safe default | Notes |
 |---|---|---|---|
-| Visibility | Public | **Private** | Pass `--public` to override |
-| Wiki | Enabled | Not managed | Opt in with `has_wiki = false` in `[repo]` |
-| Projects | Enabled | Not managed | Opt in with `has_projects = false` |
-| Issues | Enabled | Not managed | Opt in with `has_issues = false` |
-| Delete branch on merge | Off | Off | Set to `true` in config for auto-cleanup |
-| Allow merge commits | On | On | Set to `false` in config for squash-only |
-| Allow squash merge | On | On | |
-| Allow rebase merge | On | On | |
+| Visibility | Public | **Private** | `--public` to override |
+| Wiki, projects, issues | Enabled | Not managed | Opt in with `has_wiki = false` etc. in `[repo]` |
+| Delete branch on merge | Off | Off | `delete_branch_on_merge = true` for auto-cleanup |
+| Merge commit / squash / rebase | On | On | At least one must stay on; GitHub rejects all-off |
 
-#### GitHub Actions
+### GitHub Actions
 
 | Setting | GitHub default | Safe default |
 |---|---|---|
-| Allowed actions | All | **Selected** (GitHub-owned + verified creators; customisable) |
+| Allowed actions | All | **Selected**: GitHub-owned and verified creators |
 | Default workflow permissions | Read/write | **Read-only** |
 | Actions can approve PRs | Yes | **No** |
-| Require SHA pinning | No | **Yes** (workflows must pin actions to a commit SHA, not a mutable tag) |
-| Fork PR approval policy | First-time contributors new to GitHub | **All external contributors** — require approval before fork PR workflows run CI. Options: brand-new GitHub accounts only (GitHub default), first-time repo contributors, or all fork PRs (safest) |
+| Require SHA pinning | No | **Yes** |
+| Fork PR approval policy | New GitHub accounts only | **All external contributors** need approval before fork PR workflows run |
 
-#### Branch protection (public repos, or any repo on a paid plan)
+### Branch protection
+
+Public repos on any plan, or any repo on a paid plan.
 
 | Rule | Value |
 |---|---|
@@ -444,99 +435,127 @@ is nothing to change it is present with no checks and `"ok": true`.
 | Require conversation resolution | Yes |
 | Allow force pushes | No |
 | Allow branch deletion | No |
-| Enforce on admins | No (allows owner tooling to push) |
+| Enforce on admins | No, so owner tooling can push |
 
-Branch protection is applied via the **Rulesets API** by default (`use_rulesets = true`): a single `gh-safe-repo defaults` ruleset covers every configured branch and expresses "admins can bypass" through a bypass actor rather than the classic `enforce_admins` flag. Set `use_rulesets = false` for the legacy classic per-branch path (kept for one release cycle).
+Protection is applied with the Rulesets API by default (`use_rulesets =
+true`): one `gh-safe-repo defaults` ruleset covers every configured branch,
+and admin bypass is expressed as a bypass actor. Set `use_rulesets = false`
+for the legacy classic per-branch API, kept for one release cycle.
 
-**Migrating an existing repo from classic protection:** if `fix` finds classic branch protection on a repo, it refuses to convert it to a ruleset unless you pass `--migrate-branch-protection`. Classic-only rules have no equivalent in the ruleset this tool builds and would be dropped silently otherwise — known gaps:
+**Migrating from classic protection.** When `fix` finds classic branch
+protection it refuses to convert it unless you pass
+`--migrate-branch-protection`, because some classic rules have no equivalent
+in the ruleset this tool builds and would be dropped:
 
-- `required_status_checks` — required CI checks are not modelled in the ruleset body.
-- `restrictions` (push restrictions by user/team) — Rulesets model this differently via bypass actors; not a 1:1 map.
-- Per-branch divergence — a single shared-condition ruleset can't express different rules for `master` vs `main`.
+- `required_status_checks` (required CI checks)
+- `restrictions` (push restrictions by user or team; rulesets model this
+  differently via bypass actors)
+- per-branch differences, since one ruleset applies the same rules to
+  `master` and `main`
 
-With the flag, `fix` creates/updates the ruleset and then deletes the classic protection on each branch so the two layers don't stack.
+With the flag, `fix` creates or updates the ruleset and then deletes the
+classic protection on each branch so the two do not stack.
 
-#### Tag protection (public repos, or any repo on a paid plan)
+### Tag protection
 
-Tag protection creates a GitHub Ruleset targeting all tags (`*` by default, configurable via `protected_tags`). The following rules are enforced:
+Public repos on any plan, or any repo on a paid plan. A ruleset targeting
+`*` (configurable via `protected_tags`) enables **restrict updates** and
+**restrict deletions**, so tags cannot be force-pushed or deleted. Repo
+admins are on the bypass list, matching `enforce_admins = false`.
 
-| Ruleset rule | Enforced? | Notes |
-|---|---|---|
-| Restrict creations | No | |
-| **Restrict updates** | **Yes** | Prevents rewriting / force-pushing tags |
-| **Restrict deletions** | **Yes** | Prevents `git push --delete` of tags |
-| Require linear history | No | |
-| Require deployments to succeed | No | |
-| Require signed commits | No | |
-| Require status checks to pass | No | |
-| Block force pushes | No | |
-
-Repository admins are on the bypass list (consistent with the branch protection `enforce_admins = false` default). Only works on public repos or paid GitHub plans (same restriction as branch protection). Free-plan private repos will see this skipped in the plan output.
-
-#### Security
+### Security
 
 | Feature | Behaviour |
 |---|---|
-| Dependabot alerts | Enabled (public repos / paid plans) |
-| Dependabot security updates | Enabled (auto-opens PRs for vulnerable deps) |
-| Secret scanning | Automatic on public repos; enabled on private paid plans |
-| Push protection | Enabled (blocks commits containing supported secrets) |
-| Private vulnerability reporting | Enabled (lets security researchers report privately) |
-| Dependency graph | Automatic on public repos; no REST API for private (UI only) |
+| Dependabot alerts | Enabled |
+| Dependabot security updates | Enabled; opens PRs for vulnerable dependencies |
+| Secret scanning | Automatic on public repos; enabled on private paid-plan repos |
+| Push protection | Enabled; blocks commits containing supported secrets |
+| Private vulnerability reporting | Enabled |
+| Dependency graph | Automatic on public repos; private repos need the UI (no REST API) |
 
-### Working from local or existing code
+## Pushing code
 
-`--local PATH` and `--from OWNER/REPO` both create a new repo *and* populate it with code. They are mutually exclusive, and both work for private and public destinations.
+`--local PATH` and `--from OWNER/REPO` both create a new repo and populate
+it. They are mutually exclusive and work for private and public
+destinations. Run `gh-safe-repo scan PATH` first if you want to inspect
+findings without creating anything.
 
-**Git credentials.** Both push over git transport using your own credentials, not the API token: an SSH key loaded into `ssh-agent` when `gh config get -h github.com git_protocol` is `ssh`, or an HTTPS credential helper (`gh auth setup-git` configures one). This is deliberate — the OAuth token would need the `workflow` scope to push `.github/workflows/*` files. In environments with neither (e.g. CI with only `GITHUB_TOKEN`), the tool falls back to HTTPS with the token in the URL; see `[git_transport] mode` in [Configuration](#configuration).
+### Git credentials
 
-SSH settings such as `core.sshCommand` come from the git config of the `--local` PATH, or of the **current directory** for `--from`. If you pick a key per directory (for example `includeIf` plus `core.sshCommand`), run `--from` from inside a directory where that applies; otherwise ssh falls back to your default key and fails with `Permission denied (publickey)`. When that happens, the error names the directory and the `core.sshCommand` that was found, and `--debug` prints it up front.
+Pushes use your own git credentials, not the API token: an SSH key in
+`ssh-agent` when `gh config get -h github.com git_protocol` is `ssh`, or an
+HTTPS credential helper (`gh auth setup-git` sets one up). This is
+deliberate: the OAuth token would need the `workflow` scope to push
+`.github/workflows/*`. Where neither exists (CI with only `GITHUB_TOKEN`),
+the tool falls back to HTTPS with the token in the URL. See `[git_transport]
+mode` in [Configuration](#configuration). Token-bearing URLs are never
+written to your `.git/config` and are redacted from all output.
 
-**`--local PATH`** — `PATH` must be an initialized git repository (`git init` or a clone):
+SSH settings such as `core.sshCommand` are read from the git config of the
+`--local` path, or of the **current directory** for `--from`. If you pick a
+key per directory (`includeIf` plus `core.sshCommand`), run `--from` from a
+directory where that applies, or ssh falls back to your default key and
+fails with `Permission denied (publickey)`. The error then names the
+directory and the `core.sshCommand` it found; `--debug` prints it up front.
 
-1. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the local directory directly (no clone needed)
-2. You review findings and confirm (or abort)
-3. Your git credentials for `github.com` are verified (SSH probe when the protocol is `ssh`; HTTPS is trusted), so a missing key fails before any repo is created. This runs after the prompt, right before creation, so a hardware security key is asked for its touch close to the real push. Over SSH the check waits up to 45 seconds (15 over HTTPS); a timeout says the key was probably waiting for a touch
-4. The repo is created, and actions permissions and security settings are applied
-5. Every local branch and tag is pushed in a single `git push` (from a `--bare` clone, so branches other than the checked-out one are included), so a hardware key needs one touch. The default branch is listed first and then set via the API. If a security key's touch is missed, the push is retried once
-6. Branch and tag protection are applied — after the push, so the target branch exists
-7. `origin` is added to your **original** local repo pointing at the new GitHub URL, and the current branch's upstream is configured, so `git push` and `git pull` work immediately
-8. [Verification](#verification): every pushed branch and tag is read back through the API and compared SHA for SHA, then the default branch, then your repo's `origin` and tracking config
+### `--local PATH`
 
-The new repo's default branch is chosen from the local branches, in this order: `init.defaultBranch` if set, then `main`, then `master`, then the currently checked-out branch. So running from a feature branch still makes `main`/`master` the default. The plan shows the branch count and the chosen default, and branch protection targets that branch.
+`PATH` must be an initialized git repository.
 
-**`--from OWNER/REPO`** — the remote-to-remote counterpart:
+1. The [pre-flight scanner](#pre-flight-scanner) runs on the directory.
+2. You review findings and confirm, or abort.
+3. Your git credentials for `github.com` are checked (an SSH probe when the
+   protocol is `ssh`; HTTPS is trusted). This runs right before creation so
+   a hardware key's touch is close to the real push. The check waits up to
+   45 seconds over SSH and 15 over HTTPS; a timeout says the key was
+   probably waiting for a touch.
+4. The repo is created; Actions and security settings are applied.
+5. Every local branch and tag is pushed in a single `git push` from a bare
+   clone, so branches other than the checked-out one are included and a
+   hardware key needs one touch. The default branch is pushed first and
+   then set via the API. A missed key touch is retried once.
+6. Branch and tag protection are applied, now that the branch exists.
+7. `origin` and upstream tracking are set in your original repo.
+8. [Verification](#verification): pushed refs, default branch, and local
+   `origin`/tracking.
 
-1. The source repo is cloned locally (full clone, no `--depth`, so truffleHog can walk the entire commit history)
-2. The [pre-flight security scanner](#pre-flight-security-scanner) runs on the clone
-3. You review findings and confirm (or abort)
-4. Git credentials are verified, same as above
-5. The new repo is created (private by default, or public with `--public`)
-6. Actions permissions and security settings are applied
-7. Full history is mirrored: `git clone --mirror` + `git push --mirror`, and the source's default branch is set on the new repo
-8. Branch and tag protection are applied (to the source's default branch)
-9. [Verification](#verification): the new repo's branches and tags are compared with the source's through the API, SHA for SHA
+The default branch is chosen from the local branches in this order:
+`init.defaultBranch` if set, then `main`, then `master`, then the checked-out
+branch. The plan shows the branch count and the chosen default.
 
-If the scan reveals a problem and you abort, no code is ever copied to GitHub.
+### `--from OWNER/REPO`
 
-> **Tip:** run `gh-safe-repo scan PATH` first if you want to inspect findings without creating anything.
+1. The source is cloned with full history, so truffleHog can walk every
+   commit.
+2. The [pre-flight scanner](#pre-flight-scanner) runs on the clone.
+3. You review findings and confirm, or abort.
+4. Git credentials are checked, as above.
+5. The repo is created; Actions and security settings are applied.
+6. History is mirrored (`git clone --mirror` + `git push --mirror`) and the
+   source's default branch is set.
+7. Branch and tag protection are applied.
+8. [Verification](#verification): the new repo's branches and tags are
+   compared with the source's, SHA for SHA.
 
-### Pre-flight security scanner
+## Pre-flight scanner
 
-The scanner runs locally and never sends code to GitHub. Use it standalone (`gh-safe-repo scan <path>`) before any push, or let it run automatically as part of the `--from` and `--local` workflows. The full `[pre_flight_scan]` config applies in both cases.
+The scanner runs locally and never sends code anywhere. Use it standalone
+(`gh-safe-repo scan <path>`) or let `--local`/`--from` run it. The
+`[pre_flight_scan]` config applies to both.
 
-#### What it detects
+### What it detects
 
 | Category | Severity | Examples |
 |---|---|---|
 | Hardcoded secrets | Critical | AWS keys (`AKIA…`), GitHub tokens (`ghp_…`, `github_pat_…`), private keys, database URLs |
-| Banned strings | Critical | Any literal strings you configure (usernames, internal hostnames, codenames) |
-| AI context files | Critical | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.cursor/` — may contain internal dev notes; git history may be more sensitive than the current version |
-| Email addresses | Warning | Any `user@domain.tld` pattern in working tree and git history |
-| Large files | Warning | Files over the configured size threshold (default: 100 MB) |
+| Banned strings | Critical | Literal strings you configure: usernames, internal hostnames, codenames |
+| AI context files | Critical | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `copilot-instructions.md`, `.cursor/`. Their git history may hold more than the current version |
+| Email addresses | Warning | Any `user@domain.tld` in the working tree or git history |
+| Large files | Warning | Over the configured threshold (default 100 MB) |
 | TODO/FIXME comments | Info | `# TODO`, `# FIXME`, `# HACK`, `# XXX` |
 
-#### Interactive review
+### Interactive review
 
 ```
 Pre-flight scan: my-private-project
@@ -552,167 +571,140 @@ Pre-flight scan: my-private-project
   Critical findings detected. Continue anyway? [y/N]:
 ```
 
-- **Critical findings:** default is abort (`N`). You must explicitly type `y` to continue.
-- **Warnings only:** default is continue (`Y`). Press Enter to proceed or type `n` to abort.
-- **No findings:** the scan completes silently and the workflow continues.
+- Critical findings default to abort; type `y` to continue.
+- Warnings only default to continue; type `n` to abort.
+- No findings: the workflow continues silently.
 
-Secrets are redacted in the output. Email addresses and TODOs show the matching line. When banned strings or AI context files are found, the scanner prints a ready-to-run `git filter-repo` command to remove them from the source repo's history before re-running.
+Secrets are redacted. When banned strings or AI context files are found, the
+scanner prints a ready-to-run `git filter-repo` command to remove them from
+history.
 
-#### Scanner engine
+### Scanner engine
 
-`gh-safe-repo` automatically picks the best available scanner using a three-step discovery chain:
+The engine is chosen in this order:
 
-1. **truffleHog v3 on PATH** — runs `trufflehog --version`, verifies it is v3, and uses it. A v2 install or an unrecognised version prints a warning and falls through to step 2.
-2. **podman or docker** — if no native truffleHog is found, the scanner runs truffleHog in a container (`ghcr.io/trufflesecurity/trufflehog:latest`), mounting the scan path read-only at the same absolute path so JSON output paths match a native run.
-3. **Regex fallback** — if neither is available (or truffleHog is found but then fails to run), the regex scanner covers secrets instead; a missing engine prints a warning. It also always runs *in addition to* truffleHog for emails and TODOs, and catches lone key-ID patterns that truffleHog deliberately skips (truffleHog requires both halves of a credential pair, e.g. AWS Key ID *and* Secret Access Key, before flagging a finding).
+1. **truffleHog v3 on `PATH`.** A v2 or unrecognised version warns and falls
+   through.
+2. **podman or docker.** truffleHog runs in a container
+   (`ghcr.io/trufflesecurity/trufflehog:latest`) with the scan path mounted
+   read-only at the same absolute path, so output paths match a native run.
+   `CONTAINER_RUNTIME` overrides the runtime and `TRUFFLEHOG_IMAGE` pins an
+   image. A shell wrapper and `Containerfile` for a pinned local image are in
+   [`tools/`](tools/README.md).
+3. **Regex fallback.** Used when neither is available or truffleHog fails to
+   run. The regex pass always runs alongside truffleHog for emails and
+   TODOs, and catches lone key-ID patterns that truffleHog skips because it
+   wants both halves of a credential pair.
 
-The selected scanner is shown in the scan header and in the plan table's SCAN entry:
+The planned engine is shown in the scan header; the engine that actually ran
+is printed after the scan, because truffleHog can still fail mid-run:
 
 ```
 Running pre-flight security scan... (truffleHog v3.93.4)
-Running pre-flight security scan... (truffleHog via podman)
-Running pre-flight security scan... (regex only — see warning above)
-```
-
-That header is decided before the scan. The engine that actually ran is
-printed after it, in both `scan` and the `create` pre-flight, because truffleHog
-can still fail mid-run (a crashed binary, a container that cannot start):
-
-```
-  Scan engine: truffleHog v3.93.4
   Scan engine: regex (fell back from truffleHog: truffleHog via podman exited with status 125)
 ```
 
-`scan --json` carries the same information in its `engine` key.
+Set `trufflehog_mode` to pin an engine. `native` and `docker` are strict: if
+truffleHog cannot run, `scan` prints its findings and exits `1`, and
+`create --local`/`--from` exits `1` before the repo is created. Only `auto`
+falls back to regex; `off` uses regex by choice.
 
-Set `trufflehog_mode` in config to pin a specific engine. A pinned engine is
-strict: with `native` or `docker`, if truffleHog cannot run, `scan` prints its
-findings and exits `1`, and `create --local`/`--from` exits `1` before the repo
-is created, with an error naming the mode and the reason. Only `auto` falls
-back to regex silently (apart from the `Scan engine:` line), and `off` uses
-regex by choice, which is not a fallback. Two environment variables affect the container path: `CONTAINER_RUNTIME` overrides runtime selection (e.g. `CONTAINER_RUNTIME=docker`), and `TRUFFLEHOG_IMAGE` pins a specific image tag. No manual container setup is required, but a shell wrapper (`tools/trufflehog`) and a `Containerfile` for building a pinned local image are provided in [`tools/`](tools/README.md) for system-wide or air-gapped use.
+### Coverage
 
-#### Scan coverage
+In a git repo only files listed by `git ls-files` are scanned, which is what
+gets pushed. Ignored and untracked files are not. Non-git directories are
+walked in full. Build-artifact directories (`node_modules`, `__pycache__`,
+`.venv`, `venv`, `dist`, `build`) are skipped unless files inside them are
+tracked, in which case they are scanned and a warning notes that more is
+committed than expected. A file whose first 8 KB contains a NUL byte is
+treated as binary and not content-scanned. When stderr is a terminal, a
+one-line progress indicator shows the file being scanned.
 
-Build-artifact directories (`node_modules`, `__pycache__`, `.venv`, `venv`, `dist`, `build`) are skipped by default to keep scans fast. In git repos this skip is conditional: before pruning a directory, the scanner runs `git ls-files -- <dir>` to check whether any files inside are tracked. If they are, the directory is scanned normally — so committed `node_modules` or `dist` trees are not silently missed. A warning is still printed when such directories are found in a cloned source repo, since their presence may indicate more content is committed than expected.
+### Suppressing false positives
 
-In a git repo, the built-in pass only reads files listed by `git ls-files`, which is what gets pushed. Ignored and untracked files are not scanned. Directories that aren't git repos are walked in full. Any file whose first 8 KB contains a NUL byte is treated as binary and is not content-scanned, whatever its extension. When stderr is a terminal (and not in `--json` mode), a one-line progress indicator shows the file count and the file being scanned.
-
-#### Suppressing false positives
-
-Two config keys suppress known-safe findings without disabling entire check categories.
-
-**`scan_exclude_paths`** — skip files or directories entirely. Values are newline/comma-separated regex patterns matched against the relative file path. A matching file is excluded from every check: secrets, emails, TODOs, large files, and AI context file detection. The same patterns are passed to truffleHog via `--exclude-paths`, so coverage is consistent regardless of engine.
+`scan_exclude_paths` skips files or directories from every check. Values are
+newline- or comma-separated regex patterns matched against the relative
+path, and are also passed to truffleHog via `--exclude-paths`.
 
 ```ini
 [pre_flight_scan]
-# Exclude the GitHub API spec (example tokens) and all test fixtures
 scan_exclude_paths = docs/api\.github\.com\.json
     tests/fixtures/
 ```
 
-**`exclude_emails`** — suppress email findings for specific addresses or entire domains. Values are newline/comma-separated, case-insensitive. Entries starting with `@` match all emails at that domain; otherwise the entry must match the full address exactly. Applies to both working-tree and git history findings.
+`exclude_emails` suppresses email findings for addresses or whole domains.
+Case-insensitive. Entries starting with `@` match a domain; others must match
+the full address. Applies to the working tree and git history.
 
 ```ini
 [pre_flight_scan]
-# Suppress bot addresses and placeholder domains
 exclude_emails = action@github.com, noreply@github.com, @example.com
 ```
 
-The remaining scanner keys are documented in [Configuration](#configuration) below.
+## Configuration
 
-### Configuration
+No config file is needed; every value has a safe default. The lookup order
+is:
 
-`gh-safe-repo` looks for configuration in this order (first match wins):
+1. `--config PATH`
+2. `./gh-safe-repo.ini`
+3. `$XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini` (`~/.config` when unset)
 
-1. **`--config PATH`** — explicit override
-2. **`./gh-safe-repo.ini`** — current working directory
-3. **`$XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini`** — defaults to `~/.config` when `$XDG_CONFIG_HOME` is unset
+Bare `--config` skips the lookup and uses built-in defaults only.
 
-Bare `--config` (no path) skips file lookup entirely and uses built-in defaults only. All values have safe defaults — no config file is required to get started.
-
-**`gh-safe-repo.ini.example` in the repository root is the canonical, fully-annotated reference** — every key with its default and a comment. `tests/test_config_consistency.py` fails if it drifts from `SAFE_DEFAULTS` in `gh_safe_repo/config_manager.py`, so it is always current. Copy it to get started:
+[`gh-safe-repo.ini.example`](gh-safe-repo.ini.example) is the canonical,
+fully annotated reference, and a test fails if it drifts from the code. Copy
+it to get started:
 
 ```bash
-# User-level config (XDG)
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/gh-safe-repo"
 cp gh-safe-repo.ini.example "${XDG_CONFIG_HOME:-$HOME/.config}/gh-safe-repo/gh-safe-repo.ini"
-
-# Or project-level config (current directory)
-cp gh-safe-repo.ini.example ./gh-safe-repo.ini
 ```
 
-The abridged reference below shows the keys and their defaults; see the example file for the full commentary.
+Abridged, with defaults:
 
 ```ini
 [repo]
 private = true
 delete_branch_on_merge = false
-
-# Not managed unless you set them. Uncomment to have gh-safe-repo enforce them:
+# Not managed unless set:
 # has_wiki = false
 # has_projects = false
 # has_issues = false
-
-# Merge strategies — at least one must stay true (GitHub rejects all-false with a 422)
+# At least one must stay true:
 allow_squash_merge = true
 allow_merge_commit = true
 allow_rebase_merge = true
-
-# Whether a plain `create` leaves the initialized README in the new repo.
-# false (default): the repo still gets a default branch (needed for branch
-#   protection), but the auto-generated README.md is removed afterward.
-# (Ignored for --local/--from, which push your own history instead.)
+# Keep the auto-generated README on a plain `create` (ignored for --local/--from)
 auto_init = false
-
 
 [actions]
 enabled = true
-
-# all | local_only | selected
-allowed_actions = selected
-
-# Only consulted when allowed_actions = selected:
-github_owned_allowed = true       # actions maintained by GitHub (e.g. actions/checkout)
-verified_allowed = true           # actions from Marketplace verified creators
-# patterns_allowed = myorg/*      # comma-separated allowlist (wildcards OK)
-
-# read | write
-default_workflow_permissions = read
+allowed_actions = selected                # all | local_only | selected
+github_owned_allowed = true               # only when selected
+verified_allowed = true
+# patterns_allowed = myorg/*
+default_workflow_permissions = read       # read | write
 can_approve_pull_request_reviews = false
 sha_pinning_required = true
-
-# Who needs approval before their fork PR runs CI:
-#   all_external_contributors | first_time_contributors | first_time_contributors_new_to_github
+# all_external_contributors | first_time_contributors | first_time_contributors_new_to_github
 fork_pr_approval_policy = all_external_contributors
 
-
 [branch_protection]
-# Applied to public repos on any plan, and private repos on paid plans.
-# Comma-separated; branches that don't exist are ignored.
-protected_branch = master, main
+protected_branch = master, main           # branches that don't exist are ignored
 require_pull_request = true
 required_approving_reviews = 1
 dismiss_stale_reviews = true
 require_conversation_resolution = true
 allow_force_pushes = false
 allow_deletions = false
-
-# false = repo owner can still push directly (needed for the --from mirror workflow)
 enforce_admins = false
-
-# Use the Rulesets API (default) instead of the legacy classic branch-protection
-# path. Set false to fall back to the classic per-branch API, kept for one
-# release cycle.
-use_rulesets = true
-
+use_rulesets = true                       # false = classic per-branch API
 
 [tag_protection]
-# Immutable tags via Rulesets API. Public repos or paid plans only.
-protected_tags = *                # comma-separated glob patterns
-prevent_tag_deletion = true       # blocks git push --delete
-prevent_tag_update = true         # blocks git tag -f / force-push
-
+protected_tags = *                        # comma-separated globs
+prevent_tag_deletion = true
+prevent_tag_update = true
 
 [security]
 enable_dependabot_alerts = true
@@ -720,45 +712,27 @@ enable_dependabot_security_updates = true
 enable_private_vulnerability_reporting = true
 enable_secret_scanning_push_protection = true
 
-# No REST API exists for these — configure via UI or dependabot.yml:
-#   grouped security updates (dependabot.yml groups with applies-to: security-updates),
-#   automatic dependency submission (UI), dependency graph on private repos (UI)
-
-
 [pre_flight_scan]
 scan_for_secrets = true
 scan_for_emails = true
 scan_for_todos = true
+scan_email_history = true
 max_file_size_mb = 100
-scan_email_history = true         # also scan git history for addresses
-warn_ai_context_files = true      # flag CLAUDE.md, .cursorrules, etc. as critical
-
-# auto | native | docker | off — see "Scanner engine" above
-trufflehog_mode = auto
-
-# Comma-separated or one per line with continuation indentation:
-# banned_strings = secret
-#     password
-# scan_exclude_paths = docs/api\.github\.com\.json
-#     tests/fixtures/
-# exclude_emails = action@github.com, noreply@github.com, @example.com
-
+warn_ai_context_files = true
+trufflehog_mode = auto                    # auto | native | docker | off
+# banned_strings = secret, password
+# scan_exclude_paths = tests/fixtures/
+# exclude_emails = noreply@github.com, @example.com
 
 [git_transport]
-# How git push/clone authenticates for --local / --from: auto | user_creds | token
-#   auto       — your own credentials (SSH key or credential helper) when available;
-#                fall back to HTTPS with the API token in the URL only when there is
-#                no SSH setup and no credential helper (e.g. CI with GITHUB_TOKEN)
-#   user_creds — never use the API token for git; avoids needing the `workflow`
-#                scope to push .github/workflows files
-#   token      — always HTTPS with the API token in the URL, for CI that granted
-#                the `workflow` scope intentionally
+# auto       — your own credentials; token-in-URL only when there is no SSH
+#              setup and no credential helper (e.g. CI with GITHUB_TOKEN)
+# user_creds — never use the API token for git
+# token      — always HTTPS with the API token in the URL
 mode = auto
 ```
 
-### GitHub plan limitations
-
-Some features are only available depending on repo visibility and your GitHub plan.
+## GitHub plan limitations
 
 | Feature | Free + Public | Free + Private | Pro/Team + Private |
 |---|:---:|:---:|:---:|
@@ -771,97 +745,110 @@ Some features are only available depending on repo visibility and your GitHub pl
 | Private vulnerability reporting | Yes | No | Yes |
 | Dependency graph | Auto | No | Yes |
 
-`gh-safe-repo` detects your plan level and repo visibility at runtime. Unavailable features appear as `SKIP` in the plan output with a clear reason — the tool never fails silently.
+Plan level and visibility are detected at runtime. Unavailable features
+appear as `SKIP` with a reason; nothing fails silently.
 
-### How it works
+## Using with an AI agent
+
+Everything is available non-interactively, and
+[`skills/gh-safe-repo/SKILL.md`](skills/gh-safe-repo/SKILL.md) teaches a
+coding agent the flags, exit codes and failure modes. It does not live in
+`.claude/skills/`, so it never auto-loads in this checkout. Either point a
+session at the file, or install it once:
+
+```bash
+ln -s "$PWD/skills/gh-safe-repo" ~/.claude/skills/gh-safe-repo   # then /gh-safe-repo
+```
+
+The recipe it enforces is plan, show the user, then apply:
+
+```bash
+gh-safe-repo create alice/my-repo --local . --dry-run --json   # zero API calls
+gh-safe-repo create alice/my-repo --local . --yes              # apply
+```
+
+## How it works
 
 ```
 gh-safe-repo create <owner/repo>
       │
-      ├─ Parse owner/repo, validate owner matches authenticated user (create only)
-      ├─ Load config (./gh-safe-repo.ini or $XDG_CONFIG_HOME/gh-safe-repo/gh-safe-repo.ini)
-      ├─ Apply CLI flag overrides (--public, etc.)
-      ├─ Authenticate via gh CLI or GITHUB_TOKEN
-      ├─ GET /user → owner login + plan level  (single cached call)
+      ├─ Parse owner/repo; check the owner matches the authenticated user
+      ├─ Load config, apply CLI overrides (--public, …)
+      ├─ Authenticate (GITHUB_TOKEN, else `gh auth token`)
+      ├─ GET /user → login + plan level (one cached call)
       │
-      ├─ Build plan (each plugin compares desired vs. current state)
-      │   ├─ RepositoryPlugin  → repo creation + basic settings
-      │   ├─ ActionsPlugin     → allowed actions, workflow permissions, SHA pinning
-      │   ├─ BranchProtectionPlugin → Rulesets API (default; classic if use_rulesets = false)
-      │   ├─ SecurityPlugin    → Dependabot, secret scanning, push protection, private vuln reporting
-      │   └─ TagProtectionPlugin → immutable tags via Rulesets API
+      ├─ Build plan: each plugin diffs desired vs. current state
+      │   ├─ RepositoryPlugin        repo creation, basic settings
+      │   ├─ ActionsPlugin           allowed actions, workflow permissions, SHA pinning
+      │   ├─ BranchProtectionPlugin  Rulesets API (classic if use_rulesets = false)
+      │   ├─ SecurityPlugin          Dependabot, secret scanning, push protection, PVR
+      │   └─ TagProtectionPlugin     immutable tags via Rulesets API
       │
-      ├─ Print plan table
+      ├─ Print plan; confirm
       │
-      └─ Apply (unless --dry-run)
-          ├─ POST /user/repos
-          ├─ PATCH /repos/{owner}/{repo}       (settings)
-          ├─ PUT  /repos/{owner}/{repo}/actions/permissions/workflow
-          ├─ POST/PATCH /repos/{owner}/{repo}/rulesets  (branch protection; default)
-          │   or PUT /repos/{owner}/{repo}/branches/main/protection (if use_rulesets = false)
-          ├─ PUT  /repos/{owner}/{repo}/vulnerability-alerts
-          ├─ PUT  /repos/{owner}/{repo}/automated-security-fixes
-          ├─ PUT  /repos/{owner}/{repo}/private-vulnerability-reporting
-          ├─ PATCH /repos/{owner}/{repo}  (security_and_analysis: push protection)
-          ├─ POST /repos/{owner}/{repo}/rulesets  (tag protection ruleset)
-          ├─ git clone --mirror + git push --mirror (if --from)
-          └─ git clone <local> + git push --all --tags (if --local, git repo)
-              or git init + add -A + commit + push (if --local, plain dir)
+      ├─ Apply (unless --dry-run)
+      │   ├─ POST /user/repos, PATCH /repos/{owner}/{repo}
+      │   ├─ PUT  …/actions/permissions, …/selected-actions, …/workflow, …/fork-pr-contributor-approval
+      │   ├─ PUT  …/vulnerability-alerts, …/automated-security-fixes, …/private-vulnerability-reporting
+      │   ├─ PATCH /repos/{owner}/{repo}  (security_and_analysis)
+      │   ├─ git push (--local) or git push --mirror (--from)
+      │   └─ POST/PATCH …/rulesets  (branch and tag protection, after the push)
+      │
+      └─ Verify: read every changed setting back
 ```
 
-Each category of settings is a self-contained plugin (`gh_safe_repo/plugins/`) that fetches current state, diffs it against config, returns a `Plan`, and applies only real changes. Create mode and audit mode therefore share one code path — the only difference is whether current state comes from an existing repo or from GitHub's defaults. See [`gh_safe_repo/README.md`](gh_safe_repo/README.md) for the module map and a guide to adding new settings.
+Each settings category is a plugin in `gh_safe_repo/plugins/` that fetches
+current state, diffs it against config, returns a plan, and applies only real
+changes. `create` and `fix` share this code path; the only difference is
+whether current state comes from an existing repo or from GitHub's defaults.
+See [`gh_safe_repo/README.md`](gh_safe_repo/README.md) for the module map.
 
-**Authentication.** API calls resolve a token in this order:
+All API calls go through `gh api` in a subprocess, so authentication stays in
+the `gh` CLI. The token comes from `GITHUB_TOKEN` if set (the only credential
+needed in CI), otherwise `gh auth token`. It is passed to child processes as
+`GH_TOKEN` and never logged.
 
-1. `GITHUB_TOKEN` environment variable — lets you target a specific account without switching the active `gh` session (and is the only credential needed in CI)
-2. `gh auth token` — whatever `gh auth login` set up
-3. Error if neither is available
-
-Tokens are passed to child `gh api` processes as `GH_TOKEN` in the subprocess environment and are never logged. Git operations use your own credentials instead — see [Working from local or existing code](#working-from-local-or-existing-code). Token-bearing URLs are never written to your repo's `.git/config` and are redacted from all output.
-
-**API approach.** All GitHub API calls go through `gh api` via `subprocess`. This keeps authentication entirely in the `gh` CLI — no token management code, no OAuth flow, no PyGithub version pinning. JSON request bodies are passed via `--input -` (stdin), not `--field` flags.
-
-### Development
+## Development
 
 ```bash
 git clone https://github.com/AriESQ/gh-safe-repo
 cd gh-safe-repo
-uv sync                          # creates .venv, installs pytest
-
-uv run pytest tests/ -v          # run tests
-./gh-safe-repo create <owner/repo> --dry-run   # run without installing
-uv tool install .                # install globally from current source
+uv sync                                        # creates .venv, installs pytest
+uv run pytest tests/ -v
+./gh-safe-repo create <owner/repo> --dry-run   # run from source
+uv tool install .                              # install from current source
 ```
 
-There are **no runtime dependencies** — everything uses the standard library (`argparse`, `configparser`, `subprocess`, `json`, `re`). Do not add third-party packages without discussion. `pytest` is the only dev dependency, declared as a UV-native `[dependency-groups]` entry in `pyproject.toml`.
+There are no runtime dependencies; everything is standard library. Do not
+add third-party packages without discussion. `pytest` is the only dev
+dependency.
 
-CI (`.github/workflows/ci.yml`) runs the same `uv run pytest tests/ -v` on every push to `master` and every pull request, on Python 3.10 and 3.14. It has read-only `contents` permission and no token, so the authenticated and live E2E tiers skip. It also sets `trufflehog_mode = off`, so the scan tests use the regex scanner. Every `uses:` is pinned to a full commit SHA, as this repo's own Actions policy requires (`sha_pinning_required`, GitHub-owned and verified actions only).
+CI runs the test suite on every push to `master` and every pull request, on
+Python 3.10 and 3.14, with read-only permissions and no token, so the
+authenticated and live tiers skip. It sets `trufflehog_mode = off` so scan
+tests use the regex engine. Every action is pinned to a commit SHA, as this
+repo's own Actions policy requires.
 
 ```
 gh-safe-repo/
-├── gh-safe-repo          # Thin launcher (entry point for direct use)
-├── gh_safe_repo/         # Package — see gh_safe_repo/README.md for internals
-│   ├── cli.py            # Subparser dispatch (create, fix, scan)
-│   ├── commands/         # Subcommand implementations
-│   │   ├── _common.py    # Shared helpers, CLIContext, plan formatting
-│   │   ├── create.py     # create subcommand
-│   │   ├── fix.py        # fix subcommand
-│   │   └── scan.py       # scan subcommand
-│   └── plugins/          # Settings plugins (one per category)
-├── .github/workflows/    # CI: pytest on push to master and on PRs
-├── pyproject.toml        # Build config, entry points
-├── gh-safe-repo.ini.example  # Fully annotated example config
-└── tests/
+├── gh-safe-repo              # Thin launcher
+├── gh_safe_repo/             # Package (see gh_safe_repo/README.md)
+│   ├── cli.py                # Subcommand dispatch
+│   ├── commands/             # create, fix, scan
+│   └── plugins/              # One plugin per settings category
+├── skills/gh-safe-repo/      # Agent-facing SKILL.md
+├── tools/                    # trufflehog wrapper, history-scrubbing scripts
+├── gh-safe-repo.ini.example  # Annotated example config
+└── tests/                    # See tests/README.md
 ```
-
-See [`tests/README.md`](tests/README.md) for test file descriptions, mocking conventions, and how to add new tests, and [`gh_safe_repo/README.md`](gh_safe_repo/README.md) for the module map and plugin architecture.
 
 ### Prior art
 
-These projects were studied during design and influenced the architecture of `gh-safe-repo`. They are distinct tools with different scope and user models — see [docs/LEARNINGS.md](docs/LEARNINGS.md) for detailed technical notes on how patterns were adapted.
-
-- **[github/safe-settings](https://github.com/github/safe-settings)** — Org-level GitHub App (Node.js/Probot) that enforces repository settings from a central config. Source of the plugin architecture pattern (one class per setting category, fetch → diff → apply) and the `mergeDeep` comparison approach.
-
-- **[repository-settings/app](https://github.com/repository-settings/app)** — Simpler per-repo variant of safe-settings, also Node.js/Probot. Provided a cleaner reference for the `Diffable` base plugin pattern.
-
-- **[nicholasgasior/gh-repo-settings](https://github.com/nicholasgasior/gh-repo-settings)** — CLI extension written in Go with a `plan`/`apply` workflow. Primary inspiration for the `gh api` subprocess wrapper pattern and the dry-run plan output design.
+- [github/safe-settings](https://github.com/github/safe-settings): org-level
+  GitHub App. Source of the plugin pattern (one class per category: fetch,
+  diff, apply).
+- [repository-settings/app](https://github.com/repository-settings/app):
+  per-repo variant of the above; a cleaner reference for the base plugin.
+- [nicholasgasior/gh-repo-settings](https://github.com/nicholasgasior/gh-repo-settings):
+  Go `gh` extension with a plan/apply workflow. Inspiration for the `gh api`
+  wrapper and the dry-run plan output.

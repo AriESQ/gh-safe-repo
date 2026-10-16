@@ -155,8 +155,8 @@ class GitTransport:
     def ssh_config_hint(self) -> Optional[str]:
         """Say where the SSH settings came from, for a publickey failure.
 
-        `core.sshCommand` is read from `source_dir` — the `--local` PATH, or
-        the current directory for `--from`. A key chosen per directory (e.g.
+        `core.sshCommand` is read from `source_dir` — the `publish` PATH, or
+        the current directory for `mirror`. A key chosen per directory (e.g.
         `includeIf` + `core.sshCommand`) silently doesn't apply when the tool
         runs from elsewhere, and ssh falls back to the default identity (#100).
         """
@@ -359,7 +359,7 @@ def discover_transport(
     """Construct a GitTransport by inspecting source_dir's git config + gh config.
 
     `source_dir` should be the directory whose git config we want to honor —
-    typically the user's PATH for `--local`, or os.getcwd() for `--from`
+    typically the user's PATH for `publish`, or os.getcwd() for `mirror`
     (no local clone yet, but the user's shell-CWD includeIf still applies).
 
     `mode` is the `[git_transport] mode` config value:

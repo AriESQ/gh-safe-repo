@@ -2,7 +2,7 @@
 
 A review of the `gh-safe-repo` command-line surface against the twenty
 personas in `2026-03-28-user-stories.md`, with a recommended redesign.
-Nothing here is implemented; see "Implementation sketch" for the steps.
+Implemented on the `docs/cli-interface-review` branch the same day; section 7 records how.
 
 ## 1. The current surface
 

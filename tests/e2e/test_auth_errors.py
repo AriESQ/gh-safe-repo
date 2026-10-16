@@ -27,13 +27,13 @@ class TestWrongOwner:
         assert "does not match" in r.stderr.lower() or "does not match" in r.stdout.lower()
 
 
-class TestLocalNonexistentPath:
-    """4.3 — --local with non-existent path (full assertion with real owner)."""
+class TestPublishNonexistentPath:
+    """4.3 — publish with non-existent path (full assertion with real owner)."""
 
-    def test_local_bad_path_exits_2(self, gh_owner):
+    def test_publish_bad_path_exits_2(self, gh_owner):
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-bad-path",
-            "--local", "/tmp/path-does-not-exist-xyz",
+            "publish", "/tmp/path-does-not-exist-xyz",
+            f"{gh_owner}/gsr-e2e-bad-path",
             "--dry-run",
         )
         assert r.returncode == 2

@@ -24,17 +24,36 @@ class TestHelpOutput:
     def test_top_level_help_flag(self):
         r = run("--help")
         assert r.returncode == 0
-        assert "create" in r.stdout
-        assert "fix" in r.stdout
-        assert "scan" in r.stdout
+        for verb in ("create", "publish", "mirror", "audit", "fix", "scan"):
+            assert verb in r.stdout
+        assert "--no-config" in r.stdout
 
     def test_create_help(self):
         r = run("create", "--help")
         assert r.returncode == 0
         assert "--public" in r.stdout
-        assert "--local" in r.stdout
-        assert "--from" in r.stdout
+        assert "--local" not in r.stdout
+        assert "--from" not in r.stdout
         assert "--yes" in r.stdout or "-y" in r.stdout
+
+    def test_publish_help_positionals_are_source_then_destination(self):
+        r = run("publish", "--help")
+        assert r.returncode == 0
+        assert r.stdout.index("PATH") < r.stdout.index("OWNER/REPO")
+        assert "--public" in r.stdout
+
+    def test_mirror_help_says_not_a_fork(self):
+        r = run("mirror", "--help")
+        assert r.returncode == 0
+        assert "not a GitHub fork" in r.stdout
+        assert r.stdout.index("SRC-OWNER/REPO") < r.stdout.index(" OWNER/REPO")
+
+    def test_audit_help_has_no_mutation_flags(self):
+        r = run("audit", "--help")
+        assert r.returncode == 0
+        assert "--dry-run" not in r.stdout
+        assert "--yes" not in r.stdout
+        assert "--json" in r.stdout
 
     def test_fix_help(self):
         r = run("fix", "--help")
@@ -82,52 +101,57 @@ class TestRepoArgValidation:
         r = run("create", "alice/")
         assert r.returncode == 2
 
-    def test_from_bare_name_rejected(self):
-        """3.5 — --from without owner/ is rejected."""
-        r = run("create", "alice/dest", "--from", "source-only", "--public")
+    def test_mirror_source_bare_name_rejected(self):
+        """3.5 — mirror source without owner/ is rejected."""
+        r = run("mirror", "source-only", "alice/dest", "--public")
+        assert r.returncode == 2
+        assert "owner/repo" in r.stderr.lower() or "owner/repo" in r.stdout.lower()
+
+    def test_mirror_swapped_positionals_rejected(self):
+        """A path where the source owner/repo belongs is a usage error."""
+        r = run("mirror", "alice/dest", "/tmp", "--public")
         assert r.returncode == 2
         assert "owner/repo" in r.stderr.lower() or "owner/repo" in r.stdout.lower()
 
 
-# ── Section 4.3 / 4.4: --local errors ───────────────────────────────
+# ── Section 4.3 / 4.4: publish source errors ────────────────────────
 
 
-class TestLocalFlagErrors:
-    def test_local_nonexistent_path(self):
-        """4.3 — --local with path that doesn't exist.
+class TestPublishSourceErrors:
+    def test_publish_nonexistent_path(self):
+        """4.3 — publish with a path that doesn't exist.
 
-        NOTE: The --local path check happens after build_context() (which
-        validates the owner against the authenticated user for create).
-        When no valid token is present or the owner is wrong, the owner
-        check fails first.  We use --dry-run here, but the owner still
-        must be valid for create — so this test is in Group 2
-        (auth-dependent) territory.  We keep it here with a relaxed
-        assertion: the tool must fail with non-zero exit.
+        NOTE: The path check happens after build_context() (which
+        validates the owner against the authenticated user).  When no
+        valid token is present or the owner is wrong, the owner check
+        fails first, so this only asserts a non-zero exit; the full
+        assertion lives in Group 2 (auth-dependent).
         """
-        r = run("create", "alice/my-repo", "--local", "/tmp/path-does-not-exist-xyz")
+        r = run("publish", "/tmp/path-does-not-exist-xyz", "alice/my-repo")
         assert r.returncode != 0
 
-    def test_local_and_from_mutually_exclusive(self):
-        """4.4 — --local and --from together."""
-        r = run(
-            "create", "alice/my-repo",
-            "--local", "/tmp",
-            "--from", "alice/other-repo",
-            "--public",
-        )
+    def test_create_rejects_old_code_source_flags(self):
+        """4.4 — --local / --from no longer exist on create."""
+        r = run("create", "alice/my-repo", "--local", "/tmp")
         assert r.returncode == 2
-        assert "mutually exclusive" in r.stderr.lower() or "mutually exclusive" in r.stdout.lower()
+        assert "unrecognized arguments" in r.stderr
+        r = run("create", "alice/my-repo", "--from", "alice/other-repo")
+        assert r.returncode == 2
+        assert "unrecognized arguments" in r.stderr
 
 
-# ── Section 6.7: scan without required arg ───────────────────────────
+# ── Section 6.7: scan with no path argument ────────────────────────────
 
 
 class TestScanArgValidation:
-    def test_scan_no_path_argument(self):
-        """6.7 — scan with no path → error."""
-        r = run("scan")
-        assert r.returncode == 2
-        assert "required" in r.stderr.lower()
+    def test_scan_no_path_scans_cwd(self, tmp_path):
+        """6.7 — scan with no path scans the current directory."""
+        import subprocess
+        from .conftest import CLI
+        (tmp_path / "README.md").write_text("# clean\n")
+        r = subprocess.run([CLI, "scan"], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0
+        assert str(tmp_path.resolve()) in r.stdout or str(tmp_path) in r.stdout
 
 
 # ── Section 9.2: Missing config file exits with error ────────────────
@@ -148,3 +172,13 @@ class TestConfigFileHandling:
         assert r.returncode == 1
         combined = (r.stderr + r.stdout).lower()
         assert "config file not found" in combined
+
+    def test_config_without_value_is_usage_error(self):
+        r = run("scan", "/tmp", "--config")
+        assert r.returncode == 2
+        assert "expected one argument" in r.stderr
+
+    def test_config_and_no_config_together_is_usage_error(self, tmp_path):
+        r = run("scan", str(tmp_path), "--config", "x.ini", "--no-config")
+        assert r.returncode == 2
+        assert "mutually exclusive" in r.stderr

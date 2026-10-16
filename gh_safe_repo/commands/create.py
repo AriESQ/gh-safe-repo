@@ -1,4 +1,8 @@
-"""gh-safe-repo create — Create a new repo with safe defaults."""
+"""gh-safe-repo create — Create a new repo with safe defaults.
+
+`run()` is also the engine behind `publish` (args.local_path set) and
+`mirror` (args.from_repo set); those modules only parse their positionals.
+"""
 
 import os
 import shlex
@@ -36,6 +40,7 @@ from ._common import (
     _c,
     _resolve_branches,
     add_common_args,
+    add_create_args,
     confirm,
     build_context,
     check_repo_exists,
@@ -48,6 +53,7 @@ from ._common import (
     print_verification,
     prose_stream,
     prose_to_stderr,
+    resolve_config_arg,
     run_preflight_scan,
     run_preflight_scan_local,
     warn,
@@ -60,36 +66,14 @@ HELP = "Create a new repo with safe defaults"
 def add_arguments(parser):
     parser.add_argument(
         "repo",
-        help="New GitHub repository as owner/repo (e.g. myuser/my-repo)",
-    )
-    parser.add_argument(
-        "--public",
-        action="store_true",
-        help="Create a public repository instead of private",
-    )
-    parser.add_argument(
-        "--local",
-        dest="local_path",
-        metavar="PATH",
-        help="Push code from a local git repository into the new repo",
-    )
-    parser.add_argument(
-        "--from",
-        dest="from_repo",
         metavar="OWNER/REPO",
-        help="Mirror code from an existing repo into the new repo (runs pre-flight scan)",
+        help="New repository; OWNER must be the authenticated user",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview what would be configured without creating anything",
-    )
-    parser.add_argument(
-        "--yes", "-y",
-        action="store_true",
-        help="Skip confirmation prompt and apply immediately",
-    )
+    add_create_args(parser)
     add_common_args(parser)
+    # `publish` and `mirror` set these before delegating to run(); plain
+    # `create` has no code source.
+    parser.set_defaults(local_path=None, from_repo=None)
 
 
 def _abort_on_scan(decision, _info):
@@ -154,7 +138,7 @@ def _auth_hint(transport, message):
 
 
 def _abort_on_push_failure(e, owner, repo_name, recovery, transport=None):
-    """A failed code push defeats the point of --local/--from (#79).
+    """A failed code push defeats the point of publish/mirror (#79).
 
     The repo already exists, so re-running `create` cannot recover. Say so,
     give the exact commands, and exit 1 so callers never mistake this for
@@ -177,10 +161,10 @@ def _abort_on_push_failure(e, owner, repo_name, recovery, transport=None):
 
 def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
                  from_owner=None, from_repo=None, source_default_branch=None):
-    """Verification probes for the code `--local` / `--from` pushed (#77).
+    """Verification probes for the code `publish` / `mirror` pushed (#77).
 
     - Fatal (exit 1): every pushed branch and tag is on GitHub at the pushed
-      SHA (`--from`: the source's branches and tags). Read through the REST
+      SHA (`mirror`: the source's branches and tags). Read through the REST
       API, never `git ls-remote`, so verifying costs no security-key touch.
       Remediation is the recovery command in `_abort_on_push_failure`'s style.
     - Settings-class (exit 3): the default branch is the one create chose.
@@ -236,13 +220,9 @@ def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
 
 def run(args):
     owner, repo_name = parse_repo_arg(args.repo)
+    resolve_config_arg(args)
 
-    # --local and --from are mutually exclusive
-    if args.local_path and args.from_repo:
-        error("--local and --from are mutually exclusive")
-        sys.exit(2)
-
-    # Validate --from format
+    # Validate the `mirror` source format
     if args.from_repo:
         from_owner, from_repo = parse_repo_arg(args.from_repo)
 
@@ -259,8 +239,8 @@ def run(args):
     # the user's own git credentials instead. The credential preflight runs
     # later, just before the repo is created.
     #
-    # source_dir for `--local PATH` is PATH itself (so per-directory git config
-    # like includeIf-set core.sshCommand is honored). For `--from`, no local
+    # source_dir for `publish PATH` is PATH itself (so per-directory git config
+    # like includeIf-set core.sshCommand is honored). For `mirror`, no local
     # clone exists yet — use os.getcwd() since that's what the user's shell-CWD
     # includeIf would have matched for any other git command they ran.
     if (args.local_path or args.from_repo) and not args.dry_run:
@@ -304,18 +284,18 @@ def run(args):
             error(f"Failed to check if repo exists: {e}")
             sys.exit(1)
 
-    # Validate --local path
+    # Validate the `publish` source path
     local_path = None
     if args.local_path:
         local_path = os.path.abspath(args.local_path)
         if not os.path.isdir(local_path):
-            error(f"--local: '{args.local_path}' is not a directory")
+            error(f"Source path '{args.local_path}' is not a directory")
             sys.exit(2)
         if not os.path.exists(os.path.join(local_path, ".git")):
-            error(f"--local: '{args.local_path}' is not a git repository (run 'git init' first)")
+            error(f"Source path '{args.local_path}' is not a git repository (run 'git init' first)")
             sys.exit(2)
 
-    # Validate source repo exists (--from workflow) and capture metadata
+    # Validate source repo exists (`mirror`) and capture metadata
     source_default_branch = None
     source_description = ""
     source_topics: list = []
@@ -341,7 +321,7 @@ def run(args):
     if args.from_repo or args.local_path:
         scanner = SecurityScanner(config, debug=args.debug, progress=not json_mode)
 
-    # Pre-flight security scan (--from workflow, non-dry-run only)
+    # Pre-flight security scan (`mirror`, non-dry-run only)
     if args.from_repo and not args.dry_run:
         try:
             # The scan report and its prompt print to stdout; under --json
@@ -360,7 +340,7 @@ def run(args):
         if not decision.proceed:
             _abort_on_scan(decision, _info)
 
-    # Pre-flight security scan (--local workflow, non-dry-run only)
+    # Pre-flight security scan (`publish`, non-dry-run only)
     if local_path and not args.dry_run:
         with prose_to_stderr(json_mode):
             decision = run_preflight_scan_local(
@@ -381,7 +361,7 @@ def run(args):
     )
 
     # Plain create: auto_init=True so the repo has a branch for protection.
-    # --local / --from: auto_init=False to avoid push rejection.
+    # publish / mirror: auto_init=False to avoid push rejection.
     is_plain_create = not local_path and not args.from_repo
     repo_auto_init = True if is_plain_create else False
     # The README auto_init creates is only a side-effect of needing a branch.
@@ -414,7 +394,7 @@ def run(args):
             error(f"Planning failed: {e}")
             sys.exit(1)
 
-    # Add scan + code mirror steps to the plan if --from is specified
+    # Add scan + code mirror steps to the plan for `mirror`
     if args.from_repo:
         scan_desc = scanner.scanner_description if scanner else ""
         full_plan.add(Change(
@@ -433,7 +413,7 @@ def run(args):
             new=f"Mirror all refs from {from_owner}/{from_repo}",
         ))
 
-    # Add scan + code push steps to the plan if --local is specified
+    # Add scan + code push steps to the plan for `publish`
     if args.local_path:
         scan_desc = scanner.scanner_description if scanner else ""
         full_plan.add(Change(
@@ -542,7 +522,7 @@ def run(args):
     except APIError as e:
         warn(f"Security settings failed: {e}")
 
-    # Mirror code from source repo (--from workflow)
+    # Mirror code from source repo (`mirror`)
     if args.from_repo:
         _info(f"\nCopying code from {_BOLD}{from_owner}/{from_repo}{_RESET}...")
         try:
@@ -562,7 +542,7 @@ def run(args):
                 f"git -C {repo_name}.git push --mirror {dest}",
             ], transport=client.transport)
 
-    # Push code from local directory (--local workflow)
+    # Push code from local directory (`publish`)
     wiring = None
     if args.local_path:
         _info(f"\nPushing code from {_BOLD}{local_path}{_RESET}...")
@@ -604,8 +584,8 @@ def run(args):
     # Verify: re-read what GitHub now holds. The apply steps above only prove
     # no exception escaped (#77). Settings use each plugin's own audit (the
     # same instances, so bp_plugin.branches is already narrowed); create-only
-    # rows (repo exists, visibility, README removed, --from description and
-    # topics, protection presence) get dedicated probes. --local / --from add
+    # rows (repo exists, visibility, README removed, mirror description and
+    # topics, protection presence) get dedicated probes. publish / mirror add
     # the pushed refs (fatal), the default branch and the local wiring
     # (advisory) through `extra_probes`.
     code_probes = []

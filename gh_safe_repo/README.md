@@ -20,16 +20,19 @@ gh_safe_repo/         ← this package (all real logic lives here)
 
 | Module | Purpose |
 |---|---|
-| `cli.py` | `build_parser()` / `main()` — subparser dispatch to `create`, `fix`, `scan` commands |
-| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()`, plan and findings formatting (`format_plan_json(plan, verification=None)`, `format_findings_json()`), the pre-flight `ScanDecision`, the `create`/`fix` confirmation prompt (`confirm()`: EOF → exit 1 naming `--yes`), `print_verification()` and the banners, `--json` stdout discipline (`prose_stream()`, `prose_to_stderr()`, `ask()`), ANSI output (auto-disabled off a TTY / under `NO_COLOR`) |
-| `commands/create.py` | `create` subcommand — new repo with safe defaults |
-| `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections |
+| `cli.py` | `build_parser()` / `main()` — subparser dispatch to `create`, `publish`, `mirror`, `audit`, `fix`, `scan`; the grouped verb list in the top-level `--help` replaces argparse's flat `commands` section |
+| `commands/_common.py` | Shared helpers: `CLIContext`, `parse_repo_arg()`, `build_context()`, `add_common_args()` / `add_mutation_args()` / `add_create_args()` (the uniform option sets), `resolve_config_arg()` (`--no-config` → the `args.config == ""` sentinel), plan and findings formatting (`format_plan_json(plan, verification=None)`, `format_findings_json()`), the pre-flight `ScanDecision`, the `create`/`fix` confirmation prompt (`confirm()`: EOF → exit 1 naming `--yes`), `print_verification()` and the banners, `--json` stdout discipline (`prose_stream()`, `prose_to_stderr()`, `ask()`), ANSI output (auto-disabled off a TTY / under `NO_COLOR`) |
+| `commands/create.py` | `create` subcommand — new repo with safe defaults. `run()` is also the engine for `publish` (`args.local_path`) and `mirror` (`args.from_repo`) |
+| `commands/publish.py` | `publish <path> <owner/repo>` — sets `args.local_path` and delegates to `create.run` |
+| `commands/mirror.py` | `mirror <src-owner/repo> <owner/repo>` — sets `args.from_repo` and delegates to `create.run` |
+| `commands/audit.py` | `audit <owner/repo>` — calls `fix.run(args, audit=True)`: dry run, no prompt, exit 3 on drift |
+| `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections; `run(args, audit=False)` |
 | `commands/scan.py` | `scan` subcommand — local-only secret scanning |
 | `github_client.py` | Wrapper around `gh api` (subprocess); `copy_repo()`, `push_local()` (bare-clones so all branches push; pushes and sets `default_branch`; returns a `LocalWiring` describing the default branch, the `origin`/upstream setup on the user's repo, a foreign `origin` left untouched, and the pushed `{branch: sha}` / `{tag: sha}` maps), `copy_repo(default_branch=)` sets the source's default after the mirror, `matching_refs(owner, repo, "heads"|"tags")` (`{name: sha}` via `git/matching-refs`, paginated with `get_json_pages()`; 409 empty repo → `{}`), `clone_for_scan()`; `git_remote_url()` builds URLs per `gh config get git_protocol`; `verify_git_credentials()` pre-flight probes SSH |
 | `git_transport.py` | Frozen `GitTransport` (protocol, env, URLs, redaction, `preflight()`, `run_remote()` which retries a missed `*-SK` touch once) built by `discover_transport()`; `security_key_hint()` names a missed `*-SK` hardware-key touch in git errors, and `GitTransport.auth_hint()` adds the directory the SSH settings were read from for a plain publickey failure |
 | `config_manager.py` | INI config parsing via `configparser`; holds `SAFE_DEFAULTS` |
 | `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()` |
-| `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block), `verify_plugins()` (re-audits plugins after apply, `fix`), `Probe` + `verify()` (plugin audits and dedicated reads in one set of 1s/2s/4s retry rounds), and `create_probes()` / `verify_create()` (`create`: repo exists, visibility, README removed, `--from` description/topics, protection presence; repo-exists runs first and short-circuits), plus the `create --local`/`--from` probes passed as `extra_probes`: `pushed_ref_probes()` / `mirrored_ref_probes()` (fatal, refs via the API), `default_branch_probe()` and `local_wiring_probes()` (advisory, local git config, `retry=False`) |
+| `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block), `verify_plugins()` (re-audits plugins after apply, `fix`), `Probe` + `verify()` (plugin audits and dedicated reads in one set of 1s/2s/4s retry rounds), and `create_probes()` / `verify_create()` (`create`: repo exists, visibility, README removed, `mirror` description/topics, protection presence; repo-exists runs first and short-circuits), plus the `publish`/`mirror` probes passed as `extra_probes`: `pushed_ref_probes()` / `mirrored_ref_probes()` (fatal, refs via the API), `default_branch_probe()` and `local_wiring_probes()` (advisory, local git config, `retry=False`) |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |
 | `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` (tracked files only in git repos, NUL-byte binary sniff, TTY progress line). `scan()` records the engine that ran (`engine_used`, `fell_back`, `fallback_reason`); `engine_error()` turns a fallback under explicit `native`/`docker` into an error message |
 | `plugins/base.py` | Abstract `BasePlugin` — defines the `fetch_current_state(strict=False)` / `plan()` / `apply()` interface |
@@ -42,7 +45,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 
 ## Global vs. command options
 
-`--config` and `--debug` are parsed on either side of the command name. They are
+`--config`, `--no-config` and `--debug` are parsed on either side of the command name. They are
 registered twice: once on the top-level parser (`build_parser()`, with the real
 defaults) and once on each subparser (`add_common_args()`, with
 `default=argparse.SUPPRESS`). The SUPPRESS is what makes the pre-command form
@@ -114,7 +117,7 @@ be `advisory=True`: a mismatch is reported but never changes the exit code
 (`Verification.has_mismatch` ignores it; `advisories` lists it).
 `retry=False` settles after one read, for local state that cannot be
 eventually consistent. A probe's `read()` may fill in `expected` on its first
-attempt (the `--from` source refs).
+attempt (the `mirror` source refs).
 
 ## Adding a new setting
 

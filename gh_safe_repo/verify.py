@@ -7,7 +7,7 @@ downgraded to a warning, still produced a green "Done".
 
 Settings are verified by re-running each plugin's own audit: the same
 ``fetch_current_state()`` → ``plan(current_state=...)`` pair that
-``fix --dry-run`` uses. After a successful apply that audit plan must contain
+``fix --dry-run`` (and ``audit``) uses. After a successful apply that audit plan must contain
 only SKIP rows; any other row is a setting that did not stick.
 
 Reads go through the REST API (never ``git ls-remote``, which over SSH can cost
@@ -27,7 +27,7 @@ Public API (shared by ``fix`` and ``create``):
   ``create_probes()`` turns them into probes; ``verify_create()`` is what
   ``create`` calls.
 - ``pushed_ref_probes()`` / ``mirrored_ref_probes()`` (fatal: the code
-  ``--local`` / ``--from`` pushed is on GitHub, SHA for SHA, read via
+  ``publish`` / ``mirror`` pushed is on GitHub, SHA for SHA, read via
   ``git/matching-refs``), ``default_branch_probe()`` (exit 3) and
   ``local_wiring_probes()`` (advisory: the user's git config points at the
   new repo) — passed to ``verify_create(extra_probes=...)``.
@@ -72,7 +72,7 @@ class Check:
     """One verified post-condition.
 
     ``fatal`` marks checks whose failure means the run did not do its job
-    (code push missing under ``create --local/--from``): exit 1. Non-fatal
+    (code push missing under ``publish``/``mirror``): exit 1. Non-fatal
     mismatches are settings that ``fix`` would converge: exit 3. ``advisory``
     mismatches (the user's local repo not wired to the new remote) are
     warnings only: they never change the exit code. ``unknown`` is never a
@@ -212,7 +212,7 @@ class Probe:
     (local git config cannot become eventually consistent, so re-reading it
     would only spend the backoff budget).
 
-    ``read()`` may also assign ``expected`` (e.g. refs read from a ``--from``
+    ``read()`` may also assign ``expected`` (e.g. refs read from a ``mirror``
     source); it is read back only after the last attempt.
     """
     category: str
@@ -508,13 +508,13 @@ def create_probes(pairs: Iterable[Tuple[Any, Plan]], *, private: bool) -> List[P
 
     One probe per ``CREATE_ONLY_KEYS`` row the create plan actually contained,
     built from the plugin that planned it (so a SKIPped plugin, or a plain
-    create without ``--from``, adds none):
+    create without ``mirror``, adds none):
 
     - ``repo/repository`` → ``repo/repository`` (the repo exists) and
       ``repo/visibility`` (private/public as asked). Both fatal: a missing
       repo means create did nothing, and a repo meant to be private that came
       out public is a disclosure, not a setting to converge later.
-    - ``repo/description`` / ``repo/topics`` → copied from the ``--from``
+    - ``repo/description`` / ``repo/topics`` → copied from the ``mirror``
       source (topics: the source's are a subset of what the repo has).
     - ``file/readme`` → the auto_init README is gone (GET contents → 404).
     - ``branch_protection/protected_branches`` /
@@ -586,7 +586,7 @@ def verify_create(
     return v
 
 
-# ── create --local / --from: pushed code, default branch, local wiring ──────
+# ── publish / mirror: pushed code, default branch, local wiring ──────
 
 def _remote_refs(client, owner, repo, namespace, names):
     """GitHub's SHA for each of ``names`` under refs/<namespace>/ (None if absent)."""
@@ -596,7 +596,7 @@ def _remote_refs(client, owner, repo, namespace, names):
 
 def pushed_ref_probes(client, owner, repo, *, branches, tags,
                       remediation=None) -> List[Probe]:
-    """Fatal probes: what ``create --local`` pushed is on GitHub, SHA for SHA.
+    """Fatal probes: what ``publish`` pushed is on GitHub, SHA for SHA.
 
     ``branches`` / ``tags`` are ``{name: sha}`` as ``push_local`` recorded
     them (``LocalWiring.pushed`` / ``.tags``; a tag's sha is the tag object
@@ -632,7 +632,7 @@ def pushed_ref_probes(client, owner, repo, *, branches, tags,
 
 def mirrored_ref_probes(client, src_owner, src_repo, owner, repo, *,
                         remediation=None) -> List[Probe]:
-    """Fatal probes: after ``create --from``, every branch and tag of the
+    """Fatal probes: after ``mirror``, every branch and tag of the
     source is on the new repo at the same SHA.
 
     The source refs are read (once, through the same API) by the first

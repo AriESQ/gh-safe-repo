@@ -139,8 +139,8 @@ class TestCreateFromMirror:
         dst_owner, dst_name = live_repo
 
         r = run(
-            "create", f"{dst_owner}/{dst_name}",
-            "--from", f"{src_owner}/{src_name}",
+            "mirror", f"{src_owner}/{src_name}",
+            f"{dst_owner}/{dst_name}",
             "--public", "--yes",
         )
         assert r.returncode == 0
@@ -196,8 +196,8 @@ class TestPreflightScanAbort:
 
             # Pipe "n" to stdin to abort
             r = run(
-                "create", f"{gh_owner}/{repo_name}",
-                "--local", tmpdir,
+                "publish", tmpdir,
+                f"{gh_owner}/{repo_name}",
                 stdin_text="n\n",
             )
 

@@ -29,43 +29,43 @@ gh-safe-repo --help
 **Expected output (approximately):**
 
 ```
-usage: gh-safe-repo [--config PATH] [--debug] <command> [options]
+usage: gh-safe-repo [--config PATH | --no-config] [--debug] <command> [options]
 
 Manage safe defaults for GitHub repositories.
 
-usage:
-  gh-safe-repo create <owner/repo> [--public] [--local PATH | --from OWNER/REPO] [--dry-run]
-  gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
-  gh-safe-repo scan  <path>
+create a repo (all take --public, --dry-run, --yes, --json):
+  create   <owner/repo>                   Create an empty repo with safe defaults
+  publish  <path> <owner/repo>            Push a local git repo into a new repo
+  mirror   <src-owner/repo> <owner/repo>  Copy an existing repo into a new one (not a fork)
 
-commands:
+existing repo:
+  audit    <owner/repo>                   Report settings drift; exit 3 if any, nothing changed
+  fix      <owner/repo>                   Apply safe defaults (--dry-run, --yes, --json)
 
-    create         Create a new repo with safe defaults
-    fix            Audit an existing repo and apply safe defaults
-    scan           Scan a local directory for secrets (no GitHub interaction)
+local code:
+  scan     [path]                         Scan a directory for secrets (no GitHub calls)
 
 options:
-  -h, --help       show this help message and exit
-  --debug          Show every API call made
-  --config [PATH]  Path to config file; bare --config uses built-in defaults
-                   only
+  -h, --help     show this help message and exit
+  --debug        Show every API call made
+  --config PATH  Config file to use (default: discovered from XDG dirs or the
+                 current directory)
+  --no-config    Ignore config files; use built-in defaults only
 
 examples:
   ...
 ```
 
-The `usage:`, `commands:`, `options:` and `examples:` headings are bold blue on
+The `usage:`, group, `options:` and `examples:` headings are bold blue on
 a color-capable terminal, and plain when piped or under `NO_COLOR`.
 
 ### 0.3 Subcommand help
 
 ```bash
-gh-safe-repo create --help
-gh-safe-repo fix --help
-gh-safe-repo scan --help
+for v in create publish mirror audit fix scan; do gh-safe-repo $v --help; done
 ```
 
-**Expected:** Each subcommand shows its own arguments (e.g. `create` shows `--public`, `--local`, `--from`, `--yes`; `fix` shows `--yes`; `scan` has no `--dry-run`). Each also lists the global `--config` / `--debug`.
+**Expected:** Each subcommand shows its own arguments. `create`, `publish` and `mirror` all show `--public`, `--dry-run`, `--yes`, `--json`; `publish` lists `PATH` before `OWNER/REPO` and `mirror` lists `SRC-OWNER/REPO` before `OWNER/REPO` and says "not a GitHub fork"; `audit` shows only `--json`; `fix` adds `--migrate-branch-protection`; `scan` has an optional `path` and no `--dry-run`. Each also lists the global `--config PATH` / `--no-config` / `--debug`. `gh-safe-repo create x/y --local .` exits 2 with `unrecognized arguments`.
 
 ### 0.4 Global options on either side of the command
 
@@ -201,7 +201,7 @@ Process exits with non-zero status.
 
 ## 2. Create — Public Repo (Basic)
 
-### 2.1 Create a new public repo directly (no --from)
+### 2.1 Create a new public repo directly (no code source)
 
 ```bash
 gh-safe-repo create YOUR_USERNAME/gsr-test-public-01 --public
@@ -222,7 +222,7 @@ Type `y` at the prompt.
 
 ---
 
-## 3. create --from Workflow (Mirror Repo)
+## 3. mirror Workflow (Copy an Existing Repo)
 
 This creates a source repo, puts a test file in it, then mirrors it to a new repo.
 
@@ -248,7 +248,7 @@ cd /tmp && rm -rf gsr-test-source-01
 ### 3.2 Mirror to new public repo
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-public-from-01 --from YOUR_USERNAME/gsr-test-source-01 --public
+gh-safe-repo mirror YOUR_USERNAME/gsr-test-source-01 YOUR_USERNAME/gsr-test-public-from-01 --public
 ```
 
 **Expected — scan output first (since source has content):**
@@ -270,7 +270,7 @@ Then the plan table, then prompt. Type `y`.
 ### 3.3 Mirror to new private repo (default)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-private-from-01 --from YOUR_USERNAME/gsr-test-source-01
+gh-safe-repo mirror YOUR_USERNAME/gsr-test-source-01 YOUR_USERNAME/gsr-test-private-from-01
 ```
 
 **Expected — scan output first, then plan table, then prompt. Type `y`.**
@@ -279,10 +279,10 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-private-from-01 --from YOUR_USERNAME/
 - `gsr-test-private-from-01` is private
 - README.md is present (code was mirrored)
 
-### 3.4 --from with non-existent source
+### 3.4 mirror with non-existent source
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from YOUR_USERNAME/gsr-test-does-not-exist-xyz --public
+gh-safe-repo mirror YOUR_USERNAME/gsr-test-does-not-exist-xyz YOUR_USERNAME/gsr-test-bad --public
 ```
 
 **Expected:**
@@ -291,10 +291,10 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from YOUR_USERNAME/gsr-test-doe
 Error: Source repo 'YOUR_USERNAME/gsr-test-does-not-exist-xyz' does not exist.
 ```
 
-### 3.5 --from with bare repo name (no owner/) is rejected
+### 3.5 mirror source with bare repo name (no owner/) is rejected
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from gsr-test-source-01 --public
+gh-safe-repo mirror gsr-test-source-01 YOUR_USERNAME/gsr-test-bad --public
 ```
 
 **Expected:**
@@ -305,7 +305,7 @@ Error: Use owner/repo format (e.g. myuser/gsr-test-source-01)
 
 ---
 
-## 4. create --local Workflow (Push Local Directory/Repo)
+## 4. publish Workflow (Push a Local Repo)
 
 ### 4.1 Push a plain local directory (no .git)
 
@@ -313,7 +313,7 @@ Error: Use owner/repo format (e.g. myuser/gsr-test-source-01)
 mkdir /tmp/gsr-local-dir-test
 echo "# Hello" > /tmp/gsr-local-dir-test/README.md
 echo "secret = not_a_real_secret" > /tmp/gsr-local-dir-test/config.txt
-gh-safe-repo create YOUR_USERNAME/gsr-test-local-dir-01 --local /tmp/gsr-local-dir-test
+gh-safe-repo publish /tmp/gsr-local-dir-test YOUR_USERNAME/gsr-test-local-dir-01
 ```
 
 **Expected — scan output:**
@@ -341,38 +341,34 @@ echo "v2" > README.md
 git add README.md
 git commit -m "Second commit"
 cd -
-gh-safe-repo create YOUR_USERNAME/gsr-test-local-git-01 --local /tmp/gsr-local-git-test
+gh-safe-repo publish /tmp/gsr-local-git-test YOUR_USERNAME/gsr-test-local-git-01
 ```
 
 Type `y` at the plan prompt.
 
 **Verify:** README.md on GitHub shows "v2". Git log on GitHub shows 2 commits.
 
-### 4.3 --local with non-existent path
+### 4.3 publish with non-existent path
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --local /tmp/path-does-not-exist-xyz
+gh-safe-repo publish /tmp/path-does-not-exist-xyz YOUR_USERNAME/gsr-test-bad
 ```
 
 **Expected:**
 
 ```
-Error: --local: '/tmp/path-does-not-exist-xyz' is not a directory
+Error: Source path '/tmp/path-does-not-exist-xyz' is not a directory
 ```
 
 Exits with status 2 (no API calls).
 
-### 4.4 --local and --from are mutually exclusive
+### 4.4 publish positionals in the wrong order
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --local /tmp --from YOUR_USERNAME/gsr-test-source-01 --public
+gh-safe-repo publish YOUR_USERNAME/gsr-test-bad /tmp/gsr-local-git-test
 ```
 
-**Expected:**
-
-```
-Error: --local and --from are mutually exclusive
-```
+**Expected:** exit 2. The second positional must be `owner/repo`, so the path is rejected with `Use owner/repo format`.
 
 ---
 
@@ -445,13 +441,28 @@ gh-safe-repo fix YOUR_USERNAME/gsr-test-fix-yes-01 --yes
 
 ```bash
 gh-safe-repo fix YOUR_USERNAME/gsr-test-fix-target-01 --dry-run
+echo "exit=$?"
 ```
 
 **Expected:** Plan table is shown, then:
 
 ```
 Dry run — no changes made.
+exit=0
 ```
+
+### 5.4b audit reports drift through the exit code
+
+```bash
+gh-safe-repo audit YOUR_USERNAME/gsr-test-fix-target-01; echo "exit=$?"
+gh-safe-repo audit YOUR_USERNAME/gsr-test-private-01;    echo "exit=$?"
+```
+
+**Expected:** the drifted repo prints the same table as 5.4 followed by
+`Run \`gh-safe-repo fix ...\` to apply.` and `exit=3`. The compliant repo
+prints one line, `All settings compliant.`, and `exit=0`. No prompt is shown
+in either case and nothing changes on GitHub. `audit ... --json` prints the
+plan document and uses the same exit codes.
 
 ### 5.5 Fix a non-existent repo
 
@@ -580,17 +591,14 @@ Scanning /tmp/gsr-ai-scan...
 
 Exit code 1.
 
-### 6.7 Scan with no path argument
+### 6.7 Scan with no path argument scans the current directory
 
 ```bash
-gh-safe-repo scan
+cd /tmp/gsr-scan-test && gh-safe-repo scan; cd -
 ```
 
-**Expected:**
-
-```
-error: the following arguments are required: path
-```
+**Expected:** `Scanning /tmp/gsr-scan-test...` followed by the same findings
+as scanning the path explicitly.
 
 ### 6.8 Scan a git repo with AI context file deleted from history
 
@@ -820,7 +828,7 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-free-plan-public --public --dry-run
 ```bash
 mkdir /tmp/gsr-abort-test
 echo 'GITHUB_TOKEN=ghp_fakefakefakefakefakefakefakefakefake' > /tmp/gsr-abort-test/leak.txt
-gh-safe-repo create YOUR_USERNAME/gsr-test-abort-01 --local /tmp/gsr-abort-test
+gh-safe-repo publish /tmp/gsr-abort-test YOUR_USERNAME/gsr-test-abort-01
 ```
 
 **Expected — scan output:**
@@ -856,7 +864,7 @@ Repeat the above but type `y`. Repo should be created with the file pushed to it
 ### 11.3 `--yes` blocks on criticals (does not bypass the scan)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-abort-02 --local /tmp/gsr-abort-test --yes
+gh-safe-repo publish /tmp/gsr-abort-test YOUR_USERNAME/gsr-test-abort-02 --yes
 echo "exit=$?"
 ```
 
@@ -872,7 +880,7 @@ No repo is created. `--yes` accepts *warnings* unattended, never criticals.
 ### 11.4 No terminal and no `--yes` fails loudly
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-abort-03 --local /tmp/gsr-abort-test < /dev/null
+gh-safe-repo publish /tmp/gsr-abort-test YOUR_USERNAME/gsr-test-abort-03 < /dev/null
 echo "exit=$?"
 ```
 
@@ -958,7 +966,7 @@ Run each test doc's full suite before considering these scripts production-ready
 
 ## Test Matrix Summary
 
-| Test | create | --from | --local | fix | scan | --json | --yes | Free plan | Paid plan |
+| Test | create | mirror | publish | fix | scan | --json | --yes | Free plan | Paid plan |
 |------|:------:|:------:|:-------:|:---:|:----:|:------:|:-----:|:---------:|:---------:|
 | 0.4 No subcommand | | | | | | | | Y | Y |
 | 0.5 Bare repo name | Y | | | | | | | Y | Y |
@@ -970,16 +978,17 @@ Run each test doc's full suite before considering these scripts production-ready
 | 2.1 Basic public create | Y | | | | | | | Y | Y |
 | 3.2 Mirror to public | Y | Y | | | Y | | | Y | Y |
 | 3.3 Mirror to private repo | Y | Y | | | | | | Y | Y |
-| 3.4 --from bad source | Y | Y | | | | | | Y | Y |
-| 3.5 --from bare name | Y | Y | | | | | | Y | Y |
-| 4.1 --local plain dir | Y | | Y | | Y | | | Y | Y |
-| 4.2 --local git repo | Y | | Y | | Y | | | Y | Y |
-| 4.3 --local bad path | Y | | Y | | | | | Y | Y |
-| 4.4 --local + --from error | Y | Y | Y | | | | | Y | Y |
+| 3.4 mirror bad source | Y | Y | | | | | | Y | Y |
+| 3.5 mirror bare name | Y | Y | | | | | | Y | Y |
+| 4.1 publish plain dir | Y | | Y | | Y | | | Y | Y |
+| 4.2 publish git repo | Y | | Y | | Y | | | Y | Y |
+| 4.3 publish bad path | Y | | Y | | | | | Y | Y |
+| 4.4 publish swapped args | | | Y | | | | | Y | Y |
 | 5.1 Fix fully-configured | | | | Y | | | | Y | Y |
 | 5.2 Fix with drift | | | | Y | | | | Y | Y |
 | 5.3 Fix with --yes | | | | Y | | | Y | Y | Y |
 | 5.4 Fix with --dry-run | | | | Y | | | | Y | Y |
+| 5.4b audit exit codes | | | | | | Y | | Y | Y |
 | 5.5 Fix non-existent repo | | | | Y | | | | Y | Y |
 | 5.6 Fix has no scanning | | | | Y | | | | Y | Y |
 | 6.2 Scan fake secret | | | | | Y | | | Y | Y |

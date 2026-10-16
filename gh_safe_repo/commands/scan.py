@@ -17,6 +17,7 @@ from ._common import (
     error,
     format_findings_json,
     info,
+    resolve_config_arg,
 )
 
 NAME = "scan"
@@ -26,7 +27,9 @@ HELP = "Scan a local directory for secrets (no GitHub interaction)"
 def add_arguments(parser):
     parser.add_argument(
         "path",
-        help="Local directory path to scan",
+        nargs="?",
+        default=".",
+        help="Directory to scan (default: current directory)",
     )
     add_common_args(
         parser,
@@ -41,7 +44,7 @@ def run(args):
         sys.exit(2)
 
     try:
-        config_path = args.config or None  # bare --config ("") → defaults only
+        config_path = resolve_config_arg(args) or None  # "" → defaults only
         config = ConfigManager(config_path=config_path, require_exists=config_path is not None)
     except ConfigError as e:
         error(str(e))

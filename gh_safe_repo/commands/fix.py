@@ -18,6 +18,7 @@ from ._common import (
     _c,
     _resolve_branches,
     add_common_args,
+    add_mutation_args,
     build_context,
     error,
     format_plan_json,
@@ -29,6 +30,7 @@ from ._common import (
     print_verification,
     prose_stream,
     prose_to_stderr,
+    resolve_config_arg,
     warn,
 )
 from ..verify import Verification, verify_plugins
@@ -40,18 +42,10 @@ HELP = "Audit an existing repo and apply safe defaults"
 def add_arguments(parser):
     parser.add_argument(
         "repo",
-        help="Existing GitHub repository as owner/repo (e.g. myuser/my-repo or my-org/my-repo); requires admin access",
+        metavar="OWNER/REPO",
+        help="Existing repository (yours, an org's, or one you collaborate on); requires admin access",
     )
-    parser.add_argument(
-        "--yes", "-y",
-        action="store_true",
-        help="Skip confirmation prompt and apply immediately",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show settings diff without applying changes",
-    )
+    add_mutation_args(parser)
     parser.add_argument(
         "--migrate-branch-protection",
         action="store_true",
@@ -65,8 +59,14 @@ def add_arguments(parser):
     add_common_args(parser)
 
 
-def run(args):
+def run(args, audit=False):
+    """Audit, then apply unless args.dry_run.
+
+    `audit=True` (the `audit` verb) is a dry run that reports drift through
+    its exit code: 3 when anything would change, 0 when compliant.
+    """
     owner, repo_name = parse_repo_arg(args.repo)
+    resolve_config_arg(args)
 
     ctx = build_context(args, owner, require_owner_match=False)
     config = ctx.config
@@ -87,7 +87,7 @@ def run(args):
                 f"('{ctx.owner}').\n"
                 "  - If it exists under a different account, you may be "
                 "authenticated as the wrong GitHub account.\n"
-                "  - To create it, use `gh-safe-repo create`."
+                "  - To create it, use `gh-safe-repo new`."
             )
         else:
             error(f"Failed to fetch repository info: {e}")
@@ -160,6 +160,15 @@ def run(args):
     # Under --json, stdout carries exactly one document. --dry-run prints the
     # plan right away (unchanged); a real run prints it once at the end, with
     # the verification block (#77).
+    counts = full_plan.count_by_type()
+    actionable_count = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
+    skipped = counts.get(ChangeType.SKIP, 0)
+
+    if audit and not json_mode and actionable_count == 0:
+        # Weekly-hygiene case: one line, not a table of SKIP rows.
+        _info(_c(_GREEN, "All settings compliant."))
+        sys.exit(0)
+
     if json_mode and args.dry_run:
         print(format_plan_json(full_plan))
     elif not json_mode:
@@ -169,10 +178,12 @@ def run(args):
         with prose_to_stderr(json_mode):
             print_plan(full_plan)
 
-    counts = full_plan.count_by_type()
-    actionable_count = sum(v for k, v in counts.items() if k != ChangeType.SKIP)
-    skipped = counts.get(ChangeType.SKIP, 0)
     _info(_c(_BOLD + _DIM, f"{actionable_count} change(s) to apply, {skipped} skipped"))
+
+    if audit:
+        if actionable_count:
+            _info(_c(_YELLOW, f"\nRun `gh-safe-repo fix {owner}/{repo_name}` to apply."))
+        sys.exit(3 if actionable_count else 0)
 
     if args.dry_run:
         _info(_c(_YELLOW, "\nDry run — no changes made."))

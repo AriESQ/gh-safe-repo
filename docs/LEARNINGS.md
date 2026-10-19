@@ -78,7 +78,17 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **Integration tests that exercise git use real subprocess calls, not mocks.** `make_git_repo()` and `git_add_commit()` run actual `git` commands in a temp directory. `git init` (without `-b main`) keeps the tests compatible with git < 2.28.
 
-## `--local` Source Flag
+## CLI redesign (new/push/copy/audit/fix/scan)
+
+**The verbs changed, the engines did not.** `push` and `copy` are ~30-line modules that parse two positionals, set `args.local_path` / `args.from_repo`, and call `create.run`; `audit` sets `dry_run=True` and calls `fix.run(args, audit=True)`. Every branch in `create.run` that used to key off `--local`/`--from` still keys off those two attributes, so the push, scan, verification and recovery paths were untouched. `create` itself declares `set_defaults(local_path=None, from_repo=None)` so the engine never needs `getattr`.
+
+**argparse cannot group subcommands, so the grouped list lives in `description` and the flat `commands` group is dropped from `parser._action_groups`.** `help=argparse.SUPPRESS` on `add_parser` is not an option: Python 3.14 renders it as the literal `==SUPPRESS==`. Removing the group only affects `--help`; the subparsers action is still registered and parsing is unchanged.
+
+**`TestNoDeadFlags` follows `args`-taking callables into their defining module.** The thin verbs reference almost none of their flags directly; the test now walks from `push.run` to `create.run` to `build_context` and `resolve_config_arg`, so a flag accepted by `push` but read nowhere is still caught. `inspect.getsource` raises `TypeError` on `typing` aliases found in module globals; skip those.
+
+**`audit` exits `3` on drift, not `1`.** `3` already means "GitHub holds something other than the desired state" after a `create`/`fix`; drift found before applying is the same statement. `1` stays "the tool could not run", which is what a CI job needs to tell apart (story #14). `scan` keeps `1` for findings for compatibility; it predates the convention.
+
+## `--local` Source Flag (historical; now `publish`)
 
 **`push_local()` uses `git clone <local_path>` not `--mirror` for git repos.** `copy_repo()` uses `--mirror` because all refs (including remotes) must be preserved. `push_local()` uses a regular clone so the working copy has a clean ref structure; then `push --all --tags` pushes all local branches and tags to the new remote.
 

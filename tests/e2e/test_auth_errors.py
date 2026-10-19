@@ -22,18 +22,18 @@ class TestWrongOwner:
     """0.6 — Wrong owner is rejected."""
 
     def test_wrong_owner_exits_1(self):
-        r = run("create", "definitelynotarealuserxyz/my-repo", "--dry-run")
+        r = run("new", "definitelynotarealuserxyz/my-repo", "--dry-run")
         assert r.returncode == 1
         assert "does not match" in r.stderr.lower() or "does not match" in r.stdout.lower()
 
 
-class TestLocalNonexistentPath:
-    """4.3 — --local with non-existent path (full assertion with real owner)."""
+class TestPushNonexistentPath:
+    """4.3 — push with non-existent path (full assertion with real owner)."""
 
-    def test_local_bad_path_exits_2(self, gh_owner):
+    def test_push_bad_path_exits_2(self, gh_owner):
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-bad-path",
-            "--local", "/tmp/path-does-not-exist-xyz",
+            "push", "/tmp/path-does-not-exist-xyz",
+            f"{gh_owner}/gsr-e2e-bad-path",
             "--dry-run",
         )
         assert r.returncode == 2
@@ -46,7 +46,7 @@ class TestJsonCreateDryRun:
 
     def test_json_is_valid_and_has_correct_schema(self, gh_owner):
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-json-test",
+            "new", f"{gh_owner}/gsr-e2e-json-test",
             "--dry-run", "--json",
         )
         assert r.returncode == 0
@@ -67,7 +67,7 @@ class TestJsonCreateDryRun:
     def test_json_info_goes_to_stderr(self, gh_owner):
         """7.2 — stdout is pure JSON, info text on stderr."""
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-json-test",
+            "new", f"{gh_owner}/gsr-e2e-json-test",
             "--dry-run", "--json",
         )
         # stdout must be valid JSON on its own
@@ -99,7 +99,7 @@ class TestDebugOutput:
 
     def test_debug_shows_api_calls(self, gh_owner):
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-debug-test",
+            "new", f"{gh_owner}/gsr-e2e-debug-test",
             "--dry-run", "--debug",
         )
         assert r.returncode == 0
@@ -129,7 +129,7 @@ class TestCustomConfig:
 
         try:
             r = run(
-                "create", f"{gh_owner}/gsr-e2e-config-test",
+                "new", f"{gh_owner}/gsr-e2e-config-test",
                 "--config", config_path,
                 "--dry-run", "--json",
             )
@@ -153,7 +153,7 @@ class TestPlanLevelGating:
     def test_private_repo_skips_bp_and_security_on_free_plan(self, gh_owner):
         """10.1 — Private repo on free plan skips branch protection and security."""
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-free-private",
+            "new", f"{gh_owner}/gsr-e2e-free-private",
             "--dry-run", "--json",
         )
         assert r.returncode == 0
@@ -172,7 +172,7 @@ class TestPlanLevelGating:
     def test_public_repo_gets_bp_and_dependabot_on_free_plan(self, gh_owner):
         """10.2 — Public repo on free plan gets branch protection and Dependabot."""
         r = run(
-            "create", f"{gh_owner}/gsr-e2e-free-public",
+            "new", f"{gh_owner}/gsr-e2e-free-public",
             "--public", "--dry-run", "--json",
         )
         assert r.returncode == 0

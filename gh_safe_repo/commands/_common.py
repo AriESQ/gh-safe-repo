@@ -75,7 +75,7 @@ def build_context(args, expected_owner, require_owner_match=True):
     """
     # Load config
     try:
-        config_path = args.config or None  # bare --config ("") → defaults only
+        config_path = args.config or None  # "" (from --no-config) → defaults only
         config = ConfigManager(config_path=config_path, require_exists=config_path is not None)
     except ConfigError as e:
         error(str(e))
@@ -123,14 +123,14 @@ def build_context(args, expected_owner, require_owner_match=True):
 
 
 def add_common_args(parser, *, json_flag=True, json_help=None, global_defaults=False):
-    """Add --debug and --config (and --json) to a parser.
+    """Add --debug, --config PATH and --no-config (and --json) to a parser.
 
-    These two are global: `cli.main` also adds them to the top-level parser so
-    they work on either side of the command (`--debug create ...` and
-    `create ... --debug`). On the subparsers they carry `default=SUPPRESS` so
-    an unused subparser default cannot clobber a value already parsed before
-    the command; the top-level copies (`global_defaults=True`) supply the
-    fallback values. --json stays command-local and keeps a real default.
+    The first three are global: `cli.main` also adds them to the top-level
+    parser so they work on either side of the command (`--debug create ...`
+    and `create ... --debug`). On the subparsers they carry `default=SUPPRESS`
+    so an unused subparser default cannot clobber a value already parsed
+    before the command; the top-level copies (`global_defaults=True`) supply
+    the fallback values. --json stays command-local and keeps a real default.
     """
     default = {} if global_defaults else {"default": argparse.SUPPRESS}
     parser.add_argument(
@@ -141,10 +141,14 @@ def add_common_args(parser, *, json_flag=True, json_help=None, global_defaults=F
     )
     parser.add_argument(
         "--config",
-        nargs="?",
-        const="",
         metavar="PATH",
-        help="Path to config file; bare --config uses built-in defaults only",
+        help="Config file to use (default: discovered from XDG dirs or the current directory)",
+        **default,
+    )
+    parser.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore config files; use built-in defaults only",
         **default,
     )
     if json_flag:
@@ -153,6 +157,45 @@ def add_common_args(parser, *, json_flag=True, json_help=None, global_defaults=F
             action="store_true",
             help=json_help or "Emit the plan as JSON instead of the ANSI table",
         )
+
+
+def add_mutation_args(parser):
+    """--dry-run and --yes, identical on every verb that changes GitHub."""
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the plan and make no API calls",
+    )
+    parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip the confirmation prompt (required when stdin is not a terminal)",
+    )
+
+
+def add_create_args(parser):
+    """--public plus the mutation args, identical on every verb that creates a repo."""
+    parser.add_argument(
+        "--public",
+        action="store_true",
+        help="Create a public repository instead of private",
+    )
+    add_mutation_args(parser)
+
+
+def resolve_config_arg(args):
+    """Fold --no-config into the `args.config == ""` sentinel.
+
+    `None` means "discover a config file", `""` means "built-in defaults
+    only", anything else is an explicit path. Both flags together is a usage
+    error (exit 2).
+    """
+    if args.no_config:
+        if args.config:
+            error("--config and --no-config are mutually exclusive")
+            sys.exit(2)
+        args.config = ""
+    return args.config
 
 
 def info(msg, *, json_mode=False):
@@ -416,7 +459,7 @@ def _problem_lines(verification):
 
 
 def _local_next_step(verification, wiring):
-    """Banner lines for the user's local repo after `create --local`.
+    """Banner lines for the user's local repo after `push`.
 
     Built from the `local/origin` and `local/tracking` verification checks
     (what git config actually says), falling back to `wiring` (what
@@ -727,7 +770,7 @@ def _resolve_branches(config, post_default_branch=None, source_default_branch=No
     """
     Determine the list of branches to protect, in priority order:
       1. POST /user/repos response default_branch (new repo, non-dry-run)
-      2. GET /repos/{owner}/{source} default_branch (--from workflow, non-dry-run)
+      2. GET /repos/{owner}/{source} default_branch (`copy`, non-dry-run)
       3. protected_branch from config (may be "master, main" from SAFE_DEFAULTS)
     """
     if post_default_branch:

@@ -9,6 +9,48 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-19
+
+**Breaking.** The verbs were rewritten. `create`, `create --local`,
+`create --from` and bare `--config` no longer exist; see Removed below.
+There are no aliases, so scripts and the agent skill must be updated.
+
+### Added
+- `new <owner/repo>`: create an empty repo with safe defaults (what plain
+  `create` did).
+- `push <path> <owner/repo>`: push a local git repository into a new repo
+  (what `create --local` did). Source first, destination second.
+- `copy <src-owner/repo> <owner/repo>`: copy an existing repository into a
+  new one (what `create --from` did). The help says plainly that the result is
+  not a GitHub fork.
+- `audit <owner/repo>`: read-only drift report for an existing repo. Prints
+  the same table as `fix --dry-run`, or `All settings compliant.` when there
+  is nothing to change, never prompts, and exits `3` when `fix` would change
+  something, `0` when compliant, so it works as a CI gate. `--json` prints
+  the plan document.
+- `--no-config`: ignore config files and use built-in defaults. Global, like
+  `--config` and `--debug`.
+- `scan` with no path scans the current directory.
+- `docs/2026-10-16_cli-interface-review.md`: the review of the CLI against
+  the user personas that motivated these changes.
+
+### Changed
+- The options are now uniform by verb class. `new`, `push` and
+  `copy` take `--public`, `--dry-run`, `--yes`, `--json`; `fix` takes
+  `--dry-run`, `--yes`, `--json`, `--migrate-branch-protection`; `audit` and
+  `scan` take `--json`. The top-level `--help` lists the verbs in those
+  groups.
+- Error messages for a bad `push` path say `Source path '...'` instead of
+  `--local: '...'`.
+
+### Removed
+- The `create` verb and its `--local PATH` / `--from OWNER/REPO` flags. Use
+  `new`, `push` and `copy`. Passing the old verb or flags is a usage error
+  (exit `2`); there is no alias or deprecation period.
+- Bare `--config` (no value) as the way to ignore config files. `--config`
+  now always takes a path; use `--no-config` instead. This removes the
+  `gh-safe-repo --config scan ./src` trap where `scan` was read as the path.
+
 ## [0.8.0] - 2026-10-15
 
 ### Added

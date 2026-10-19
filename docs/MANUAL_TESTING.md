@@ -29,43 +29,43 @@ gh-safe-repo --help
 **Expected output (approximately):**
 
 ```
-usage: gh-safe-repo [--config PATH] [--debug] <command> [options]
+usage: gh-safe-repo [--config PATH | --no-config] [--debug] <command> [options]
 
 Manage safe defaults for GitHub repositories.
 
-usage:
-  gh-safe-repo create <owner/repo> [--public] [--local PATH | --from OWNER/REPO] [--dry-run]
-  gh-safe-repo fix   <owner/repo>  [--yes] [--dry-run]
-  gh-safe-repo scan  <path>
+create a repo (all take --public, --dry-run, --yes, --json):
+  create   <owner/repo>                   Create an empty repo with safe defaults
+  push     <path> <owner/repo>            Push a local git repo into a new repo
+  copy     <src-owner/repo> <owner/repo>  Copy an existing repo into a new one (not a fork)
 
-commands:
+existing repo:
+  audit    <owner/repo>                   Report settings drift; exit 3 if any, nothing changed
+  fix      <owner/repo>                   Apply safe defaults (--dry-run, --yes, --json)
 
-    create         Create a new repo with safe defaults
-    fix            Audit an existing repo and apply safe defaults
-    scan           Scan a local directory for secrets (no GitHub interaction)
+local code:
+  scan     [path]                         Scan a directory for secrets (no GitHub calls)
 
 options:
-  -h, --help       show this help message and exit
-  --debug          Show every API call made
-  --config [PATH]  Path to config file; bare --config uses built-in defaults
-                   only
+  -h, --help     show this help message and exit
+  --debug        Show every API call made
+  --config PATH  Config file to use (default: discovered from XDG dirs or the
+                 current directory)
+  --no-config    Ignore config files; use built-in defaults only
 
 examples:
   ...
 ```
 
-The `usage:`, `commands:`, `options:` and `examples:` headings are bold blue on
+The `usage:`, group, `options:` and `examples:` headings are bold blue on
 a color-capable terminal, and plain when piped or under `NO_COLOR`.
 
 ### 0.3 Subcommand help
 
 ```bash
-gh-safe-repo create --help
-gh-safe-repo fix --help
-gh-safe-repo scan --help
+for v in new push copy audit fix scan; do gh-safe-repo $v --help; done
 ```
 
-**Expected:** Each subcommand shows its own arguments (e.g. `create` shows `--public`, `--local`, `--from`, `--yes`; `fix` shows `--yes`; `scan` has no `--dry-run`). Each also lists the global `--config` / `--debug`.
+**Expected:** Each subcommand shows its own arguments. `new`, `push` and `copy` all show `--public`, `--dry-run`, `--yes`, `--json`; `push` lists `PATH` before `OWNER/REPO` and `copy` lists `SRC-OWNER/REPO` before `OWNER/REPO` and says "not a GitHub fork"; `audit` shows only `--json`; `fix` adds `--migrate-branch-protection`; `scan` has an optional `path` and no `--dry-run`. Each also lists the global `--config PATH` / `--no-config` / `--debug`. `gh-safe-repo new x/y --local .` exits 2 with `unrecognized arguments`.
 
 ### 0.4 Global options on either side of the command
 
@@ -87,7 +87,7 @@ gh-safe-repo
 ### 0.5 Bare repo name is rejected
 
 ```bash
-gh-safe-repo create my-repo
+gh-safe-repo new my-repo
 ```
 
 **Expected:**
@@ -98,10 +98,10 @@ Error: Use owner/repo format (e.g. myuser/my-repo)
 
 Exits with status 2.
 
-### 0.6 Wrong owner is rejected (create)
+### 0.6 Wrong owner is rejected (new)
 
 ```bash
-gh-safe-repo create wronguser/my-repo --dry-run
+gh-safe-repo new wronguser/my-repo --dry-run
 ```
 
 **Expected:**
@@ -137,7 +137,7 @@ gh-safe-repo fix some-org/repo-you-admin --dry-run
 ### 1.1 Create a new private repo
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-private-01
+gh-safe-repo new YOUR_USERNAME/gsr-test-private-01
 ```
 
 **Expected — plan table then prompt:**
@@ -186,7 +186,7 @@ Type `y` at the prompt.
 ### 1.2 Attempt to create the same repo again
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-private-01
+gh-safe-repo new YOUR_USERNAME/gsr-test-private-01
 ```
 
 **Expected:**
@@ -201,10 +201,10 @@ Process exits with non-zero status.
 
 ## 2. Create — Public Repo (Basic)
 
-### 2.1 Create a new public repo directly (no --from)
+### 2.1 Create a new public repo directly (no code source)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-public-01 --public
+gh-safe-repo new YOUR_USERNAME/gsr-test-public-01 --public
 ```
 
 **Expected plan:** Similar to 1.1 but:
@@ -222,14 +222,14 @@ Type `y` at the prompt.
 
 ---
 
-## 3. create --from Workflow (Mirror Repo)
+## 3. copy Workflow (Copy an Existing Repo)
 
 This creates a source repo, puts a test file in it, then mirrors it to a new repo.
 
 ### 3.1 Create a source private repo with content
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-source-01
+gh-safe-repo new YOUR_USERNAME/gsr-test-source-01
 ```
 
 Type `y`. Then push a test file:
@@ -248,7 +248,7 @@ cd /tmp && rm -rf gsr-test-source-01
 ### 3.2 Mirror to new public repo
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-public-from-01 --from YOUR_USERNAME/gsr-test-source-01 --public
+gh-safe-repo copy YOUR_USERNAME/gsr-test-source-01 YOUR_USERNAME/gsr-test-public-from-01 --public
 ```
 
 **Expected — scan output first (since source has content):**
@@ -270,7 +270,7 @@ Then the plan table, then prompt. Type `y`.
 ### 3.3 Mirror to new private repo (default)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-private-from-01 --from YOUR_USERNAME/gsr-test-source-01
+gh-safe-repo copy YOUR_USERNAME/gsr-test-source-01 YOUR_USERNAME/gsr-test-private-from-01
 ```
 
 **Expected — scan output first, then plan table, then prompt. Type `y`.**
@@ -279,10 +279,10 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-private-from-01 --from YOUR_USERNAME/
 - `gsr-test-private-from-01` is private
 - README.md is present (code was mirrored)
 
-### 3.4 --from with non-existent source
+### 3.4 copy with non-existent source
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from YOUR_USERNAME/gsr-test-does-not-exist-xyz --public
+gh-safe-repo copy YOUR_USERNAME/gsr-test-does-not-exist-xyz YOUR_USERNAME/gsr-test-bad --public
 ```
 
 **Expected:**
@@ -291,10 +291,10 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from YOUR_USERNAME/gsr-test-doe
 Error: Source repo 'YOUR_USERNAME/gsr-test-does-not-exist-xyz' does not exist.
 ```
 
-### 3.5 --from with bare repo name (no owner/) is rejected
+### 3.5 copy source with bare repo name (no owner/) is rejected
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --from gsr-test-source-01 --public
+gh-safe-repo copy gsr-test-source-01 YOUR_USERNAME/gsr-test-bad --public
 ```
 
 **Expected:**
@@ -305,7 +305,7 @@ Error: Use owner/repo format (e.g. myuser/gsr-test-source-01)
 
 ---
 
-## 4. create --local Workflow (Push Local Directory/Repo)
+## 4. push Workflow (Push a Local Repo)
 
 ### 4.1 Push a plain local directory (no .git)
 
@@ -313,7 +313,7 @@ Error: Use owner/repo format (e.g. myuser/gsr-test-source-01)
 mkdir /tmp/gsr-local-dir-test
 echo "# Hello" > /tmp/gsr-local-dir-test/README.md
 echo "secret = not_a_real_secret" > /tmp/gsr-local-dir-test/config.txt
-gh-safe-repo create YOUR_USERNAME/gsr-test-local-dir-01 --local /tmp/gsr-local-dir-test
+gh-safe-repo push /tmp/gsr-local-dir-test YOUR_USERNAME/gsr-test-local-dir-01
 ```
 
 **Expected — scan output:**
@@ -341,38 +341,34 @@ echo "v2" > README.md
 git add README.md
 git commit -m "Second commit"
 cd -
-gh-safe-repo create YOUR_USERNAME/gsr-test-local-git-01 --local /tmp/gsr-local-git-test
+gh-safe-repo push /tmp/gsr-local-git-test YOUR_USERNAME/gsr-test-local-git-01
 ```
 
 Type `y` at the plan prompt.
 
 **Verify:** README.md on GitHub shows "v2". Git log on GitHub shows 2 commits.
 
-### 4.3 --local with non-existent path
+### 4.3 push with non-existent path
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --local /tmp/path-does-not-exist-xyz
+gh-safe-repo push /tmp/path-does-not-exist-xyz YOUR_USERNAME/gsr-test-bad
 ```
 
 **Expected:**
 
 ```
-Error: --local: '/tmp/path-does-not-exist-xyz' is not a directory
+Error: Source path '/tmp/path-does-not-exist-xyz' is not a directory
 ```
 
 Exits with status 2 (no API calls).
 
-### 4.4 --local and --from are mutually exclusive
+### 4.4 push positionals in the wrong order
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-bad --local /tmp --from YOUR_USERNAME/gsr-test-source-01 --public
+gh-safe-repo push YOUR_USERNAME/gsr-test-bad /tmp/gsr-local-git-test
 ```
 
-**Expected:**
-
-```
-Error: --local and --from are mutually exclusive
-```
+**Expected:** exit 2. The second positional must be `owner/repo`, so the path is rejected with `Use owner/repo format`.
 
 ---
 
@@ -445,13 +441,28 @@ gh-safe-repo fix YOUR_USERNAME/gsr-test-fix-yes-01 --yes
 
 ```bash
 gh-safe-repo fix YOUR_USERNAME/gsr-test-fix-target-01 --dry-run
+echo "exit=$?"
 ```
 
 **Expected:** Plan table is shown, then:
 
 ```
 Dry run — no changes made.
+exit=0
 ```
+
+### 5.4b audit reports drift through the exit code
+
+```bash
+gh-safe-repo audit YOUR_USERNAME/gsr-test-fix-target-01; echo "exit=$?"
+gh-safe-repo audit YOUR_USERNAME/gsr-test-private-01;    echo "exit=$?"
+```
+
+**Expected:** the drifted repo prints the same table as 5.4 followed by
+`Run \`gh-safe-repo fix ...\` to apply.` and `exit=3`. The compliant repo
+prints one line, `All settings compliant.`, and `exit=0`. No prompt is shown
+in either case and nothing changes on GitHub. `audit ... --json` prints the
+plan document and uses the same exit codes.
 
 ### 5.5 Fix a non-existent repo
 
@@ -462,7 +473,7 @@ gh-safe-repo fix YOUR_USERNAME/gsr-test-does-not-exist-xyz
 **Expected:**
 
 ```
-Error: Repository 'YOUR_USERNAME/gsr-test-does-not-exist-xyz' does not exist. Use `gh-safe-repo create` to create it.
+Error: Repository 'YOUR_USERNAME/gsr-test-does-not-exist-xyz' does not exist. Use `gh-safe-repo new` to create it.
 ```
 
 ### 5.6 Fix has no secret scanning
@@ -580,17 +591,14 @@ Scanning /tmp/gsr-ai-scan...
 
 Exit code 1.
 
-### 6.7 Scan with no path argument
+### 6.7 Scan with no path argument scans the current directory
 
 ```bash
-gh-safe-repo scan
+cd /tmp/gsr-scan-test && gh-safe-repo scan; cd -
 ```
 
-**Expected:**
-
-```
-error: the following arguments are required: path
-```
+**Expected:** `Scanning /tmp/gsr-scan-test...` followed by the same findings
+as scanning the path explicitly.
 
 ### 6.8 Scan a git repo with AI context file deleted from history
 
@@ -620,7 +628,7 @@ Scanning /tmp/gsr-history-scan...
 ### 7.1 JSON output for a new repo plan
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-json-01 --dry-run --json
+gh-safe-repo new YOUR_USERNAME/gsr-test-json-01 --dry-run --json
 ```
 
 > Note: `--dry-run` is used here so the JSON test doesn't create a real repo.
@@ -656,7 +664,7 @@ Key checks:
 ### 7.2 JSON is machine-readable (pipe test)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-json-01 --dry-run --json 2>/dev/null | python3 -m json.tool
+gh-safe-repo new YOUR_USERNAME/gsr-test-json-01 --dry-run --json 2>/dev/null | python3 -m json.tool
 ```
 
 **Expected:** Pretty-printed JSON with no errors. All info/warn output is suppressed (it went to stderr).
@@ -710,7 +718,7 @@ Running the same command directly in the terminal should still be coloured.
 ### 8.1 Debug output shows API calls
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-debug-01 --dry-run --debug
+gh-safe-repo new YOUR_USERNAME/gsr-test-debug-01 --dry-run --debug
 ```
 
 **Expected:** All normal output PLUS lines like:
@@ -765,7 +773,7 @@ has_wiki = true
 [branch_protection]
 required_approving_reviews = 2
 EOF
-gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/gsr-config-test/gh-safe-repo.ini --dry-run
+gh-safe-repo new YOUR_USERNAME/gsr-test-config-01 --config /tmp/gsr-config-test/gh-safe-repo.ini --dry-run
 ```
 
 **Expected plan differences vs. defaults:**
@@ -776,7 +784,7 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/gsr-config-te
 ### 9.2 Config file that doesn't exist
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-config-01 --config /tmp/path-that-does-not-exist/gh-safe-repo.ini --dry-run
+gh-safe-repo new YOUR_USERNAME/gsr-test-config-01 --config /tmp/path-that-does-not-exist/gh-safe-repo.ini --dry-run
 ```
 
 **Expected:** Tool runs normally using built-in safe defaults (missing config file is not an error — it's treated as "use defaults").
@@ -794,7 +802,7 @@ These tests verify the tool correctly detects GitHub plan level and gates featur
 (Only relevant if you are on a free GitHub plan.)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-free-plan-private --dry-run
+gh-safe-repo new YOUR_USERNAME/gsr-test-free-plan-private --dry-run
 ```
 
 **Expected plan:** BRANCH_PROTECTION and SECURITY rows show SKIP with reason text like:
@@ -803,7 +811,7 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-free-plan-private --dry-run
 ### 10.2 Free plan — public repo gets branch protection and Dependabot
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-free-plan-public --public --dry-run
+gh-safe-repo new YOUR_USERNAME/gsr-test-free-plan-public --public --dry-run
 ```
 
 **Expected plan:**
@@ -820,7 +828,7 @@ gh-safe-repo create YOUR_USERNAME/gsr-test-free-plan-public --public --dry-run
 ```bash
 mkdir /tmp/gsr-abort-test
 echo 'GITHUB_TOKEN=ghp_fakefakefakefakefakefakefakefakefake' > /tmp/gsr-abort-test/leak.txt
-gh-safe-repo create YOUR_USERNAME/gsr-test-abort-01 --local /tmp/gsr-abort-test
+gh-safe-repo push /tmp/gsr-abort-test YOUR_USERNAME/gsr-test-abort-01
 ```
 
 **Expected — scan output:**
@@ -856,7 +864,7 @@ Repeat the above but type `y`. Repo should be created with the file pushed to it
 ### 11.3 `--yes` blocks on criticals (does not bypass the scan)
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-abort-02 --local /tmp/gsr-abort-test --yes
+gh-safe-repo push /tmp/gsr-abort-test YOUR_USERNAME/gsr-test-abort-02 --yes
 echo "exit=$?"
 ```
 
@@ -872,7 +880,7 @@ No repo is created. `--yes` accepts *warnings* unattended, never criticals.
 ### 11.4 No terminal and no `--yes` fails loudly
 
 ```bash
-gh-safe-repo create YOUR_USERNAME/gsr-test-abort-03 --local /tmp/gsr-abort-test < /dev/null
+gh-safe-repo push /tmp/gsr-abort-test YOUR_USERNAME/gsr-test-abort-03 < /dev/null
 echo "exit=$?"
 ```
 
@@ -896,7 +904,7 @@ cat > /tmp/gsr-ruleset.ini << 'EOF'
 [branch_protection]
 use_rulesets = true
 EOF
-gh-safe-repo create YOUR_USERNAME/gsr-test-rulesets-01 --public --config /tmp/gsr-ruleset.ini
+gh-safe-repo new YOUR_USERNAME/gsr-test-rulesets-01 --public --config /tmp/gsr-ruleset.ini
 ```
 
 Type `y` at the prompt.
@@ -958,28 +966,29 @@ Run each test doc's full suite before considering these scripts production-ready
 
 ## Test Matrix Summary
 
-| Test | create | --from | --local | fix | scan | --json | --yes | Free plan | Paid plan |
+| Test | new | copy | push | fix | scan | --json | --yes | Free plan | Paid plan |
 |------|:------:|:------:|:-------:|:---:|:----:|:------:|:-----:|:---------:|:---------:|
 | 0.4 No subcommand | | | | | | | | Y | Y |
 | 0.5 Bare repo name | Y | | | | | | | Y | Y |
-| 0.6 Wrong owner (create) | Y | | | | | | | Y | Y |
+| 0.6 Wrong owner (new) | Y | | | | | | | Y | Y |
 | 0.6b Non-admin (fix) | | | | | | | | | |
 | 0.6c Org admin (fix) | | | | | | | | | |
-| 1.1 Basic private create | Y | | | | | | | Y | Y |
+| 1.1 Basic private new | Y | | | | | | | Y | Y |
 | 1.2 Duplicate repo error | Y | | | | | | | Y | Y |
-| 2.1 Basic public create | Y | | | | | | | Y | Y |
+| 2.1 Basic public new | Y | | | | | | | Y | Y |
 | 3.2 Mirror to public | Y | Y | | | Y | | | Y | Y |
 | 3.3 Mirror to private repo | Y | Y | | | | | | Y | Y |
-| 3.4 --from bad source | Y | Y | | | | | | Y | Y |
-| 3.5 --from bare name | Y | Y | | | | | | Y | Y |
-| 4.1 --local plain dir | Y | | Y | | Y | | | Y | Y |
-| 4.2 --local git repo | Y | | Y | | Y | | | Y | Y |
-| 4.3 --local bad path | Y | | Y | | | | | Y | Y |
-| 4.4 --local + --from error | Y | Y | Y | | | | | Y | Y |
+| 3.4 copy bad source | Y | Y | | | | | | Y | Y |
+| 3.5 copy bare name | Y | Y | | | | | | Y | Y |
+| 4.1 push plain dir | Y | | Y | | Y | | | Y | Y |
+| 4.2 push git repo | Y | | Y | | Y | | | Y | Y |
+| 4.3 push bad path | Y | | Y | | | | | Y | Y |
+| 4.4 push swapped args | | | Y | | | | | Y | Y |
 | 5.1 Fix fully-configured | | | | Y | | | | Y | Y |
 | 5.2 Fix with drift | | | | Y | | | | Y | Y |
 | 5.3 Fix with --yes | | | | Y | | | Y | Y | Y |
 | 5.4 Fix with --dry-run | | | | Y | | | | Y | Y |
+| 5.4b audit exit codes | | | | | | Y | | Y | Y |
 | 5.5 Fix non-existent repo | | | | Y | | | | Y | Y |
 | 5.6 Fix has no scanning | | | | Y | | | | Y | Y |
 | 6.2 Scan fake secret | | | | | Y | | | Y | Y |
@@ -1067,7 +1076,7 @@ repos and UPDATE/SKIP on public repos.
 
 **Rulesets and classic branch protection are separate systems.** Creating
 protection via rulesets does not populate the classic branch protection API (and
-vice versa). A `fix` run after a rulesets-based `create` will see no classic
+vice versa). A `fix` run after a rulesets-based `new` will see no classic
 protection and try to apply it. This is expected — the two APIs are independent.
 E2E tests should not mix the two unless explicitly testing this interaction.
 
@@ -1075,7 +1084,7 @@ E2E tests should not mix the two unless explicitly testing this interaction.
 `master`, others to `main`. The tool handles this via the API response
 (`default_branch` field), but test assertions should not hardcode branch names.
 
-**Idempotency is the key acceptance criterion.** For every `create` or `fix`,
+**Idempotency is the key acceptance criterion.** For every creating command or `fix`,
 run the operation twice. The second run must show 0 actionable changes and all
 SKIPs. This is the single most important E2E assertion.
 
@@ -1083,7 +1092,7 @@ SKIPs. This is the single most important E2E assertion.
 
 The manual test sections map naturally to E2E test cases. Key considerations:
 
-- **Fixture repos are expensive.** Each `create` makes 4–8 API calls. Batch
+- **Fixture repos are expensive.** Each `new` makes 4–8 API calls. Batch
   related assertions against the same repo where possible (e.g. create + fix
   idempotency in one test).
 - **Cleanup must be robust.** Use `gh repo delete` in teardown with

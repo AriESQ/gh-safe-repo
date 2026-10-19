@@ -68,3 +68,35 @@ class TestPlan:
         p2.add(make_change(ChangeType.UPDATE))
         p1.merge(p2)
         assert len(p1.changes) == 2
+
+
+class TestPreserve:
+    def _preserve(self):
+        return Change(type=ChangeType.PRESERVE, category=ChangeCategory.REPO,
+                      key="has_wiki", old=True, new=False, reason="changed from default")
+
+    def test_preserve_is_not_actionable(self):
+        plan = Plan()
+        plan.add(self._preserve())
+        assert plan.actionable_changes == []
+        assert not plan.has_changes()
+        assert plan.skipped_changes == []
+        assert len(plan.preserved_changes) == 1
+
+    def test_preserve_counts_separately(self):
+        plan = Plan()
+        plan.add(self._preserve())
+        plan.add(make_change(ChangeType.UPDATE))
+        assert plan.count_by_type() == {ChangeType.PRESERVE: 1, ChangeType.UPDATE: 1}
+        assert len(plan.actionable_changes) == 1
+
+    def test_describe_preserve(self):
+        d = self._preserve().describe()
+        assert d.startswith("PRESERVE repo/has_wiki")
+        assert "changed from default" in d
+
+    def test_merge_fields_default_off(self):
+        c = make_change()
+        assert c.tier is None
+        assert c.github_default is None
+        assert c.weakened is False

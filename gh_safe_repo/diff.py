@@ -13,6 +13,10 @@ class ChangeType(Enum):
     UPDATE = "update"
     DELETE = "delete"
     SKIP = "skip"  # Feature unavailable at this plan level
+    # fix/audit three-way merge: the setting differs from what we want, but a
+    # human changed it from GitHub's default and the policy keeps their value.
+    # Never actionable, never applied, never verified.
+    PRESERVE = "preserve"
 
 
 class ChangeCategory(Enum):
@@ -32,11 +36,24 @@ class Change:
     key: str
     old: Any = None
     new: Any = None
-    reason: Optional[str] = None  # Used for SKIP to explain why
+    reason: Optional[str] = None  # Used for SKIP/PRESERVE to explain why
+    # Merge context, set by plugins in audit mode (fix/audit) and read by
+    # commands/fix.py:apply_merge_policy(). ``tier`` is "security" or
+    # "preference" (config_manager.SETTING_TIERS); ``github_default`` is what
+    # a fresh repo would hold for this key (the plugin's GITHUB_DEFAULTS).
+    # None on both means "not a per-key setting", and the policy passes the
+    # row through untouched.
+    tier: Optional[str] = None
+    github_default: Any = None
+    # UPDATE only: the current value is a *weaker* security posture than
+    # GitHub's default — someone relaxed a control. Rendered as ⚠ weakened.
+    weakened: bool = False
 
     def describe(self):
         if self.type == ChangeType.SKIP:
             return f"SKIP {self.category.value}/{self.key}: {self.reason}"
+        if self.type == ChangeType.PRESERVE:
+            return f"PRESERVE {self.category.value}/{self.key}: {self.old!r} ({self.reason})"
         if self.type == ChangeType.ADD:
             return f"ADD {self.category.value}/{self.key}: {self.new!r}"
         if self.type == ChangeType.UPDATE:
@@ -44,6 +61,10 @@ class Change:
         if self.type == ChangeType.DELETE:
             return f"DELETE {self.category.value}/{self.key}: {self.old!r}"
         return f"{self.type.value} {self.category.value}/{self.key}"
+
+
+# Rows that never produce an API call.
+_INERT = frozenset({ChangeType.SKIP, ChangeType.PRESERVE})
 
 
 @dataclass
@@ -54,15 +75,20 @@ class Plan:
         self.changes.append(change)
 
     def has_changes(self):
-        return any(c.type != ChangeType.SKIP for c in self.changes)
+        return bool(self.actionable_changes)
 
     @property
     def actionable_changes(self):
-        return [c for c in self.changes if c.type != ChangeType.SKIP]
+        """ADD / UPDATE / DELETE rows: what apply() writes and verify() reads back."""
+        return [c for c in self.changes if c.type not in _INERT]
 
     @property
     def skipped_changes(self):
         return [c for c in self.changes if c.type == ChangeType.SKIP]
+
+    @property
+    def preserved_changes(self):
+        return [c for c in self.changes if c.type == ChangeType.PRESERVE]
 
     def count_by_type(self):
         counts = {}

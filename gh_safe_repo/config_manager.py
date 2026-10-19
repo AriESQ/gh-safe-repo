@@ -80,6 +80,168 @@ SAFE_DEFAULTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Three-way merge metadata for `fix` / `audit` (docs/2026-03-28-user-stories.md)
+#
+# Intrinsic properties of the settings themselves, not of any repo or run.
+# The policy that uses them lives in commands/fix.py:apply_merge_policy().
+# ---------------------------------------------------------------------------
+
+# Config sections that describe repo state and take part in the merge.
+# [pre_flight_scan] and [git_transport] are tool-run behaviour and never do.
+MERGE_SECTIONS = ("repo", "actions", "branch_protection", "tag_protection", "security")
+
+SECURITY = "security"
+PREFERENCE = "preference"
+
+# Default tier for a section; SETTING_TIERS overrides per key.
+_SECTION_TIERS = {
+    "repo": PREFERENCE,
+    "actions": SECURITY,
+    "branch_protection": SECURITY,
+    "tag_protection": SECURITY,
+    "security": SECURITY,
+}
+
+# (section, key) → tier. Keyed by the *plan row* a plugin emits, i.e. the
+# Change.category value and Change.key; for the security plugin those are its
+# plan keys (dependabot_alerts, ...) rather than the enable_* config keys, so
+# both spellings are listed. Keys a plugin emits that are absent here fall
+# back to the section tier (`setting_tier()`).
+SETTING_TIERS = {
+    # [repo] — all preference: visibility, wiki, merge strategy are choices.
+    ("repo", "private"): PREFERENCE,
+    ("repo", "delete_branch_on_merge"): PREFERENCE,
+    ("repo", "allow_squash_merge"): PREFERENCE,
+    ("repo", "allow_merge_commit"): PREFERENCE,
+    ("repo", "allow_rebase_merge"): PREFERENCE,
+    ("repo", "auto_init"): PREFERENCE,
+    ("repo", "has_wiki"): PREFERENCE,
+    ("repo", "has_issues"): PREFERENCE,
+    ("repo", "has_projects"): PREFERENCE,
+    # [actions] — enforcement is security; whether Actions runs at all is not.
+    ("actions", "enabled"): PREFERENCE,
+    ("actions", "allowed_actions"): SECURITY,
+    ("actions", "github_owned_allowed"): SECURITY,
+    ("actions", "verified_allowed"): SECURITY,
+    ("actions", "patterns_allowed"): SECURITY,
+    ("actions", "sha_pinning_required"): SECURITY,
+    ("actions", "default_workflow_permissions"): SECURITY,
+    ("actions", "can_approve_pull_request_reviews"): SECURITY,
+    ("actions", "fork_pr_approval_policy"): SECURITY,
+    # [branch_protection] — structural protection is security; policy knobs
+    # (who it applies to, which API) are preference.
+    ("branch_protection", "protected_branch"): PREFERENCE,
+    ("branch_protection", "require_pull_request"): SECURITY,
+    ("branch_protection", "required_approving_reviews"): SECURITY,
+    ("branch_protection", "dismiss_stale_reviews"): SECURITY,
+    ("branch_protection", "require_conversation_resolution"): PREFERENCE,
+    ("branch_protection", "enforce_admins"): PREFERENCE,
+    ("branch_protection", "allow_force_pushes"): SECURITY,
+    ("branch_protection", "allow_deletions"): SECURITY,
+    ("branch_protection", "use_rulesets"): PREFERENCE,
+    # [tag_protection] — all security.
+    ("tag_protection", "protected_tags"): SECURITY,
+    ("tag_protection", "prevent_tag_deletion"): SECURITY,
+    ("tag_protection", "prevent_tag_update"): SECURITY,
+    # [security] — all security (config keys, then the plugin's plan keys).
+    ("security", "enable_dependabot_alerts"): SECURITY,
+    ("security", "enable_dependabot_security_updates"): SECURITY,
+    ("security", "enable_private_vulnerability_reporting"): SECURITY,
+    ("security", "enable_secret_scanning_push_protection"): SECURITY,
+    ("security", "dependabot_alerts"): SECURITY,
+    ("security", "dependabot_security_updates"): SECURITY,
+    ("security", "private_vulnerability_reporting"): SECURITY,
+    ("security", "secret_scanning"): SECURITY,
+    ("security", "enable_dependency_graph"): SECURITY,
+}
+
+# Which way is "stricter", for every security-tier setting that can appear
+# as a plan row. Three shapes:
+#   True / False  — a boolean whose *strict* value is this one
+#   "higher"      — a number; larger is stricter
+#   "subset"      — a list; fewer entries is stricter (strict subset)
+#   (a, b, c)     — an enum ordered weakest → strictest
+# `protected_tags` is scope (which tags), not strictness, and has no direction.
+SAFE_DIRECTIONS = {
+    # local_only (only actions defined in this repo) admits less third-party
+    # code than selected (GitHub-owned + verified + patterns).
+    ("actions", "allowed_actions"): ("all", "selected", "local_only"),
+    ("actions", "github_owned_allowed"): False,
+    ("actions", "verified_allowed"): False,
+    ("actions", "patterns_allowed"): "subset",
+    ("actions", "sha_pinning_required"): True,
+    ("actions", "default_workflow_permissions"): ("write", "read"),
+    ("actions", "can_approve_pull_request_reviews"): False,
+    ("actions", "fork_pr_approval_policy"): (
+        "first_time_contributors_new_to_github",
+        "first_time_contributors",
+        "all_external_contributors",
+    ),
+    ("branch_protection", "require_pull_request"): True,
+    ("branch_protection", "required_approving_reviews"): "higher",
+    ("branch_protection", "dismiss_stale_reviews"): True,
+    ("branch_protection", "allow_force_pushes"): False,
+    ("branch_protection", "allow_deletions"): False,
+    ("tag_protection", "prevent_tag_deletion"): True,
+    ("tag_protection", "prevent_tag_update"): True,
+    ("security", "enable_dependabot_alerts"): True,
+    ("security", "enable_dependabot_security_updates"): True,
+    ("security", "enable_private_vulnerability_reporting"): True,
+    ("security", "enable_secret_scanning_push_protection"): True,
+    ("security", "dependabot_alerts"): True,
+    ("security", "dependabot_security_updates"): True,
+    ("security", "private_vulnerability_reporting"): True,
+    ("security", "secret_scanning"): True,
+    ("security", "enable_dependency_graph"): True,
+}
+
+
+def setting_tier(section, key):
+    """Tier of a plan row: "security", "preference", or None outside MERGE_SECTIONS."""
+    if section not in MERGE_SECTIONS:
+        return None
+    return SETTING_TIERS.get((section, key), _SECTION_TIERS[section])
+
+
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes")
+
+
+def is_stricter(section, key, value, than):
+    """True if ``value`` is a stricter posture than ``than`` for this setting.
+
+    False when they are equal, when ``value`` is weaker, or when the setting
+    has no known direction (the policy then treats the human's value as
+    not-stricter and applies ours, without the ⚠ weakened marker — see
+    ``has_direction()``).
+    """
+    direction = SAFE_DIRECTIONS.get((section, key))
+    if direction is None:
+        return False
+    if direction == "higher":
+        try:
+            return int(value) > int(than)
+        except (TypeError, ValueError):
+            return False
+    if direction == "subset":
+        a, b = set(value or ()), set(than or ())
+        return a < b
+    if isinstance(direction, tuple):
+        try:
+            return direction.index(value) > direction.index(than)
+        except ValueError:
+            return False
+    # boolean: the strict value is `direction`
+    return _as_bool(value) == direction and _as_bool(than) != direction
+
+
+def has_direction(section, key):
+    return (section, key) in SAFE_DIRECTIONS
+
+
 def _default_config_path():
     """Return the first existing config file, or the XDG path as fallback."""
     # Check current working directory first
@@ -113,9 +275,18 @@ class ConfigManager:
         for section, values in SAFE_DEFAULTS.items():
             self._config[section] = values
 
+        # Sections the user's own file names: explicit intent, as opposed to
+        # values that fell through from SAFE_DEFAULTS. The merge policy in
+        # fix/audit enforces a declared section even where a human changed
+        # the repo away from GitHub's default.
+        self._declared_sections = frozenset()
+
         # Override with user config if it exists
         if self._path.exists():
             try:
+                user = configparser.ConfigParser()
+                user.read(self._path)
+                self._declared_sections = frozenset(user.sections())
                 self._config.read(self._path)
                 self._config_source = str(self._path)
             except configparser.Error as e:
@@ -124,6 +295,14 @@ class ConfigManager:
             raise ConfigError(f"Config file not found: {self._path}")
         else:
             self._config_source = "built-in defaults"
+
+    @property
+    def declared_sections(self) -> frozenset:
+        """Sections present in the user's INI file (empty with no file)."""
+        return self._declared_sections
+
+    def is_declared(self, section) -> bool:
+        return section in self._declared_sections
 
     def get(self, section, key, fallback=None):
         return self._config.get(section, key, fallback=fallback)

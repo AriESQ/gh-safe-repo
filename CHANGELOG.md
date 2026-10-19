@@ -9,6 +9,37 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- `audit` and `fix` now resolve each setting with a three-way comparison
+  (GitHub's default, the repo's current value, the desired value). A setting
+  a person changed away from GitHub's default is reported as `PRESERVE` and
+  left alone: always for preference-tier settings (`[repo]`, Actions
+  `enabled`, `enforce_admins`, `require_conversation_resolution`,
+  `use_rulesets`), and for security-tier settings when the current value is
+  stricter than the desired one. A security setting that is weaker than
+  GitHub's default is still an `UPDATE`, marked `⚠ weakened from default`.
+  Declaring a section in the config file enforces every setting in it
+  regardless. See "What `fix` leaves alone" in the README.
+- `--all` on `audit` and `fix`: turn the merge policy off and treat every
+  differing setting as a change, exactly as before this release.
+- Plan table: the `PRESERVE` row type with its reason (`changed from
+  default`, `stricter than N`), the `⚠ weakened from default` marker, and a
+  separate `preserved` count on the summary line.
+- `--json`: every change carries `tier`, `github_default` and `weakened`;
+  `summary` gains `preserve` when present.
+- `config_manager.SETTING_TIERS` / `SAFE_DIRECTIONS` (tier and "stricter"
+  direction per setting) and `ConfigManager.declared_sections`.
+
+### Changed
+- `audit` exits `3` only for `ADD`/`UPDATE`/`DELETE` rows. A repo whose only
+  differences are `PRESERVE` rows prints the table and exits `0`.
+- `fix` verification re-applies the merge policy to the re-read, so a
+  preserved setting is never reported as a mismatch. Ruleset writes (branch
+  and tag protection) carry the preserved value for a kept key rather than
+  resetting it to the desired one.
+- `new`, `push` and `copy` are unaffected: no merge logic on a repo that
+  does not exist yet.
+
 ## [0.9.0] - 2026-10-19
 
 **Breaking.** The verbs were rewritten. `create`, `create --local`,

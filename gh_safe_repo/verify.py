@@ -190,13 +190,19 @@ def _mismatch(change, remediation):
 
 
 
-def _audit(plugin):
-    """Re-read one plugin strictly and return its post-apply audit Plan."""
+def _audit(plugin, policy=None):
+    """Re-read one plugin strictly and return its post-apply audit Plan.
+
+    ``policy`` (fix: ``apply_merge_policy``) is applied to the re-audit so a
+    row the policy PRESERVEd before the apply is PRESERVEd again here and
+    never counted as a mismatch.
+    """
     forget = getattr(plugin.client, "forget_repo", None)
     if callable(forget):
         forget(plugin.owner, plugin.repo)
     state = plugin.fetch_current_state(strict=True)
-    return plugin.plan(current_state=state)
+    audit = plugin.plan(current_state=state)
+    return policy(audit) if policy is not None else audit
 
 
 @dataclass
@@ -265,9 +271,9 @@ def _run_rounds(tasks, sleep, delays):
     return [results[i] for i in range(len(tasks))], len(schedule)
 
 
-def _plugin_task(plugin):
+def _plugin_task(plugin, policy=None):
     def task():
-        audit = _audit(plugin)
+        audit = _audit(plugin, policy)
         return audit, not audit.has_changes()
     return task
 
@@ -286,12 +292,15 @@ def verify(
     remediation: Optional[str] = None,
     sleep: Optional[Callable[[float], None]] = None,
     delays: Sequence[float] = DEFAULT_DELAYS,
+    policy: Optional[Callable[[Plan], Plan]] = None,
 ) -> Verification:
     """Re-audit plugins and run probes in one set of retry rounds.
 
     Probe checks come first, in order, then plugin checks. See
     ``verify_plugins()`` for how audits map to checks. ``remediation`` is
-    attached to plugin mismatches only; probes carry their own.
+    attached to plugin mismatches only; probes carry their own. ``policy``
+    transforms each re-audit plan before it is read (``fix`` passes its
+    merge policy so PRESERVE rows are not mismatches).
     """
     sleep = sleep or time.sleep
     probes = list(probes)
@@ -306,7 +315,7 @@ def verify(
         ]
         pending.append((plugin, expected))
 
-    tasks = [_probe_task(p) for p in probes] + [_plugin_task(p) for p, _ in pending]
+    tasks = [_probe_task(p) for p in probes] + [_plugin_task(p, policy) for p, _ in pending]
     results, attempts = _run_rounds(tasks, sleep, delays)
     probe_results, plugin_results = results[:len(probes)], results[len(probes):]
 
@@ -376,6 +385,7 @@ def verify_plugins(
     remediation: Optional[str] = None,
     sleep: Optional[Callable[[float], None]] = None,
     delays: Sequence[float] = DEFAULT_DELAYS,
+    policy: Optional[Callable[[Plan], Plan]] = None,
 ) -> Verification:
     """Re-audit plugins after apply and turn the result into checks.
 
@@ -398,8 +408,11 @@ def verify_plugins(
     ``remediation`` is attached to mismatch checks (e.g. the exact
     ``gh-safe-repo fix owner/repo --yes`` command). ``sleep`` defaults to
     ``time.sleep`` resolved at call time, so tests can patch or inject it.
+    ``policy`` is applied to every re-audit plan first (the ``fix`` merge
+    policy): a PRESERVE row is not actionable and so never a mismatch.
     """
-    return verify(pairs, (), remediation=remediation, sleep=sleep, delays=delays)
+    return verify(pairs, (), remediation=remediation, sleep=sleep, delays=delays,
+                  policy=policy)
 
 
 # ── create: dedicated checks for CREATE_ONLY_KEYS ───────────────────────────

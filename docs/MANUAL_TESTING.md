@@ -464,6 +464,35 @@ prints one line, `All settings compliant.`, and `exit=0`. No prompt is shown
 in either case and nothing changes on GitHub. `audit ... --json` prints the
 plan document and uses the same exit codes.
 
+### 5.4c PRESERVE: a deliberate change is left alone, `--all` enforces it
+
+```bash
+# A person turns the wiki off and raises required reviews on the drifted repo.
+gh repo edit YOUR_USERNAME/gsr-test-fix-target-01 --enable-wiki=false
+gh api -X PATCH repos/YOUR_USERNAME/gsr-test-fix-target-01/rulesets/<ID> \
+  --input - <<<'{"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":3,"dismiss_stale_reviews_on_push":true,"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":true}}]}'
+# (or raise the review count in the ruleset UI)
+
+gh-safe-repo audit YOUR_USERNAME/gsr-test-fix-target-01 --config <(printf '[repo]\nhas_wiki = true\n'); echo "exit=$?"
+gh-safe-repo audit YOUR_USERNAME/gsr-test-fix-target-01 --all; echo "exit=$?"
+gh-safe-repo fix   YOUR_USERNAME/gsr-test-fix-target-01 --yes; echo "exit=$?"
+```
+
+**Expected:** the first `audit` shows `UPDATE repo has_wiki False → True`
+(the section is declared in the config, so explicit config wins) and
+`PRESERVE branch_protection required_approving_reviews 3 (stricter than 1)`.
+Without the config, `has_wiki` is not managed at all. The summary line reads
+`N change(s) to apply, 1 preserved, M skipped` followed by the hint about
+declaring the section or passing `--all`. With `--all` the same row is
+`UPDATE 3 → 1` and there is no `PRESERVE` anywhere. `fix --yes` without
+`--all` applies whatever else drifted, the `Verified` block has no row for
+`required_approving_reviews`, and afterwards the ruleset still requires 3
+reviews (`gh api repos/.../rulesets/<ID>`): writing the other branch rules
+did not reset the preserved one. A repo whose only differences are
+`PRESERVE` rows prints the table (not `All settings compliant.`) and
+`audit` exits `0`. `--json` rows carry `"tier"`, `"github_default"` and
+`"weakened"`, and `summary` has a `"preserve"` count.
+
 ### 5.5 Fix a non-existent repo
 
 ```bash

@@ -87,7 +87,7 @@ def run(args, audit=False):
                 f"('{ctx.owner}').\n"
                 "  - If it exists under a different account, you may be "
                 "authenticated as the wrong GitHub account.\n"
-                "  - To create it, use `gh-safe-repo create`."
+                "  - To create it, use `gh-safe-repo new`."
             )
         else:
             error(f"Failed to fetch repository info: {e}")

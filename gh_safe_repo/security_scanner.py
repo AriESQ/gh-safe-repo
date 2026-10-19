@@ -1,5 +1,5 @@
 """
-Pre-flight security scanner for the publish and mirror workflows.
+Pre-flight security scanner for the push and copy workflows.
 
 Detects hardcoded secrets, emails, large files, and TODOs before
 code is mirrored or pushed to a GitHub repository.

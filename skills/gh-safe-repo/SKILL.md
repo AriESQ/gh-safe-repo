@@ -1,6 +1,6 @@
 ---
 name: gh-safe-repo
-description: Drive the gh-safe-repo CLI to create a GitHub repository with hardened defaults, publish a local project or mirror an existing repo into a new hardened one, audit or fix settings on an existing repo (branch protection, rulesets, Dependabot alerts, secret scanning, push protection, Actions permissions, tag protection), or scan a local directory for secrets before publishing it. Use when asked to create/publish a GitHub repo, push a local project to a new repo, harden or audit repo security settings, or check code for leaked credentials before it goes public.
+description: Drive the gh-safe-repo CLI to create a GitHub repository with hardened defaults, push a local project or copy an existing repo into a new hardened one, audit or fix settings on an existing repo (branch protection, rulesets, Dependabot alerts, secret scanning, push protection, Actions permissions, tag protection), or scan a local directory for secrets before publishing it. Use when asked to create/publish a GitHub repo, push a local project to a new repo, harden or audit repo security settings, or check code for leaked credentials before it goes public.
 ---
 
 # gh-safe-repo
@@ -9,14 +9,14 @@ A CLI that applies safe defaults to GitHub repos. Six commands:
 
 | Command | Target | Changes GitHub? | Needs |
 |---|---|:-:|---|
-| `create <owner/repo>` | a **new**, empty repo | yes | `owner` must equal the authenticated user |
-| `publish <path> <owner/repo>` | a **new** repo filled from a local git repo | yes | same, plus git credentials; scans `path` first |
-| `mirror <src-owner/repo> <owner/repo>` | a **new** repo copied from an existing one (not a fork) | yes | same, plus git credentials; scans the clone first |
+| `new <owner/repo>` | a **new**, empty repo | yes | `owner` must equal the authenticated user |
+| `push <path> <owner/repo>` | a **new** repo filled from a local git repo | yes | same, plus git credentials; scans `path` first |
+| `copy <src-owner/repo> <owner/repo>` | a **new** repo copied from an existing one (not a fork) | yes | same, plus git credentials; scans the clone first |
 | `audit <owner/repo>` | an **existing** repo, read-only | **no** | **admin** on the repo (org repos OK) |
 | `fix <owner/repo>` | an **existing** repo | yes | **admin** on the repo (org repos OK) |
 | `scan [path]` | a local directory (default `.`) | **no** | nothing — no GitHub calls at all |
 
-Options are uniform by class. `create`, `publish` and `mirror` take
+Options are uniform by class. `new`, `push` and `copy` take
 `--public`, `--dry-run`, `--yes`, `--json`. `fix` takes `--dry-run`, `--yes`,
 `--json`, `--migrate-branch-protection`. `audit` and `scan` take only
 `--json`. Global, on either side of the command: `--config PATH`,
@@ -24,10 +24,10 @@ Options are uniform by class. `create`, `publish` and `mirror` take
 always needs a value.
 
 Where a command takes two positionals the **source comes first** and the new
-repo second (`publish . alice/app`, `mirror upstream/lib alice/lib`).
+repo second (`push . alice/app`, `copy upstream/lib alice/lib`).
 
-`audit` and `fix` are settings-only (they never scan for secrets). `publish`
-and `mirror` always run a pre-flight secret scan first.
+`audit` and `fix` are settings-only (they never scan for secrets). `push`
+and `copy` always run a pre-flight secret scan first.
 
 ## Operating rules
 
@@ -45,21 +45,21 @@ and `mirror` always run a pre-flight secret scan first.
    four are not.
 
 ```bash
-gh-safe-repo publish . alice/my-repo --dry-run --json   # 1. plan (new repo)
+gh-safe-repo push . alice/my-repo --dry-run --json   # 1. plan (new repo)
 # show the user the plan, get agreement
-gh-safe-repo publish . alice/my-repo --yes              # 2. apply
+gh-safe-repo push . alice/my-repo --yes              # 2. apply
 
 gh-safe-repo audit alice/my-repo --json                 # 1. plan (existing repo); exit 3 = drift
 gh-safe-repo fix alice/my-repo --yes                    # 2. apply
 ```
 
-`publish` pushes **every** local branch and tag, not just the checked-out
+`push` pushes **every** local branch and tag, not just the checked-out
 one. The default branch is `init.defaultBranch`, else `main`, else `master`,
 else the current branch; the plan's `code` entry names it
 (`Push N branch(es) from PATH (default: X)`). Check it before `--yes`: any
-local branch, including unfinished work, will be published.
+local branch, including unfinished work, will be pushed.
 
-`mirror` creates a fresh repository. It is **not** a GitHub fork and has no
+`copy` creates a fresh repository. It is **not** a GitHub fork and has no
 "forked from" link; say so if the user asked to "fork" something.
 
 Set `NO_COLOR=1` if you want to be sure of clean output; the tool already
@@ -70,7 +70,7 @@ drops ANSI codes when stdout is not a terminal.
 | Code | Meaning |
 |---|---|
 | `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `audit`: the repo is compliant. For the mutating commands, everything applied was read back and verified (`unknown` checks and `advisory` local-wiring checks warn but still exit `0`) |
-| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `publish`/`mirror` (the repo **was** created; see Failure modes). For the creating commands, also a failed **fatal** check: the new repo cannot be found, its visibility is wrong, or (`publish`/`mirror`) a pushed branch or tag is missing on GitHub or at a different SHA |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `push`/`copy` (the repo **was** created; see Failure modes). For the creating commands, also a failed **fatal** check: the new repo cannot be found, its visibility is wrong, or (`push`/`copy`) a pushed branch or tag is missing on GitHub or at a different SHA |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--config` with `--no-config`, an unknown flag (including the removed `--local`/`--from`) |
 | `3` | `audit`: at least one setting differs from the safe defaults; `fix` would change it. Or a mutating command applied the changes but at least one setting did not stick when read back (a non-fatal, non-advisory `mismatch` check, e.g. `repo/default_branch`). For the creating commands the repo exists and is usable. See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
@@ -88,7 +88,7 @@ so `scan` returning `1` is a *result*, not a crash.
 
 ## Reading `--json`
 
-`audit`, and `create`/`publish`/`mirror`/`fix` with `--json`, emit the plan on
+`audit`, and `new`/`push`/`copy`/`fix` with `--json`, emit the plan on
 stdout (all prose goes to stderr):
 
 ```json
@@ -128,16 +128,16 @@ the absence of warnings on stderr.
 The creating commands add checks no audit can make: `repo/repository` (the
 repo exists) and `repo/visibility` (both `fatal`), `file/readme` (the
 auto-generated README is gone), `repo/description` and `repo/topics`
-(`mirror` copied them), and `branch_protection/protected_branches` /
+(`copy` copied them), and `branch_protection/protected_branches` /
 `tag_protection/protected_tags` (protection covers the branch and tag
 patterns).
 
-`publish` and `mirror` add code checks, read through the REST API (no
+`push` and `copy` add code checks, read through the REST API (no
 `git ls-remote`, so no extra hardware-key touch): `code/branches` and
 `code/tags` (both `fatal`; `expected` is the `{name: sha}` that was pushed,
-or the `mirror` source's refs, and `actual` is GitHub's SHA for each name,
+or the `copy` source's refs, and `actual` is GitHub's SHA for each name,
 `null` when missing; an annotated tag is compared by its tag object SHA),
-and `repo/default_branch` (exit `3`). `publish` also adds `local/origin` and
+and `repo/default_branch` (exit `3`). `push` also adds `local/origin` and
 `local/tracking` (`advisory`): your repo's `remote.origin.url` and
 `branch.<b>.remote`/`.merge`, read from local git config.
 
@@ -179,7 +179,7 @@ A `SKIP` can also simply mean the setting is already correct. `audit` prints
 
 | Symptom | Cause and fix |
 |---|---|
-| `unrecognized arguments: --local ...` or `--from ...` (exit 2) | Those flags were removed. Use `publish <path> <owner/repo>` or `mirror <src-owner/repo> <owner/repo>`. |
+| `unrecognized arguments: --local ...` or `--from ...` (exit 2) | Those flags were removed. Use `push <path> <owner/repo>` or `copy <src-owner/repo> <owner/repo>`. |
 | `argument --config: expected one argument` (exit 2) | `--config` needs a path. To ignore config files, pass `--no-config`. |
 | `Owner 'X' does not match authenticated user 'Y'` | The creating commands require you own the namespace. Check which account `gh` is authenticated as; do not silently retry with `Y`. |
 | `audit`/`fix` reports the repo does not exist (404) | Ambiguous: missing repo, or private and invisible to the *active* account. Confirm the active `gh` account before concluding it is gone. |
@@ -187,13 +187,13 @@ A `SKIP` can also simply mean the setting is already correct. `audit` prints
 | `Repository already exists` | Use `audit`/`fix` instead of a creating command. |
 | `--yes is required for unattended runs` (exit 1) | You ran a mutating command without `--yes` and stdin was closed, so the confirmation prompt got no answer. Nothing was created or changed. If the user has agreed to the plan, re-run the same command with `--yes`; otherwise show them the plan first. |
 | Pre-flight scan blocked the run (exit 1) | Real secrets were found. Show the findings, let the user remove them; do not re-run with different flags to bypass. |
-| `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `publish`/`mirror` stopped before creating anything. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
+| `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `push`/`copy` stopped before creating anything. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
 | `git ls-remote ... timed out after 45s` (exit 1, nothing created) | Over SSH this is usually a hardware security key waiting for a touch. Ask the user to be ready at the key, then re-run the same command; it is safe because nothing was created. |
-| `Permission denied (publickey)` with `Likely cause: SSH settings are read from the git config of <dir>` (exit 1) | The user's key is chosen per directory and did not apply where the tool ran. For `mirror`, re-run from inside the directory where their key setting applies (e.g. their checkout tree); for `publish`, the PATH's own git config is used. Do not change their SSH or git config. |
+| `Permission denied (publickey)` with `Likely cause: SSH settings are read from the git config of <dir>` (exit 1) | The user's key is chosen per directory and did not apply where the tool ran. For `copy`, re-run from inside the directory where their key setting applies (e.g. their checkout tree); for `push`, the PATH's own git config is used. Do not change their SSH or git config. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |
 | `Code push failed: ...` (exit 1) | The repo exists on GitHub, settings applied, but it is **empty**; branch/tag protection were skipped. Do not re-run the creating command (it will fail: repo exists). Fix the cause, then run the recovery commands printed on stderr, ending with `gh-safe-repo fix <owner/repo> --yes`. `Likely cause: your SSH security key did not confirm` means a missed hardware-key touch: ask the user to touch the key and retry the push; it is not a permissions problem. The tool has already retried once (stderr shows `Your SSH security key did not confirm. Touch it when it blinks to retry...`), so this means two touches were missed. |
-| `publish`/`mirror` exits `1` with `✗ code/branches` or `✗ code/tags` (`fatal: true`) | The push reported success but GitHub does not have every pushed ref at the pushed SHA, even after ~7s of retries. The repo exists; do not re-run the creating command. Show the user which names differ (`expected` vs `actual`; `null` = missing), then run the printed `remediation` (re-push from the local repo with explicit refspecs, or re-mirror), then `gh-safe-repo fix <owner/repo> --yes` for branch/tag protection. A differing SHA (not `null`) means GitHub holds other commits: ask the user before any force push. |
-| `publish`/`mirror` exits `3` with `✗ repo/default_branch` | The code is all there but GitHub's default branch is not the one chosen. Show the user the `gh repo edit <owner/repo> --default-branch <b>` remediation and run it once they agree; `fix` does not manage it. |
+| `push`/`copy` exits `1` with `✗ code/branches` or `✗ code/tags` (`fatal: true`) | The push reported success but GitHub does not have every pushed ref at the pushed SHA, even after ~7s of retries. The repo exists; do not re-run the creating command. Show the user which names differ (`expected` vs `actual`; `null` = missing), then run the printed `remediation` (re-push from the local repo with explicit refspecs, or re-mirror), then `gh-safe-repo fix <owner/repo> --yes` for branch/tag protection. A differing SHA (not `null`) means GitHub holds other commits: ask the user before any force push. |
+| `push`/`copy` exits `3` with `✗ repo/default_branch` | The code is all there but GitHub's default branch is not the one chosen. Show the user the `gh repo edit <owner/repo> --default-branch <b>` remediation and run it once they agree; `fix` does not manage it. |
 | `Code pushed, but local repo not fully wired: ...`, or `✗ local/origin` / `✗ local/tracking` (`advisory: true`, exit `0`) | The push succeeded and GitHub is fine; only the user's local `origin`/upstream is not pointing at the new repo. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose; the check's remediation says so). Report it to the user; do not rewrite their `origin` yourself. The remediation and the banner give the exact `git remote add`/`set-url origin <url>` and `git push -u origin <b>:<b>` commands. Not a failure: do not retry over it. |
 | `audit` exits `3` | Not a failure: the repo has drift. Show the table (or `--json` document) to the user and offer `fix <owner/repo> --yes`. |
 | A mutating command exits `3`, `✗` rows / `mismatch` checks | The changes were sent but GitHub does not hold them (ignored, or the apply failed with a warning). Run `gh-safe-repo fix <owner/repo> --yes` **once** more (never re-run a creating command: the repo exists). If it still exits `3`, stop and report the rows to the user — an org policy or plan limit is overriding the setting; do not loop. For `file/readme`, `repo/description` and `repo/topics`, `fix` does not manage them: run the `remediation` command instead, after showing it to the user. |

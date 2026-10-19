@@ -459,7 +459,7 @@ def _problem_lines(verification):
 
 
 def _local_next_step(verification, wiring):
-    """Banner lines for the user's local repo after `publish`.
+    """Banner lines for the user's local repo after `push`.
 
     Built from the `local/origin` and `local/tracking` verification checks
     (what git config actually says), falling back to `wiring` (what
@@ -770,7 +770,7 @@ def _resolve_branches(config, post_default_branch=None, source_default_branch=No
     """
     Determine the list of branches to protect, in priority order:
       1. POST /user/repos response default_branch (new repo, non-dry-run)
-      2. GET /repos/{owner}/{source} default_branch (`mirror`, non-dry-run)
+      2. GET /repos/{owner}/{source} default_branch (`copy`, non-dry-run)
       3. protected_branch from config (may be "master, main" from SAFE_DEFAULTS)
     """
     if post_default_branch:

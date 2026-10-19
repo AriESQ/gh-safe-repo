@@ -5,7 +5,7 @@
 Create GitHub repositories with safe defaults applied, in one command.
 
 ```
-gh-safe-repo create <owner/repo>
+gh-safe-repo new <owner/repo>
 ```
 
 Branch protection, immutable tags, locked-down Actions, Dependabot, secret
@@ -26,7 +26,7 @@ your machine.
 - [CLI reference](#cli-reference)
 - [Output](#output) — plan table, JSON, verification, exit codes
 - [Safe defaults](#safe-defaults)
-- [Pushing code](#pushing-code) — `publish` and `mirror`
+- [Pushing code](#pushing-code) — `push` and `copy`
 - [Pre-flight scanner](#pre-flight-scanner)
 - [Configuration](#configuration)
 - [GitHub plan limitations](#github-plan-limitations)
@@ -70,7 +70,7 @@ Requirements:
 - truffleHog v3 (optional) for the pre-flight scanner. It is found on `PATH`
   or run via podman/docker; without either, a regex scanner is used.
 
-Pushing code with `publish` or `mirror` also needs your normal git
+Pushing code with `push` or `copy` also needs your normal git
 credentials for GitHub. See [Pushing code](#pushing-code).
 
 ```bash
@@ -84,7 +84,7 @@ To run without installing:
 
 ```bash
 uv sync
-./gh-safe-repo create <owner/repo>
+./gh-safe-repo new <owner/repo>
 ```
 
 ## Quick start
@@ -92,7 +92,7 @@ uv sync
 **1. Preview.** `--dry-run` makes no API calls and creates nothing.
 
 ```
-$ gh-safe-repo create AriESQ/demo-repo --dry-run
+$ gh-safe-repo new AriESQ/demo-repo --dry-run
 
 Configuring AriESQ/demo-repo...
 
@@ -128,7 +128,7 @@ failing silently. See [GitHub plan limitations](#github-plan-limitations).
 prompt (`--yes` skips it).
 
 ```bash
-gh-safe-repo create AriESQ/demo-repo
+gh-safe-repo new AriESQ/demo-repo
 ```
 
 **3. Start working.** On success you get a **Verified** section (every
@@ -154,11 +154,11 @@ listed first.
 
 ## Commands
 
-### Create a new repo
+### Create an empty repo
 
 ```bash
-gh-safe-repo create <owner/repo>            # private (default)
-gh-safe-repo create <owner/repo> --public   # public: branch and tag protection apply
+gh-safe-repo new <owner/repo>            # private (default)
+gh-safe-repo new <owner/repo> --public   # public: branch and tag protection apply
 ```
 
 The repo is initialized so a default branch exists (branch protection needs
@@ -170,7 +170,7 @@ systems.
 ### Push an existing local project
 
 ```bash
-gh-safe-repo publish ~/projects/myapp <owner/repo>
+gh-safe-repo push ~/projects/myapp <owner/repo>
 ```
 
 Scans the directory for secrets, creates the repo, pushes every branch and
@@ -183,8 +183,8 @@ pushed branch and tag is checked against GitHub SHA for SHA. Details in
 ### Mirror an existing repo
 
 ```bash
-gh-safe-repo mirror <owner/source> <owner/repo>
-gh-safe-repo mirror <owner/priv> <owner/pub> --public   # scanned thoroughly first
+gh-safe-repo copy <owner/source> <owner/repo>
+gh-safe-repo copy <owner/priv> <owner/pub> --public   # scanned thoroughly first
 ```
 
 Clones the source with full history, scans it, mirrors it into the new repo,
@@ -231,12 +231,12 @@ Local only. Nothing is sent to GitHub. See [Pre-flight scanner](#pre-flight-scan
 ```
 gh-safe-repo [--config PATH | --no-config] [--debug] <command> ...
 
-create   <owner/repo>                   [--public] [--dry-run] [--yes] [--json]
-publish  <path> <owner/repo>            [--public] [--dry-run] [--yes] [--json]
-mirror   <src-owner/repo> <owner/repo>  [--public] [--dry-run] [--yes] [--json]
-audit    <owner/repo>                   [--json]
-fix      <owner/repo>                   [--dry-run] [--yes] [--json] [--migrate-branch-protection]
-scan     [path]                         [--json]
+new    <owner/repo>                   [--public] [--dry-run] [--yes] [--json]
+push   <path> <owner/repo>            [--public] [--dry-run] [--yes] [--json]
+copy   <src-owner/repo> <owner/repo>  [--public] [--dry-run] [--yes] [--json]
+audit  <owner/repo>                   [--json]
+fix    <owner/repo>                   [--dry-run] [--yes] [--json] [--migrate-branch-protection]
+scan   [path]                         [--json]
 ```
 
 Two rules cover the options. Every command that creates a repo takes
@@ -246,7 +246,7 @@ command-specific flag is `fix --migrate-branch-protection`.
 
 Where a command takes two positionals, the source comes first and the new
 repo second, as with `cp`. Every GitHub-targeting command takes `owner/repo`
-(for example `myuser/my-repo`). For `create`, `publish` and `mirror`, the
+(for example `myuser/my-repo`). For `new`, `push` and `copy`, the
 owner of the new repo must be your authenticated account.
 
 **Global options**
@@ -260,17 +260,17 @@ if given twice, the later one wins.
 | `--no-config` | Ignore config files and use built-in defaults only. Cannot be combined with `--config` |
 | `--debug` | Print every API call and response. For `audit` and `fix`, also the resolved repo identity (id, full name, owner type) |
 
-**`create <owner/repo>`, `publish <path> <owner/repo>`, `mirror <src-owner/repo> <owner/repo>`**
+**`new <owner/repo>`, `push <path> <owner/repo>`, `copy <src-owner/repo> <owner/repo>`**
 
 | Option | Description |
 |---|---|
 | `--public` | Create a public repo (default: private) |
-| `--dry-run` | Print the plan and make no API calls. `publish` and `mirror` skip the pre-flight scan too |
+| `--dry-run` | Print the plan and make no API calls. `push` and `copy` skip the pre-flight scan too |
 | `--yes`, `-y` | Skip the confirmation prompt. Scan warnings are accepted; critical findings still stop the run (exit `1`). Required when stdin is not a terminal |
 | `--json` | Emit the plan as JSON on stdout. On a real run it is printed once at the end with a `verification` block |
 
-`publish` requires `path` to be an initialized git repository and runs the
-pre-flight scan on it. `mirror` clones the source with full history and
+`push` requires `path` to be an initialized git repository and runs the
+pre-flight scan on it. `copy` clones the source with full history and
 scans the clone. Both work for private and public destinations.
 
 **`audit <owner/repo>`**
@@ -318,7 +318,7 @@ With `--json`, the document is the only thing on stdout. Progress, warnings,
 prompts and the banner go to stderr.
 
 - `audit --json` and `--dry-run --json` print the plan immediately.
-- A real `create`/`publish`/`mirror`/`fix` run prints the plan once at the end with a
+- A real `new`/`push`/`copy`/`fix` run prints the plan once at the end with a
   `verification` block. Without `--yes` the plan table is shown on stderr
   before the prompt. Declining the prompt prints the document without
   `verification`.
@@ -361,7 +361,7 @@ not run.
 
 ### Verification
 
-After applying, `create` and `fix` read every changed setting back from
+After applying, the creating commands and `fix` read every changed setting back from
 GitHub and print one row per setting. Only settings the run changed are
 re-read; `SKIP` rows are not. GitHub is briefly inconsistent after a write,
 so a wrong or unreadable value is re-read after 1s, 2s and 4s before it is
@@ -381,18 +381,18 @@ Verified
 | `✗` | `mismatch` | GitHub holds something else | `3` |
 | `?` | `unknown` | Could not be read back (permission or server error) | `0`, with a warning |
 
-`create` adds checks that only a new repo needs:
+The creating commands add checks that only a new repo needs:
 
 | Check | Passes when | On failure |
 |---|---|---|
 | `repo/repository` | the new repo is found | exit `1`; nothing else is checked |
 | `repo/visibility` | visibility is what you asked for | exit `1`, with the `gh repo edit --visibility` command |
-| `file/readme` | the auto-generated README is gone (plain `create` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
-| `repo/description`, `repo/topics` | `mirror`: copied from the source | exit `3`, with the `gh repo edit` command |
+| `file/readme` | the auto-generated README is gone (`new` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
+| `repo/description`, `repo/topics` | `copy`: copied from the source | exit `3`, with the `gh repo edit` command |
 | `branch_protection/protected_branches`, `tag_protection/protected_tags` | the ruleset covers the default branch and configured tag patterns | exit `3` |
-| `code/branches`, `code/tags` | `publish`: every pushed ref is on GitHub at the pushed SHA. `mirror`: every ref of the source is on the new repo at the source's SHA. Annotated tags compare by tag object SHA | exit `1`, with the push or mirror command to re-run |
-| `repo/default_branch` | `publish`/`mirror`: the default branch is the one chosen | exit `3`, with the `gh repo edit --default-branch` command |
-| `local/origin`, `local/tracking` | `publish`: your repo's `origin` is the new repo and the current branch tracks it | warning only (`"advisory": true`), with the `git remote` or `git push -u` command. An `origin` that already pointed elsewhere is reported as left alone |
+| `code/branches`, `code/tags` | `push`: every pushed ref is on GitHub at the pushed SHA. `copy`: every ref of the source is on the new repo at the source's SHA. Annotated tags compare by tag object SHA | exit `1`, with the push or mirror command to re-run |
+| `repo/default_branch` | `push`/`copy`: the default branch is the one chosen | exit `3`, with the `gh repo edit --default-branch` command |
+| `local/origin`, `local/tracking` | `push`: your repo's `origin` is the new repo and the current branch tracks it | warning only (`"advisory": true`), with the `git remote` or `git push -u` command. An `origin` that already pointed elsewhere is reported as left alone |
 
 Remote refs are read through the REST API, not `git ls-remote`, so
 verification costs no extra SSH connection or hardware-key touch. The banner
@@ -513,7 +513,7 @@ admins are on the bypass list, matching `enforce_admins = false`.
 
 ## Pushing code
 
-`publish` and `mirror` both create a new repo and populate it, from a local
+`push` and `copy` both create a new repo and populate it, from a local
 git repository or from an existing GitHub repo. Both work for private and
 public destinations. Run `gh-safe-repo scan PATH` first if you want to
 inspect findings without creating anything.
@@ -530,13 +530,13 @@ mode` in [Configuration](#configuration). Token-bearing URLs are never
 written to your `.git/config` and are redacted from all output.
 
 SSH settings such as `core.sshCommand` are read from the git config of the
-`publish` path, or of the **current directory** for `mirror`. If you pick a
-key per directory (`includeIf` plus `core.sshCommand`), run `mirror` from a
+`push` path, or of the **current directory** for `copy`. If you pick a
+key per directory (`includeIf` plus `core.sshCommand`), run `copy` from a
 directory where that applies, or ssh falls back to your default key and
 fails with `Permission denied (publickey)`. The error then names the
 directory and the `core.sshCommand` it found; `--debug` prints it up front.
 
-### `publish <path> <owner/repo>`
+### `push <path> <owner/repo>`
 
 `path` must be an initialized git repository.
 
@@ -561,7 +561,7 @@ The default branch is chosen from the local branches in this order:
 `init.defaultBranch` if set, then `main`, then `master`, then the checked-out
 branch. The plan shows the branch count and the chosen default.
 
-### `mirror <src-owner/repo> <owner/repo>`
+### `copy <src-owner/repo> <owner/repo>`
 
 1. The source is cloned with full history, so truffleHog can walk every
    commit.
@@ -578,7 +578,7 @@ branch. The plan shows the branch count and the chosen default.
 ## Pre-flight scanner
 
 The scanner runs locally and never sends code anywhere. Use it standalone
-(`gh-safe-repo scan [path]`) or let `publish`/`mirror` run it. The
+(`gh-safe-repo scan [path]`) or let `push`/`copy` run it. The
 `[pre_flight_scan]` config applies to both.
 
 ### What it detects
@@ -643,7 +643,7 @@ Running pre-flight security scan... (truffleHog v3.93.4)
 
 Set `trufflehog_mode` to pin an engine. `native` and `docker` are strict: if
 truffleHog cannot run, `scan` prints its findings and exits `1`, and
-`publish`/`mirror` exits `1` before the repo is created. Only `auto`
+`push`/`copy` exits `1` before the repo is created. Only `auto`
 falls back to regex; `off` uses regex by choice.
 
 ### Coverage
@@ -712,7 +712,7 @@ delete_branch_on_merge = false
 allow_squash_merge = true
 allow_merge_commit = true
 allow_rebase_merge = true
-# Keep the auto-generated README on a plain `create` (ignored by publish/mirror)
+# Keep the auto-generated README on `new` (ignored by push/copy)
 auto_init = false
 
 [actions]
@@ -800,15 +800,15 @@ ln -s "$PWD/skills/gh-safe-repo" ~/.claude/skills/gh-safe-repo   # then /gh-safe
 The recipe it enforces is plan, show the user, then apply:
 
 ```bash
-gh-safe-repo publish . alice/my-repo --dry-run --json   # zero API calls
-gh-safe-repo publish . alice/my-repo --yes              # apply
+gh-safe-repo push . alice/my-repo --dry-run --json   # zero API calls
+gh-safe-repo push . alice/my-repo --yes              # apply
 gh-safe-repo audit alice/my-repo --json                 # existing repo: exit 3 on drift
 ```
 
 ## How it works
 
 ```
-gh-safe-repo create <owner/repo>
+gh-safe-repo new <owner/repo>
       │
       ├─ Parse owner/repo; check the owner matches the authenticated user
       ├─ Load config, apply CLI overrides (--public, …)
@@ -837,7 +837,7 @@ gh-safe-repo create <owner/repo>
 
 Each settings category is a plugin in `gh_safe_repo/plugins/` that fetches
 current state, diffs it against config, returns a plan, and applies only real
-changes. `create` and `fix` share this code path; the only difference is
+changes. The creating commands and `fix` share this code path; the only difference is
 whether current state comes from an existing repo or from GitHub's defaults.
 See [`gh_safe_repo/README.md`](gh_safe_repo/README.md) for the module map.
 
@@ -853,7 +853,7 @@ git clone https://github.com/AriESQ/gh-safe-repo
 cd gh-safe-repo
 uv sync                                        # creates .venv, installs pytest
 uv run pytest tests/ -v
-./gh-safe-repo create <owner/repo> --dry-run   # run from source
+./gh-safe-repo new <owner/repo> --dry-run   # run from source
 uv tool install .                              # install from current source
 ```
 
@@ -872,7 +872,7 @@ gh-safe-repo/
 ├── gh-safe-repo              # Thin launcher
 ├── gh_safe_repo/             # Package (see gh_safe_repo/README.md)
 │   ├── cli.py                # Subcommand dispatch
-│   ├── commands/             # create, fix, scan
+│   ├── commands/             # new (create.py), push, copy, audit, fix, scan
 │   └── plugins/              # One plugin per settings category
 ├── skills/gh-safe-repo/      # Agent-facing SKILL.md
 ├── tools/                    # trufflehog wrapper, history-scrubbing scripts

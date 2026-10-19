@@ -21,7 +21,7 @@ allow_rebase_merge = true
 # false (default): the repo still gets a default branch (needed for branch
 #   protection), but the auto-generated README.md is removed afterward.
 # true: keep the initialized README.
-# (Ignored by publish/mirror, which always push your own history instead.)
+# (Ignored by push/copy, which always push your own history instead.)
 auto_init = false
 
 [actions]
@@ -122,7 +122,7 @@ enable_secret_scanning_push_protection = true
 #   - Dependency graph: automatic for public repos; enable via UI for private repos
 
 [pre_flight_scan]
-# Runs automatically for publish and mirror, or standalone via `scan`.
+# Runs automatically for push and copy, or standalone via `scan`.
 # Scans the source locally before any code is copied or made public.
 scan_for_secrets = true
 scan_for_emails = true
@@ -162,7 +162,7 @@ warn_ai_context_files = true
 scan_exclude_paths =
 
 [git_transport]
-# How git push/clone authenticates for publish and mirror: auto | user_creds | token
+# How git push/clone authenticates for push and copy: auto | user_creds | token
 #   auto       — use your own git credentials (SSH key or credential helper) when a
 #                path exists; fall back to pushing over HTTPS with the API token in
 #                the URL only when there is no SSH setup and no credential helper

@@ -49,7 +49,7 @@ class TestCreatePrivateThenFixIdempotent:
         owner, repo_name = live_repo
 
         # Create the repo
-        r = run("create", f"{owner}/{repo_name}", "--yes", "--json")
+        r = run("new", f"{owner}/{repo_name}", "--yes", "--json")
         assert r.returncode == 0
 
         # Fix should show all SKIPs (idempotent)
@@ -77,11 +77,11 @@ class TestCreateDuplicateRepoError:
         owner, repo_name = live_repo
 
         # First create should succeed
-        r = run("create", f"{owner}/{repo_name}", "--yes")
+        r = run("new", f"{owner}/{repo_name}", "--yes")
         assert r.returncode == 0
 
         # Second create should fail
-        r = run("create", f"{owner}/{repo_name}", "--yes")
+        r = run("new", f"{owner}/{repo_name}", "--yes")
         assert r.returncode == 1
         combined = (r.stderr + r.stdout).lower()
         assert "already exists" in combined
@@ -93,7 +93,7 @@ class TestCreatePublicRepo:
     def test_create_public(self, live_repo):
         owner, repo_name = live_repo
 
-        r = run("create", f"{owner}/{repo_name}", "--public", "--yes", "--json")
+        r = run("new", f"{owner}/{repo_name}", "--public", "--yes", "--json")
         assert r.returncode == 0
         data = json.loads(r.stdout)
 
@@ -112,7 +112,7 @@ class TestCreateFromMirror:
         """Create a source repo with content, clean up after."""
         source_name = f"gsr-e2e-{uuid.uuid4().hex[:8]}-source"
         # Create source repo
-        r = run("create", f"{gh_owner}/{source_name}", "--yes")
+        r = run("new", f"{gh_owner}/{source_name}", "--yes")
         assert r.returncode == 0
 
         # Push a test file
@@ -139,7 +139,7 @@ class TestCreateFromMirror:
         dst_owner, dst_name = live_repo
 
         r = run(
-            "mirror", f"{src_owner}/{src_name}",
+            "copy", f"{src_owner}/{src_name}",
             f"{dst_owner}/{dst_name}",
             "--public", "--yes",
         )
@@ -157,7 +157,7 @@ class TestFixSettingsDrift:
             # Create repo manually via gh (not gh-safe-repo) — it will have
             # GitHub defaults, not safe defaults
             subprocess.run(
-                ["gh", "repo", "create", f"{gh_owner}/{repo_name}", "--private", "--add-readme"],
+                ["gh", "repo", "new", f"{gh_owner}/{repo_name}", "--private", "--add-readme"],
                 capture_output=True, check=True, timeout=30,
             )
 
@@ -196,7 +196,7 @@ class TestPreflightScanAbort:
 
             # Pipe "n" to stdin to abort
             r = run(
-                "publish", tmpdir,
+                "push", tmpdir,
                 f"{gh_owner}/{repo_name}",
                 stdin_text="n\n",
             )

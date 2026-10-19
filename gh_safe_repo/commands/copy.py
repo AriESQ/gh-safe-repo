@@ -1,10 +1,10 @@
-"""gh-safe-repo mirror — Copy an existing repo into a new GitHub repo."""
+"""gh-safe-repo copy — Create a repo and copy an existing one into it."""
 
 from ._common import add_common_args, add_create_args
 from .create import run as _create_run
 
-NAME = "mirror"
-HELP = "Copy an existing repo into a new repo with safe defaults (not a fork)"
+NAME = "copy"
+HELP = "Create a repo and copy an existing one into it, history and all (not a fork)"
 
 
 def add_arguments(parser):

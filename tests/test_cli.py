@@ -25,7 +25,7 @@ from gh_safe_repo.commands._common import (
     print_success,
 )
 from gh_safe_repo.cli import build_parser, main
-from gh_safe_repo.commands import audit, create, fix, mirror, publish, scan
+from gh_safe_repo.commands import audit, copy, create, fix, push, scan
 from gh_safe_repo.config_manager import ConfigManager
 from gh_safe_repo.diff import Change, ChangeCategory, ChangeType, Plan
 from gh_safe_repo.security_scanner import SecurityScanner
@@ -159,8 +159,8 @@ class TestResolveBranches:
 class TestCreateFlagValidation:
     @pytest.mark.parametrize("flag,value", [("--local", "."), ("--from", "alice/other")])
     def test_create_has_no_code_source_flags(self, flag, value, capsys):
-        """The old mode switches are gone: code comes in via `publish`/`mirror`."""
-        with patch("sys.argv", ["gh-safe-repo", "create", "alice/my-repo", flag, value]):
+        """The old mode switches are gone: code comes in via `push`/`copy`."""
+        with patch("sys.argv", ["gh-safe-repo", "new", "alice/my-repo", flag, value]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == 2
@@ -168,7 +168,7 @@ class TestCreateFlagValidation:
 
     def test_local_nonexistent_path_exits_with_error(self):
         with patch("sys.argv", [
-            "gh-safe-repo", "publish", "/nonexistent/path/xyz", "alice/my-repo", "--dry-run",
+            "gh-safe-repo", "push", "/nonexistent/path/xyz", "alice/my-repo", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
                 mock_ctx.return_value = MagicMock(
@@ -180,9 +180,9 @@ class TestCreateFlagValidation:
         assert exc_info.value.code == 2
 
     def test_local_not_a_git_repo_exits_with_error(self, tmp_path, capsys):
-        """`publish PATH` requires a git repository; plain directories are rejected."""
+        """`push PATH` requires a git repository; plain directories are rejected."""
         with patch("sys.argv", [
-            "gh-safe-repo", "publish", str(tmp_path), "alice/my-repo", "--dry-run",
+            "gh-safe-repo", "push", str(tmp_path), "alice/my-repo", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
                 mock_ctx.return_value = MagicMock(
@@ -196,18 +196,18 @@ class TestCreateFlagValidation:
 
     def test_bare_repo_name_exits(self):
         """create my-repo (no owner/) should exit with error."""
-        with patch("sys.argv", ["gh-safe-repo", "create", "my-repo"]):
+        with patch("sys.argv", ["gh-safe-repo", "new", "my-repo"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert exc_info.value.code == 2
 
     def _run_local_create(self, tmp_path, mock_transport, extra_args=(), answer=None):
-        """Run `publish` with plugins mocked; return (exit code, client, RepositoryPlugin)."""
+        """Run `push` with plugins mocked; return (exit code, client, RepositoryPlugin)."""
         (tmp_path / ".git").mkdir()
         mock_client = MagicMock()
         mock_client.transport = mock_transport
         with patch("sys.argv", [
-            "gh-safe-repo", "publish", str(tmp_path), "alice/my-repo", *extra_args,
+            "gh-safe-repo", "push", str(tmp_path), "alice/my-repo", *extra_args,
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.discover_transport",
@@ -230,7 +230,7 @@ class TestCreateFlagValidation:
         return exc_info.value.code, mock_client, MockRepo
 
     def test_credential_failure_aborts_before_repo_creation(self, tmp_path):
-        """When publishing and git creds are missing, create must fail
+        """When pushing and git creds are missing, the run must fail
         BEFORE any API call — otherwise we leave an empty repo behind."""
         mock_transport = MagicMock()
         mock_transport.preflight.side_effect = AuthError(
@@ -257,10 +257,10 @@ class TestCreateFlagValidation:
         MockRepo.return_value.apply.assert_not_called()
 
     def test_credential_check_skipped_when_no_push_needed(self):
-        """Plain create (not publish/mirror) doesn't push, so don't probe creds."""
+        """`new` (not push/copy) doesn't push, so don't probe creds."""
         mock_client = MagicMock()
         with patch("sys.argv", [
-            "gh-safe-repo", "create", "alice/my-repo", "--dry-run",
+            "gh-safe-repo", "new", "alice/my-repo", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.discover_transport") as mock_discover:
@@ -279,7 +279,7 @@ class TestCreateFlagValidation:
         (tmp_path / ".git").mkdir()
         mock_client = MagicMock()
         with patch("sys.argv", [
-            "gh-safe-repo", "publish", str(tmp_path), "alice/my-repo", "--dry-run",
+            "gh-safe-repo", "push", str(tmp_path), "alice/my-repo", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.discover_transport") as mock_discover:
@@ -306,7 +306,7 @@ class TestCreateFlagValidation:
         mock_client.call_json.return_value = {"default_branch": "main"}
 
         with patch("sys.argv", [
-            "gh-safe-repo", "publish", str(tmp_path), "ariesq/my-repo", "--yes",
+            "gh-safe-repo", "push", str(tmp_path), "ariesq/my-repo", "--yes",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.discover_transport"), \
@@ -372,7 +372,7 @@ class TestCreateFlagValidation:
         """#79: a failed push is fatal, not a warning followed by a success banner."""
         subprocess.run(["git", "init", "-q", "-b", "dev", str(tmp_path)], check=True)
         code, err, bp = self._run_create_with_failed_push(
-            ["publish", str(tmp_path), "ariesq/my-repo"], "push_local", capsys,
+            ["push", str(tmp_path), "ariesq/my-repo"], "push_local", capsys,
         )
         assert code == 1
         assert "git remote add origin git@github.com:AriESQ/my-repo.git" in err
@@ -389,14 +389,14 @@ class TestCreateFlagValidation:
         subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
         subprocess.run(git + ["checkout", "-q", "--detach"], check=True)
         code, err, _ = self._run_create_with_failed_push(
-            ["publish", repo, "ariesq/my-repo"], "push_local", capsys,
+            ["push", repo, "ariesq/my-repo"], "push_local", capsys,
         )
         assert code == 1
         assert "git push origin --all" in err
 
     def test_failed_from_copy_exits_1_with_recovery(self, capsys):
         code, err, _ = self._run_create_with_failed_push(
-            ["mirror", "ariesq/src", "ariesq/my-repo"], "copy_repo", capsys,
+            ["copy", "ariesq/src", "ariesq/my-repo"], "copy_repo", capsys,
         )
         assert code == 1
         assert "git clone --mirror git@github.com:ariesq/src.git" in err
@@ -410,7 +410,7 @@ class TestCreateFlagValidation:
             protocol="ssh", source_dir="/tmp/elsewhere", ssh_command=None,
             has_credential_helper=False,
         )
-        with patch("sys.argv", ["gh-safe-repo", "mirror", "ariesq/src", "ariesq/my-repo", "--yes"]), \
+        with patch("sys.argv", ["gh-safe-repo", "copy", "ariesq/src", "ariesq/my-repo", "--yes"]), \
              patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
              patch("gh_safe_repo.commands.create.discover_transport",
                    return_value=transport), \
@@ -438,7 +438,7 @@ class TestCreateFlagValidation:
         mock_client = MagicMock()
 
         with patch("sys.argv", [
-            "gh-safe-repo", "create", "ariesq/my-repo", "--dry-run",
+            "gh-safe-repo", "new", "ariesq/my-repo", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
                  patch("gh_safe_repo.commands.create.RepositoryPlugin") as MockRepo, \
@@ -468,7 +468,7 @@ class TestCreateFlagValidation:
         Git push URLs are case-sensitive; redirected pushes are rejected for workflow files.
         """
         with patch("sys.argv", [
-            "gh-safe-repo", "create", "ariesq/my-repo", "--dry-run",
+            "gh-safe-repo", "new", "ariesq/my-repo", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
                 mock_ctx.return_value = MagicMock(
@@ -669,9 +669,9 @@ class TestGlobalOptionPosition:
         assert args.config == "a.ini"
 
     @pytest.mark.parametrize("command,rest", [
-        ("create", ["alice/repo"]),
-        ("publish", [".", "alice/repo"]),
-        ("mirror", ["bob/src", "alice/repo"]),
+        ("new", ["alice/repo"]),
+        ("push", [".", "alice/repo"]),
+        ("copy", ["bob/src", "alice/repo"]),
         ("audit", ["alice/repo"]),
         ("fix", ["alice/repo"]),
         ("scan", []),
@@ -783,7 +783,7 @@ class TestScannerDescriptionInPlan:
 
     def test_scan_plan_entry_includes_scanner_description(self, capsys):
         with patch("sys.argv", [
-            "gh-safe-repo", "mirror", "alice/my-private-repo", "alice/my-public-repo", "--public", "--dry-run",
+            "gh-safe-repo", "copy", "alice/my-private-repo", "alice/my-public-repo", "--public", "--dry-run",
         ]):
             with patch("gh_safe_repo.commands.create.build_context") as mock_ctx:
                 mock_client = self._make_mock_client()
@@ -823,7 +823,7 @@ class TestNoDeadFlags:
     at runtime (e.g. --json was once accepted by 'scan' but never read).
     """
 
-    @pytest.mark.parametrize("cmd_module", [create, publish, mirror, audit, fix, scan], ids=lambda m: m.NAME)
+    @pytest.mark.parametrize("cmd_module", [create, push, copy, audit, fix, scan], ids=lambda m: m.NAME)
     def test_all_flags_referenced_in_run(self, cmd_module):
         import argparse
         import inspect
@@ -839,7 +839,7 @@ class TestNoDeadFlags:
         # Source of run() plus any helper that accepts the args namespace
         # (e.g. build_context reads args.config and args.debug on behalf of
         # create/fix), followed into the module each such helper lives in,
-        # so thin verbs (publish/mirror → create.run, audit → fix.run) are
+        # so thin verbs (push/copy → create.run, audit → fix.run) are
         # credited with what their engine reads.
         def args_callables(module):
             for obj in vars(module).values():
@@ -1026,7 +1026,7 @@ class TestScanEngine:
 
 
 class TestCreatePreflightEngine:
-    """publish: explicit-mode fallback exits 1 before anything is created."""
+    """push: explicit-mode fallback exits 1 before anything is created."""
 
     def _run_create(self, tmp_path, mode, extra_argv=()):
         src = tmp_path / "src"
@@ -1035,7 +1035,7 @@ class TestCreatePreflightEngine:
         (src / "main.py").write_text("print('hello')")
         mock_client = MagicMock()
         config = make_config({("pre_flight_scan", "trufflehog_mode"): mode})
-        argv = ["gh-safe-repo", "publish", str(src), "alice/my-repo",
+        argv = ["gh-safe-repo", "push", str(src), "alice/my-repo",
                 "--yes", *extra_argv]
         with patch("sys.argv", argv), \
              patch("gh_safe_repo.commands.create.build_context") as mock_ctx, \
@@ -1177,7 +1177,7 @@ class TestCreateAbortsOnScan:
         (tmp_path / ".git").mkdir()
         mock_client = MagicMock()
         argv = [
-            "gh-safe-repo", "publish", str(tmp_path), "alice/my-repo",
+            "gh-safe-repo", "push", str(tmp_path), "alice/my-repo",
             *extra_argv,
         ]
         with patch("sys.argv", argv), \
@@ -1631,29 +1631,29 @@ class TestScanDefaultPath:
         assert str(tmp_path.resolve()) in capsys.readouterr().out
 
 
-class TestPublishAndMirrorDelegate:
+class TestPushAndCopyDelegate:
     """The thin verbs hand their positionals to create.run as the old attrs."""
 
-    def test_publish_sets_local_path(self):
-        args = build_parser().parse_args(["publish", "/some/dir", "alice/app", "--public"])
-        assert args.func is publish.run
+    def test_push_sets_local_path(self):
+        args = build_parser().parse_args(["push", "/some/dir", "alice/app", "--public"])
+        assert args.func is push.run
         assert (args.path, args.repo, args.from_repo) == ("/some/dir", "alice/app", None)
-        with patch("gh_safe_repo.commands.publish._create_run") as engine:
-            publish.run(args)
+        with patch("gh_safe_repo.commands.push._create_run") as engine:
+            push.run(args)
         engine.assert_called_once_with(args)
         assert args.local_path == "/some/dir"
 
-    def test_mirror_sets_from_repo(self):
-        args = build_parser().parse_args(["mirror", "bob/src", "alice/app"])
-        assert args.func is mirror.run
+    def test_copy_sets_from_repo(self):
+        args = build_parser().parse_args(["copy", "bob/src", "alice/app"])
+        assert args.func is copy.run
         assert (args.source, args.repo, args.local_path) == ("bob/src", "alice/app", None)
-        with patch("gh_safe_repo.commands.mirror._create_run") as engine:
-            mirror.run(args)
+        with patch("gh_safe_repo.commands.copy._create_run") as engine:
+            copy.run(args)
         engine.assert_called_once_with(args)
         assert args.from_repo == "bob/src"
 
     def test_create_has_no_code_source(self):
-        args = build_parser().parse_args(["create", "alice/app"])
+        args = build_parser().parse_args(["new", "alice/app"])
         assert (args.local_path, args.from_repo) == (None, None)
 
 
@@ -1674,7 +1674,7 @@ class TestCreateJsonStdout:
             for M in mocks:
                 M.return_value.plan.return_value = Plan()
                 M.return_value.created_default_branch = "main"
-            with patch("sys.argv", ["gh-safe-repo", "create", "alice/demo", "--yes", "--json"]), \
+            with patch("sys.argv", ["gh-safe-repo", "new", "alice/demo", "--yes", "--json"]), \
                  patch("gh_safe_repo.commands.create.build_context") as ctx, \
                  patch("gh_safe_repo.commands.create.check_repo_exists", return_value=False):
                 ctx.return_value = MagicMock(
@@ -1763,9 +1763,9 @@ class TestCreateVerification:
 
     def _run(self, *, repo_plan=None, sec_audits=(), client=None,
              source=None, argv_extra=(), answer=None, extra_patches=()):
-        """Run `create alice/demo` with mocked plugins.
+        """Run `new alice/demo` with mocked plugins.
 
-        `source=("publish", PATH)` or `("mirror", "owner/repo")` runs that
+        `source=("push", PATH)` or `("copy", "owner/repo")` runs that
         verb instead, with alice/demo as the destination.
 
         RepositoryPlugin plans `repo_plan` (create mode) and audits clean;
@@ -1804,7 +1804,7 @@ class TestCreateVerification:
                 sec.fetch_current_state.side_effect = fetches
                 sec.plan.side_effect = plans
 
-            verb, src = source or ("create", None)
+            verb, src = source or ("new", None)
             argv = ["gh-safe-repo", verb, *([src] if src else []), "alice/demo", *argv_extra]
             if answer is None:
                 argv.append("--yes")
@@ -1943,7 +1943,7 @@ class TestCreateVerification:
         client = self._client(repo={"description": description}, topics=topics)
         code, _, _, _ = self._run(
             repo_plan=repo_plan, client=client,
-            source=("mirror", "alice/src"),
+            source=("copy", "alice/src"),
             extra_patches=[
                 patch("gh_safe_repo.commands.create.discover_transport"),
                 patch("gh_safe_repo.commands.create.run_preflight_scan",
@@ -2004,7 +2004,7 @@ class TestCreateVerification:
         transport.persistent_url.side_effect = lambda o, r: f"git@github.com:{o}/{r}.git"
         code, _, client, sleep = self._run(
             repo_plan=self._repo_plan(), client=client,
-            source=("publish", path), argv_extra=argv_extra,
+            source=("push", path), argv_extra=argv_extra,
             extra_patches=[
                 patch("gh_safe_repo.commands.create.discover_transport",
                       return_value=transport),
@@ -2146,7 +2146,7 @@ class TestCreateVerification:
         transport.persistent_url.side_effect = lambda o, r: f"git@github.com:{o}/{r}.git"
         code, _, client, _ = self._run(
             repo_plan=self._repo_plan(), client=client,
-            source=("mirror", "alice/src"),
+            source=("copy", "alice/src"),
             extra_patches=[
                 patch("gh_safe_repo.commands.create.discover_transport",
                       return_value=transport),
@@ -2255,7 +2255,7 @@ class TestConfirmationPromptUnattended:
         transport = MagicMock()
         client = MagicMock()
         client.transport = transport
-        argv = ["gh-safe-repo", "publish", str(tmp_path), "alice/my-repo",
+        argv = ["gh-safe-repo", "push", str(tmp_path), "alice/my-repo",
                 *argv_extra]
         with patch("sys.argv", argv), \
              patch("gh_safe_repo.commands.create.build_context") as ctx, \

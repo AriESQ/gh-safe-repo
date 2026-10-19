@@ -2,18 +2,18 @@
 gh-safe-repo — Manage safe defaults for GitHub repositories.
 
 Usage:
-    gh-safe-repo create  <owner/repo>                 [--public] [--dry-run] [--yes] [--json]
-    gh-safe-repo publish <path> <owner/repo>          [--public] [--dry-run] [--yes] [--json]
-    gh-safe-repo mirror  <src-owner/repo> <owner/repo> [--public] [--dry-run] [--yes] [--json]
-    gh-safe-repo audit   <owner/repo>                 [--json]
-    gh-safe-repo fix     <owner/repo>                 [--dry-run] [--yes] [--json] [--migrate-branch-protection]
-    gh-safe-repo scan    [path]                       [--json]
+    gh-safe-repo new   <owner/repo>                   [--public] [--dry-run] [--yes] [--json]
+    gh-safe-repo push  <path> <owner/repo>            [--public] [--dry-run] [--yes] [--json]
+    gh-safe-repo copy  <src-owner/repo> <owner/repo>  [--public] [--dry-run] [--yes] [--json]
+    gh-safe-repo audit <owner/repo>                   [--json]
+    gh-safe-repo fix   <owner/repo>                   [--dry-run] [--yes] [--json] [--migrate-branch-protection]
+    gh-safe-repo scan  [path]                         [--json]
 """
 
 import argparse
 import sys
 
-from .commands import audit, create, fix, mirror, publish, scan
+from .commands import audit, copy, create, fix, push, scan
 from .commands._common import add_common_args
 
 
@@ -52,26 +52,26 @@ def build_parser():
         description=f"""\
 Manage safe defaults for GitHub repositories.
 
-{h}create a repo{r} (all take --public, --dry-run, --yes, --json):
-  create   <owner/repo>                   Create an empty repo with safe defaults
-  publish  <path> <owner/repo>            Push a local git repo into a new repo
-  mirror   <src-owner/repo> <owner/repo>  Copy an existing repo into a new one (not a fork)
+{h}new repo{r} (all take --public, --dry-run, --yes, --json):
+  new    <owner/repo>                   Create an empty repo with safe defaults
+  push   <path> <owner/repo>            Create a repo and push a local git repo into it
+  copy   <src-owner/repo> <owner/repo>  Create a repo and copy an existing one into it (not a fork)
 
 {h}existing repo:{r}
-  audit    <owner/repo>                   Report settings drift; exit 3 if any, nothing changed
-  fix      <owner/repo>                   Apply safe defaults (--dry-run, --yes, --json)
+  audit  <owner/repo>                   Report settings drift; exit 3 if any, nothing changed
+  fix    <owner/repo>                   Apply safe defaults (--dry-run, --yes, --json)
 
 {h}local code:{r}
-  scan     [path]                         Scan a directory for secrets (no GitHub calls)""",
+  scan   [path]                         Scan a directory for secrets (no GitHub calls)""",
         epilog=f"""\
 {h}examples:{r}
-  gh-safe-repo create alice/app --public
-  gh-safe-repo publish . alice/app
-  gh-safe-repo mirror upstream/lib alice/lib --public
+  gh-safe-repo new alice/app --public
+  gh-safe-repo push . alice/app
+  gh-safe-repo copy upstream/lib alice/lib --public
   gh-safe-repo audit alice/app --json
   gh-safe-repo fix alice/app --yes
   gh-safe-repo scan
-  gh-safe-repo --no-config create alice/app --dry-run
+  gh-safe-repo --no-config new alice/app --dry-run
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="gh-safe-repo [--config PATH | --no-config] [--debug] <command> [options]",
@@ -82,7 +82,7 @@ Manage safe defaults for GitHub repositories.
 
     subparsers = parser.add_subparsers(dest="command", title="commands", metavar="")
 
-    for cmd_module in (create, publish, mirror, audit, fix, scan):
+    for cmd_module in (create, push, copy, audit, fix, scan):
         sub = subparsers.add_parser(
             cmd_module.NAME,
             help=cmd_module.HELP,

@@ -1,10 +1,10 @@
-"""gh-safe-repo publish — Push a local git repo into a new GitHub repo."""
+"""gh-safe-repo push — Create a repo and push a local git repo into it."""
 
 from ._common import add_common_args, add_create_args
 from .create import run as _create_run
 
-NAME = "publish"
-HELP = "Push a local git repo into a new repo with safe defaults"
+NAME = "push"
+HELP = "Create a repo and push a local git repo into it"
 
 
 def add_arguments(parser):

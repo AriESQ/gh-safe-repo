@@ -4,6 +4,11 @@ A review of the `gh-safe-repo` command-line surface against the twenty
 personas in `2026-03-28-user-stories.md`, with a recommended redesign.
 Implemented on the `docs/cli-interface-review` branch the same day; section 7 records how.
 
+**Final names (decided 2026-10-19, after review):** `new`, `push`, `copy`,
+`audit`, `fix`, `scan`. The text below still uses the names first proposed
+(`create`, `publish`, `mirror`) for the three creating verbs; section 5 and the
+addendum at the end record why they changed.
+
 ## 1. The current surface
 
 Three verbs, each with its own option set:
@@ -99,8 +104,8 @@ gh-safe-repo [--config PATH | --no-config] [--debug] <command> ...
 
 Create a repo                      (all take --public --dry-run --yes --json)
   create   <owner/repo>                       empty repo with safe defaults
-  publish  <path> <owner/repo>                push a local git repo into a new repo (scans first)
-  mirror   <src-owner/repo> <owner/repo>      copy an existing repo into a new one (scans first; not a fork)
+  push     <path> <owner/repo>                push a local git repo into a new repo (scans first)
+  copy     <src-owner/repo> <owner/repo>      copy an existing repo into a new one (scans first; not a fork)
 
 Existing repo
   audit    <owner/repo> [--json]              read-only drift report; exit 3 if anything differs
@@ -131,8 +136,8 @@ Manage safe defaults for GitHub repositories.
 
 create a repo (all take --public, --dry-run, --yes, --json):
   create   <owner/repo>                  Create an empty repo with safe defaults
-  publish  <path> <owner/repo>           Push a local git repo into a new repo
-  mirror   <src-owner/repo> <owner/repo> Copy an existing repo into a new one (not a fork)
+  push     <path> <owner/repo>           Push a local git repo into a new repo
+  copy     <src-owner/repo> <owner/repo> Copy an existing repo into a new one (not a fork)
 
 existing repo:
   audit    <owner/repo>                  Report settings drift without changing anything
@@ -147,17 +152,17 @@ options:
   --debug         Show every API call made
 
 examples:
-  gh-safe-repo create alice/app --public
-  gh-safe-repo publish . alice/app
-  gh-safe-repo mirror upstream/lib alice/lib --public
+  gh-safe-repo new alice/app --public
+  gh-safe-repo push . alice/app
+  gh-safe-repo copy upstream/lib alice/lib --public
   gh-safe-repo audit alice/app --json
   gh-safe-repo fix alice/app --yes
   gh-safe-repo scan
 ```
 
 ```
-$ gh-safe-repo mirror --help
-usage: gh-safe-repo mirror [--public] [--dry-run] [--yes] [--json] SRC-OWNER/REPO OWNER/REPO
+$ gh-safe-repo copy --help
+usage: gh-safe-repo copy [--public] [--dry-run] [--yes] [--json] SRC-OWNER/REPO OWNER/REPO
 
 Copy an existing repository into a new one. The source is cloned with full
 history, scanned for secrets, and mirrored into the new repo. The result is a
@@ -218,13 +223,13 @@ messaging, and archived-repo detection, and are unaffected by this change.
 
 ### Names of the creating verbs
 
-- `publish` versus `push` versus `import`. `push` collides with the git verb
+- `push` versus `push` versus `import`. `push` collides with the git verb
   and under-states what happens (a repo is created, settings applied).
   `import` is GitHub's own word for the UI feature but suggests a one-time
-  migration. `publish` says "make this project exist on GitHub", which is
+  migration. `push` says "make this project exist on GitHub", which is
   the user's intent in story #9, even when the result is private.
-- `mirror` versus `copy` versus `clone`. `clone` is taken by git and implies
-  a local result. `copy` is fine but says nothing about history. `mirror`
+- `copy` versus `copy` versus `clone`. `clone` is taken by git and implies
+  a local result. `copy` is fine but says nothing about history. `copy`
   is what the implementation does (`git clone --mirror` then push), and the
   word already appears in the README.
 
@@ -234,7 +239,7 @@ None. The old surface is removed outright, with no aliases and no
 deprecation period:
 
 - `create --local PATH` and `create --from OWNER/REPO` are deleted. The only
-  way to push code is `publish` or `mirror`. Passing the old flags is an
+  way to push code is `push` or `copy`. Passing the old flags is an
   argparse usage error (exit `2`).
 - Bare `--config` (no value) is deleted; `--no-config` replaces it.
 - `fix --dry-run` stays because it follows the uniform rule, not for
@@ -265,7 +270,7 @@ that loop.
 ### `gh_safe_repo/commands/create.py`
 
 - `run(args)` already branches on `args.local_path` / `args.from_repo`. Keep
-  it as the single engine; `publish` and `mirror` set those two attributes
+  it as the single engine; `push` and `copy` set those two attributes
   and delegate.
 - `add_arguments`: remove `--local` and `--from` entirely, and the
   mutual-exclusion check at the top of `run` (impossible now).
@@ -279,7 +284,7 @@ that loop.
 Thin modules: `NAME`, `HELP`, `add_arguments` (two positionals, source first,
 plus create args and common args), and `run(args)` that sets
 `args.local_path` or `args.from_repo` from the positionals and delegates to
-`create.run(args)`. `mirror`'s help says explicitly: "The result is a new
+`create.run(args)`. `copy`'s help says explicitly: "The result is a new
 repository, not a GitHub fork."
 
 ### New `gh_safe_repo/commands/audit.py`
@@ -318,7 +323,7 @@ heading, or a custom formatter).
   rows; operating rule 1 becomes "run `audit --json` on an existing repo, or
   `create|publish|mirror ... --dry-run --json` for a new one"; the exit-code
   table gets the `audit` row; every `--local` / `--from` example is replaced.
-- `CHANGELOG.md` `[Unreleased]`: Added (`publish`, `mirror`, `audit`,
+- `CHANGELOG.md` `[Unreleased]`: Added (`push`, `copy`, `audit`,
   `--no-config`, `scan` default path); Removed (`create --local`,
   `create --from`, bare `--config`).
 - `gh_safe_repo/README.md`: module map gains the three new modules.
@@ -327,7 +332,7 @@ heading, or a custom formatter).
 
 ### Tests (`tests/test_cli.py`, mocked subprocess per `tests/README.md`)
 
-- Parser: each new verb parses; `publish` / `mirror` positionals land in
+- Parser: each new verb parses; `push` / `copy` positionals land in
   `local_path` / `from_repo`; `create --local` and `create --from` are usage
   errors (exit `2`); `--config` without a value is a usage error;
   `--no-config` yields `args.config == ""`; `--config X --no-config` exits
@@ -335,7 +340,7 @@ heading, or a custom formatter).
 - Behaviour: `audit` exits `3` with actionable changes and `0` when clean
   (reuse the `fix` mocks); `audit` never prompts and never calls
   `plugin.apply`; `fix --dry-run` still exits `0`.
-- `tests/e2e/test_input_validation.py`: add the `publish` / `mirror`
+- `tests/e2e/test_input_validation.py`: add the `push` / `copy`
   mis-order cases (a path where `owner/repo` is expected exits `2`).
 
 ### Verification after implementing
@@ -343,12 +348,12 @@ heading, or a custom formatter).
 ```bash
 uv run pytest tests/ -v
 uv run gh-safe-repo --help                        # six verbs, grouped
-uv run gh-safe-repo publish --help                # positionals, then the uniform options
+uv run gh-safe-repo push --help                # positionals, then the uniform options
 uv run gh-safe-repo scan                          # runs on cwd
 uv run gh-safe-repo audit AriESQ/<repo>           # exit 3 or 0, no prompt
 uv run gh-safe-repo audit AriESQ/<repo> --json | jq .summary
-uv run gh-safe-repo create AriESQ/x --local .     # exit 2: unrecognized argument
-uv run gh-safe-repo publish . AriESQ/x --dry-run  # the plan
+uv run gh-safe-repo new AriESQ/x --local .     # exit 2: unrecognized argument
+uv run gh-safe-repo push . AriESQ/x --dry-run  # the plan
 ```
 
 Then grep the tree for `--local`, `--from` and `fix --dry-run` to confirm no
@@ -369,7 +374,7 @@ This redesign is orthogonal and makes that proposal cleaner:
 - `audit` is the natural home for the `PRESERVE` rows: a weekly `audit`
   shows what was changed, what was preserved and why, which is exactly what
   story #13 asks for, without a mutating command having to be run to see it.
-- `create`, `publish` and `mirror` never see the merge logic (there is no
+- `create`, `push` and `copy` never see the merge logic (there is no
   "theirs" for a repo that does not exist yet), which is also what the
   proposal states for `create`.
 - The `audit` exit code `3` on drift should count `UPDATE` rows only.
@@ -377,3 +382,31 @@ This redesign is orthogonal and makes that proposal cleaner:
 
 Nothing in the merge proposal needs to change to accommodate this
 redesign; the two can be implemented in either order.
+
+## 9. Addendum: the names that shipped
+
+After reading the review, the owner rejected `publish` (it implies public,
+and `publish --public` reads oddly) and asked for a sterner look at every
+name on its merits rather than on what the README already said.
+
+- **`new`** for the empty repo. `create` had been doing double duty as the
+  specific verb and as the family name for all three creating verbs. `new`
+  is the convention for "an empty one" (`cargo new`, `rails new`).
+- **`push`** for the local directory. It is the only candidate that says
+  source-to-destination the way the positional order does, and it is honest
+  about what happens; the help line says a repo is created first so it is not
+  read as a bare `git push`. `upload` sounds like files; `import` is
+  GitHub's word for the remote case; `init` points the wrong way.
+- **`copy`** for the existing repo. `mirror` named the git mechanism and
+  carries a "continuously synced" connotation. `copy` is a plain one-time,
+  unlinked copy, which is also what stops the fork misreading. `import` was
+  a close second on GitHub precedent but suggests non-GitHub sources.
+
+Also considered and rejected: encoding visibility in the verb (`create` =
+private, `publish` = public). Visibility and code source are independent
+dimensions, so the source flags would have come back, and it would have made
+the public case sound like the headline feature when private-by-default is
+the tool's stance. `--public` stays a flag.
+
+`gh_safe_repo/commands/create.py` keeps its filename because `run()` is the
+engine for all three creating verbs; only `NAME` changed to `new`.

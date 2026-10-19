@@ -522,3 +522,72 @@ cause:
   elsewhere. `GitTransport.auth_hint()` adds the directory and the
   discovered `core.sshCommand` (or "not set") to publickey failures; a
   missed-touch hint takes priority when both apply.
+
+## Three-Way Merge for `fix` / `audit` (PRESERVE, `--all`)
+
+Implements the design in `docs/2026-03-28-user-stories.md` ("Architectural
+Vision") and section 8 of `docs/2026-10-16_cli-interface-review.md`. The
+policy is one function, `commands/fix.py:apply_merge_policy()`; the metadata
+is two dicts in `config_manager.py` (`SETTING_TIERS`, `SAFE_DIRECTIONS`);
+plugins only annotate rows (`BasePlugin.annotate()`).
+
+**Decisions on the doc's open questions.** (1) Tier and direction are data
+in `config_manager.py`, keyed by `(section, key)` where the key is the *plan
+row* a plugin emits — for the security plugin that is `dependabot_alerts`,
+not `enable_dependabot_alerts`, so both spellings are listed. A test checks
+every `SAFE_DEFAULTS` key in a merge section has an explicit tier and every
+security key a direction. (2) `PRESERVE` rows are always shown, in the table
+and in JSON. (3) `--all` means "apply everything in the config regardless of
+divergence", not a factory reset to `SAFE_DEFAULTS`. (4) A section declared
+in the user's INI file wins over the policy, including over a
+diverged-stricter security setting. Only sections present in the file count:
+`ConfigManager` parses the file a second time just to record
+`declared_sections`, because the main parser is pre-seeded with every
+default section and cannot tell them apart.
+
+**Composite settings: per-key rows, overlay on write.** Branch and tag
+protection plugins already emit one row per key (`require_pull_request`,
+`required_approving_reviews`, ...) and the policy works per key, so a hand
+tuned ruleset can be partially preserved (reviews=3 kept, force-push rule
+added). The catch is `apply()`: both plugins write one ruleset body built from
+`_desired()`, not from the rows, so without care "fix allow_force_pushes"
+would silently reset reviews from 3 to 1. `BasePlugin.preserved_values(plan)`
+returns `{key: change.old}` for the plugin's `PRESERVE` rows and `apply()`
+overlays it on the desired dict before building the body. The classic
+branch-protection path does the same. Repository and Actions bodies are built
+from actionable rows only, so a preserved key is simply absent there.
+
+**Verification must run the policy too.** `verify_plugins()` re-runs each
+plugin's audit after apply and treats any non-`SKIP` row as a mismatch. A
+preserved `required_approving_reviews = 3` would re-audit as `UPDATE 3 → 1`
+and fail the run with exit 3. `verify()` / `verify_plugins()` take
+`policy=`, and `fix` passes the same `apply_merge_policy` closure, so the
+re-read is judged exactly as the plan was. `create` passes nothing.
+
+**`⚠ weakened` fires less often than the design example suggests.** The flag
+needs the current value to differ from GitHub's default *and* be weaker than
+ours. For most security settings GitHub's default is already the weakest
+state (`allow_force_pushes = true`, `required_approving_reviews = 0`,
+`allowed_actions = all`, `default_workflow_permissions = write`), so a weak
+current value equals the default and is a plain `UPDATE` ("nobody chose
+it"). The marker appears where the default is not the weakest value:
+`verified_allowed` (default `false`), `patterns_allowed` (default empty, a
+superset is weaker), and any setting where the user's config asks for more
+than the safe default. The doc's `allow_force_pushes ... ⚠ weakened` line is
+not reproducible under the base/theirs/ours definition and was not forced.
+
+**Security plugin base is "off".** GitHub turns some toggles on by itself
+(secret scanning on public repos, Dependabot alerts when the account opted
+into "enable for new repositories") and the API cannot distinguish that from
+a person doing it, so `SecurityPlugin.GITHUB_DEFAULTS` is `False` for every
+key: a disabled toggle is enabled without the `weakened` marker, and the
+security plugin behaves identically with and without `--all`.
+
+**`allowed_actions` ordering.** `all < selected < local_only`: `local_only`
+(only actions defined in the repo) admits less third-party code than
+`selected` (GitHub-owned + verified creators + patterns). A repo on
+`local_only` is therefore preserved against a config asking for `selected`.
+
+**`[pre_flight_scan]` and `[git_transport]` are outside the merge** —
+`MERGE_SECTIONS` lists the five repo-state sections and `setting_tier()`
+returns `None` for anything else; a test pins that.

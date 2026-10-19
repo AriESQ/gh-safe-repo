@@ -17,11 +17,11 @@ A CLI that applies safe defaults to GitHub repos. Six commands:
 | `scan [path]` | a local directory (default `.`) | **no** | nothing — no GitHub calls at all |
 
 Options are uniform by class. `new`, `push` and `copy` take
-`--public`, `--dry-run`, `--yes`, `--json`. `fix` takes `--dry-run`, `--yes`,
-`--json`, `--migrate-branch-protection`. `audit` and `scan` take only
-`--json`. Global, on either side of the command: `--config PATH`,
-`--no-config`, `--debug`. There is no `--local`, no `--from`, and `--config`
-always needs a value.
+`--public`, `--dry-run`, `--yes`, `--json`. `fix` takes `--all`, `--dry-run`,
+`--yes`, `--json`, `--migrate-branch-protection`. `audit` takes `--all` and
+`--json`; `scan` takes only `--json`. Global, on either side of the command:
+`--config PATH`, `--no-config`, `--debug`. There is no `--local`, no
+`--from`, and `--config` always needs a value.
 
 Where a command takes two positionals the **source comes first** and the new
 repo second (`push . alice/app`, `copy upstream/lib alice/lib`).
@@ -72,7 +72,7 @@ drops ANSI codes when stdout is not a terminal.
 | `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `audit`: the repo is compliant. For the mutating commands, everything applied was read back and verified (`unknown` checks and `advisory` local-wiring checks warn but still exit `0`) |
 | `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `push`/`copy` (the repo **was** created; see Failure modes). For the creating commands, also a failed **fatal** check: the new repo cannot be found, its visibility is wrong, or (`push`/`copy`) a pushed branch or tag is missing on GitHub or at a different SHA |
 | `2` | Usage error: bad `owner/repo`, path is not a directory, `--config` with `--no-config`, an unknown flag (including the removed `--local`/`--from`) |
-| `3` | `audit`: at least one setting differs from the safe defaults; `fix` would change it. Or a mutating command applied the changes but at least one setting did not stick when read back (a non-fatal, non-advisory `mismatch` check, e.g. `repo/default_branch`). For the creating commands the repo exists and is usable. See Failure modes |
+| `3` | `audit`: at least one setting differs from the safe defaults and `fix` would change it (an `add`/`update`/`delete` row; `preserve` rows never count). Or a mutating command applied the changes but at least one setting did not stick when read back (a non-fatal, non-advisory `mismatch` check, e.g. `repo/default_branch`). For the creating commands the repo exists and is usable. See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
 
 `fix --dry-run` prints the same table as `audit` but always exits `0`, like
@@ -93,12 +93,21 @@ stdout (all prose goes to stderr):
 
 ```json
 { "changes": [ {"type": "update", "category": "actions", "key": "default_workflow_permissions",
-                "old": "write", "new": "read", "reason": null} ],
-  "summary": { "add": 5, "skip": 2 } }
+                "old": "write", "new": "read", "reason": null,
+                "tier": "security", "github_default": "write", "weakened": false},
+               {"type": "preserve", "category": "repo", "key": "has_wiki",
+                "old": false, "new": true, "reason": "changed from default",
+                "tier": "preference", "github_default": true, "weakened": false} ],
+  "summary": { "update": 1, "preserve": 1, "skip": 2 } }
 ```
 
 `summary` only lists types that occur — use `.get("delete", 0)`. For `audit`,
-drift means any key other than `skip` is present; the exit code says the same.
+drift means `add`, `update` or `delete` is present; `preserve` and `skip` are
+not drift, and the exit code says the same. Every change carries `tier`
+(`security` / `preference` / `null`), `github_default` (what a fresh repo
+holds, `null` when not a per-key setting) and `weakened` (`true` on an
+`update` that restores a security control someone relaxed below GitHub's
+default; worth pointing out to the user).
 
 `audit --json` and `--dry-run --json` print that document straight away. A
 real mutating run prints it **once, at the end**, after applying and reading
@@ -175,6 +184,29 @@ combination. Explain them; never loop trying to force them.
 A `SKIP` can also simply mean the setting is already correct. `audit` prints
 `All settings compliant.` instead of a table when every row would be a `SKIP`.
 
+## `PRESERVE` is a decision — do not loop on it
+
+`audit` and `fix` compare each setting against GitHub's default as well as
+the desired value. A setting that differs from the desired value **and** was
+changed from GitHub's default by a person is reported as `PRESERVE` and left
+alone: preference settings (`[repo]`, `enforce_admins`,
+`require_conversation_resolution`, Actions `enabled`) always, security
+settings when the current value is *stricter* than the desired one (e.g.
+`required_approving_reviews` 3 kept over 1). The row's note says which:
+`(changed from default)` or `(stricter than 1)`.
+
+- Re-running `fix` will never change a `PRESERVE` row. Do not retry or
+  "fix harder". Report it to the user as a deliberate choice that was kept.
+- A security setting that is *weaker* than GitHub's default is not
+  preserved: it is an `UPDATE` marked `⚠ weakened from default`
+  (`"weakened": true`). Tell the user someone relaxed that control.
+- To enforce a preserved setting the user has two options, both their
+  call, not yours: declare the section (e.g. `[repo]`) in their config
+  file, which enforces every setting in that section, or pass `--all` to
+  `audit`/`fix`, which treats every difference as a change. Never add
+  `--all` on your own to make a `PRESERVE` row go away.
+- `new`, `push` and `copy` never produce `PRESERVE` rows.
+
 ## Failure modes
 
 | Symptom | Cause and fix |
@@ -196,6 +228,7 @@ A `SKIP` can also simply mean the setting is already correct. `audit` prints
 | `push`/`copy` exits `3` with `✗ repo/default_branch` | The code is all there but GitHub's default branch is not the one chosen. Show the user the `gh repo edit <owner/repo> --default-branch <b>` remediation and run it once they agree; `fix` does not manage it. |
 | `Code pushed, but local repo not fully wired: ...`, or `✗ local/origin` / `✗ local/tracking` (`advisory: true`, exit `0`) | The push succeeded and GitHub is fine; only the user's local `origin`/upstream is not pointing at the new repo. Usual cause: the directory already had an `origin` pointing elsewhere (left untouched on purpose; the check's remediation says so). Report it to the user; do not rewrite their `origin` yourself. The remediation and the banner give the exact `git remote add`/`set-url origin <url>` and `git push -u origin <b>:<b>` commands. Not a failure: do not retry over it. |
 | `audit` exits `3` | Not a failure: the repo has drift. Show the table (or `--json` document) to the user and offer `fix <owner/repo> --yes`. |
+| `audit` exits `0` but prints a table of `PRESERVE` rows | Not drift. Those settings differ from the defaults because a person chose them; `fix` would leave them alone too. Report them; do not pass `--all` unless the user asks for full enforcement. |
 | A mutating command exits `3`, `✗` rows / `mismatch` checks | The changes were sent but GitHub does not hold them (ignored, or the apply failed with a warning). Run `gh-safe-repo fix <owner/repo> --yes` **once** more (never re-run a creating command: the repo exists). If it still exits `3`, stop and report the rows to the user — an org policy or plan limit is overriding the setting; do not loop. For `file/readme`, `repo/description` and `repo/topics`, `fix` does not manage them: run the `remediation` command instead, after showing it to the user. |
 | A creating command exits `1` with `✗ repo/visibility` (`fatal: true`) | The repo exists but is **public when private was asked for** (or the reverse). Treat it as a possible disclosure: tell the user immediately and show the `gh repo edit ... --visibility ...` remediation; do not push anything else to it first. |
 | A creating command exits `1` with `✗ repo/repository` (`fatal: true`) | GitHub accepted the create but the repo cannot be found, even after retries. Check the active `gh` account; do not re-run blindly. |

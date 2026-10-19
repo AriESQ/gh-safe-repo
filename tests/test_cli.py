@@ -1620,6 +1620,246 @@ class TestAudit:
         assert "Dry run" in capsys.readouterr().out
 
 
+class TestMergePolicyCli:
+    """`audit`/`fix` with the three-way merge: PRESERVE rows, ⚠ weakened,
+    `--all`, and the exit codes / JSON shape that go with them."""
+
+    REPO = TestFixVerification.REPO
+
+    @staticmethod
+    def _preserved_pref():
+        # has_wiki: GitHub default True, someone turned it off, config wants it on.
+        return Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.REPO, key="has_wiki",
+            old=False, new=True, tier="preference", github_default=True,
+        )
+
+    @staticmethod
+    def _preserved_stricter():
+        return Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.BRANCH_PROTECTION,
+            key="required_approving_reviews", old=3, new=1,
+            tier="security", github_default=0,
+        )
+
+    @staticmethod
+    def _weakened():
+        return Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.ACTIONS,
+            key="verified_allowed", old=True, new=False,
+            tier="security", github_default=False,
+        )
+
+    @staticmethod
+    def _plain_update():
+        return Change(
+            type=ChangeType.UPDATE, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", old=False, new=True,
+            tier="security", github_default=False,
+        )
+
+    @staticmethod
+    def _plan(*changes):
+        p = Plan()
+        for c in changes:
+            p.add(c)
+        return p
+
+    def _run(self, verb, plan, argv_extra=(), post_audits=(), config=None):
+        """Run `<verb> alice/demo` with SecurityPlugin planning `plan`.
+
+        Returns (exit_code, security_mock). For `fix --yes`, `post_audits`
+        are the re-audit plans returned after apply.
+        """
+        names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
+                 "SecurityPlugin", "TagProtectionPlugin"]
+        patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
+        mocks = dict(zip(names, (p.start() for p in patches)))
+        try:
+            for M in mocks.values():
+                inst = MagicMock()
+                inst.owner, inst.repo = "alice", "demo"
+                inst.plan.return_value = Plan()
+                inst.fetch_current_state.return_value = {}
+                M.return_value = inst
+            sec = mocks["SecurityPlugin"].return_value
+            sec.plan.side_effect = [plan, *post_audits]
+            client = MagicMock()
+            client.get_repo_data.return_value = dict(self.REPO)
+            argv = ["gh-safe-repo", verb, "alice/demo", *argv_extra]
+            with patch("sys.argv", argv), \
+                 patch("gh_safe_repo.commands.fix.build_context") as ctx, \
+                 patch("gh_safe_repo.verify.time.sleep"), \
+                 patch("builtins.input") as prompt:
+                ctx.return_value = MagicMock(
+                    client=client, owner="alice", plan_name="free",
+                    is_paid_plan=False, config=config or make_config(),
+                )
+                try:
+                    main()
+                    code = 0
+                except SystemExit as e:
+                    code = e.code
+            prompt.assert_not_called()
+            return code, sec
+        finally:
+            for p in patches:
+                p.stop()
+
+    # ── audit ────────────────────────────────────────────────────────────
+
+    def test_audit_preserve_only_exits_0_with_table(self, capsys):
+        code, _ = self._run("audit", self._plan(self._preserved_pref(), self._preserved_stricter()))
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "All settings compliant." not in out
+        assert "PRESERVE" in out
+        assert "False (changed from default)" in out
+        assert "3 (stricter than 1)" in out
+        assert "0 change(s) to apply, 2 preserved, 0 skipped" in out
+        assert "pass --all" in out
+        assert "Run `gh-safe-repo fix" not in out
+
+    def test_audit_preserve_plus_update_exits_3(self, capsys):
+        code, _ = self._run("audit", self._plan(self._preserved_pref(), self._plain_update()))
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "1 change(s) to apply, 1 preserved, 0 skipped" in out
+
+    def test_audit_weakened_marker(self, capsys):
+        code, _ = self._run("audit", self._plan(self._weakened()))
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "True → False  ⚠ weakened from default" in out
+
+    def test_audit_all_turns_preserve_into_update(self, capsys):
+        code, _ = self._run("audit", self._plan(self._preserved_pref()), ["--all"])
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "PRESERVE" not in out
+        assert "UPDATE" in out
+        assert "pass --all" not in out
+
+    def test_audit_declared_section_enforces(self, tmp_path, capsys):
+        ini = tmp_path / "gh-safe-repo.ini"
+        ini.write_text("[repo]\nhas_wiki = true\n")
+        config = ConfigManager(config_path=str(ini))
+        code, _ = self._run("audit", self._plan(self._preserved_pref()), config=config)
+        assert code == 3
+        assert "PRESERVE" not in capsys.readouterr().out
+
+    def test_audit_json_shape(self, capsys):
+        code, _ = self._run(
+            "audit", self._plan(self._preserved_pref(), self._weakened()), ["--json"],
+        )
+        assert code == 3
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["summary"] == {"preserve": 1, "update": 1}
+        rows = {c["key"]: c for c in payload["changes"]}
+        assert rows["has_wiki"] == {
+            "type": "preserve", "category": "repo", "key": "has_wiki",
+            "old": False, "new": True, "reason": "changed from default",
+            "tier": "preference", "github_default": True, "weakened": False,
+        }
+        assert rows["verified_allowed"]["type"] == "update"
+        assert rows["verified_allowed"]["weakened"] is True
+        assert rows["verified_allowed"]["tier"] == "security"
+        assert rows["verified_allowed"]["github_default"] is False
+
+    def test_audit_json_preserve_only_exits_0(self, capsys):
+        code, _ = self._run("audit", self._plan(self._preserved_pref()), ["--json"])
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["summary"] == {"preserve": 1}
+
+    # ── fix ──────────────────────────────────────────────────────────────
+
+    def test_fix_dry_run_shows_preserve_and_exits_0(self, capsys):
+        code, _ = self._run("fix", self._plan(self._preserved_pref()), ["--dry-run"])
+        assert code == 0
+        assert "PRESERVE" in capsys.readouterr().out
+
+    def test_fix_preserve_only_is_nothing_to_do(self, capsys):
+        code, sec = self._run("fix", self._plan(self._preserved_pref()), ["--yes"])
+        assert code == 0
+        sec.apply.assert_not_called()
+        assert "nothing to do" in capsys.readouterr().out
+
+    def test_fix_applies_updates_but_not_preserved_rows(self, capsys):
+        initial = self._plan(self._preserved_stricter(), self._plain_update())
+        # After apply the re-audit still sees reviews=3 vs 1: PRESERVE again,
+        # never a mismatch; dependabot is now on.
+        post = self._plan(self._preserved_stricter(), Change(
+            type=ChangeType.SKIP, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", reason="Already at desired value",
+        ))
+        code, sec = self._run("fix", initial, ["--yes"], post_audits=[post])
+        assert code == 0
+        applied = sec.apply.call_args.args[0]
+        assert [c.key for c in applied.actionable_changes] == ["dependabot_alerts"]
+        assert [c.key for c in applied.preserved_changes] == ["required_approving_reviews"]
+        out = capsys.readouterr().out
+        assert "✓ security/dependabot_alerts" in out
+        assert "required_approving_reviews" not in out.split("Verified", 1)[1]
+        assert "Done" in out and "Done with problems" not in out
+
+    def test_fix_all_applies_and_verifies_preserved_row(self, capsys):
+        post = self._plan(Change(
+            type=ChangeType.SKIP, category=ChangeCategory.BRANCH_PROTECTION,
+            key="required_approving_reviews", reason="Already at desired value",
+        ))
+        code, sec = self._run(
+            "fix", self._plan(self._preserved_stricter()), ["--yes", "--all"], post_audits=[post],
+        )
+        assert code == 0
+        applied = sec.apply.call_args.args[0]
+        assert [c.key for c in applied.actionable_changes] == ["required_approving_reviews"]
+        assert "✓ branch_protection/required_approving_reviews" in capsys.readouterr().out
+
+    def test_fix_json_has_merge_fields_and_preserve_summary(self, capsys):
+        post = self._plan(self._preserved_stricter(), Change(
+            type=ChangeType.SKIP, category=ChangeCategory.SECURITY,
+            key="dependabot_alerts", reason="Already at desired value",
+        ))
+        code, _ = self._run(
+            "fix", self._plan(self._preserved_stricter(), self._plain_update()),
+            ["--yes", "--json"], post_audits=[post],
+        )
+        assert code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["summary"] == {"preserve": 1, "update": 1}
+        assert payload["verification"]["ok"] is True
+        assert [c["key"] for c in payload["verification"]["checks"]] == ["dependabot_alerts"]
+
+
+class TestPrintPlanMerge:
+    def test_preserve_row_rendering(self, capsys):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.PRESERVE, category=ChangeCategory.REPO,
+                        key="has_wiki", old=True, new=False, reason="changed from default"))
+        plan.add(Change(type=ChangeType.PRESERVE, category=ChangeCategory.BRANCH_PROTECTION,
+                        key="required_approving_reviews", old=3, new=1, reason="stricter than 1"))
+        print_plan(plan)
+        out = capsys.readouterr().out
+        assert "PRESERVE  repo" in out
+        assert "True (changed from default)" in out
+        assert "3 (stricter than 1)" in out
+        assert "\033[" not in out
+
+    def test_weakened_marker_rendering(self, capsys):
+        plan = Plan()
+        plan.add(Change(type=ChangeType.UPDATE, category=ChangeCategory.ACTIONS,
+                        key="verified_allowed", old=True, new=False, weakened=True))
+        plan.add(Change(type=ChangeType.UPDATE, category=ChangeCategory.ACTIONS,
+                        key="sha_pinning_required", old=False, new=True))
+        print_plan(plan)
+        lines = capsys.readouterr().out.splitlines()
+        weak = next(l for l in lines if "verified_allowed" in l)
+        plain = next(l for l in lines if "sha_pinning_required" in l)
+        assert weak.endswith("True → False  ⚠ weakened from default")
+        assert "⚠" not in plain
+
+
 class TestScanDefaultPath:
     def test_scan_without_path_scans_cwd(self, tmp_path, capsys, monkeypatch):
         (tmp_path / "main.py").write_text("print('hello')")

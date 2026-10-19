@@ -200,10 +200,12 @@ gh-safe-repo audit <owner/repo> --json    # the same, as a plan document
 ```
 
 Read-only. `audit` fetches each setting and prints `UPDATE` for what differs,
-or one line, `All settings compliant.`, when nothing does. It never prompts
-and never changes anything. The exit code makes it a CI gate: `0` when
-compliant, `3` when `fix` would change something. You need admin on the
-repo, which may be owned by an org or another account.
+`PRESERVE` for what differs but is left alone (see [What `fix` leaves
+alone](#what-fix-leaves-alone)), or one line, `All settings compliant.`, when
+nothing does. It never prompts and never changes anything. The exit code
+makes it a CI gate: `0` when compliant, `3` when `fix` would change
+something; `PRESERVE` rows are not drift. You need admin on the repo, which
+may be owned by an org or another account.
 
 ### Fix a repo you already have
 
@@ -216,6 +218,42 @@ gh-safe-repo fix <owner/repo> --dry-run   # the audit, exit 0 like every dry run
 `fix` runs the same audit, shows the plan, confirms, and only calls the API
 for real changes. It is settings-only (no secret scanning). Afterwards every
 changed setting is read back from GitHub.
+
+#### What `fix` leaves alone
+
+An existing repo has history. If a setting differs from what a brand-new
+repo would have, a person (or an upstream project you `copy`'d) chose it.
+`fix` and `audit` compare each setting three ways, like a merge: GitHub's
+default (the base), the repo's current value (theirs) and the safe default
+or your config (ours).
+
+| Current value | Tier | `fix` does |
+|---|---|---|
+| Equals the desired value | any | nothing (`SKIP`, already correct) |
+| Still GitHub's default | any | `UPDATE`. Nobody chose it |
+| Changed from the default | preference | `PRESERVE`. Someone chose it; the value is kept |
+| Changed from the default, stricter than ours | security | `PRESERVE`. Never weakens a stricter posture |
+| Changed from the default, weaker than ours | security | `UPDATE`, marked `⚠ weakened from default` |
+
+Security-tier settings are branch and tag protection rules, Actions
+enforcement (`allowed_actions`, SHA pinning, workflow permissions, fork PR
+approval) and everything under `[security]`. Preference-tier settings are
+everything under `[repo]` (wiki, merge strategies, ...), whether Actions is
+enabled at all, and the branch-protection policy knobs (`enforce_admins`,
+`require_conversation_resolution`, `use_rulesets`).
+
+Two ways to enforce a `PRESERVE` row:
+
+- **Declare the section in your config.** A `[repo]` section in your INI
+  file, even an empty one, means "I want these enforced": every `[repo]`
+  setting is then applied regardless of what someone changed. Only sections
+  present in the file count; values that fell through from the built-in
+  defaults do not.
+- **`--all`.** Treat every difference as a change, on `audit` and `fix`
+  alike. This is "apply my whole config", not a factory reset.
+
+`new`, `push` and `copy` never preserve anything: a repo that does not exist
+yet has no history to respect.
 
 ### Scan local code
 
@@ -234,14 +272,15 @@ gh-safe-repo [--config PATH | --no-config] [--debug] <command> ...
 new    <owner/repo>                   [--public] [--dry-run] [--yes] [--json]
 push   <path> <owner/repo>            [--public] [--dry-run] [--yes] [--json]
 copy   <src-owner/repo> <owner/repo>  [--public] [--dry-run] [--yes] [--json]
-audit  <owner/repo>                   [--json]
-fix    <owner/repo>                   [--dry-run] [--yes] [--json] [--migrate-branch-protection]
+audit  <owner/repo>                   [--all] [--json]
+fix    <owner/repo>                   [--all] [--dry-run] [--yes] [--json] [--migrate-branch-protection]
 scan   [path]                         [--json]
 ```
 
 Two rules cover the options. Every command that creates a repo takes
 `--public`. Every command that changes GitHub takes `--dry-run`, `--yes` and
-`--json`; `audit` and `scan` are read-only and take only `--json`. The one
+`--json`; `audit` and `scan` are read-only and take only `--json`. The two
+existing-repo commands, `audit` and `fix`, share `--all`. The one
 command-specific flag is `fix --migrate-branch-protection`.
 
 Where a command takes two positionals, the source comes first and the new
@@ -277,14 +316,17 @@ scans the clone. Both work for private and public destinations.
 
 | Option | Description |
 |---|---|
+| `--all` | Report every differing setting as `UPDATE`, including ones a person changed from GitHub's default (no `PRESERVE` rows). See [What `fix` leaves alone](#what-fix-leaves-alone) |
 | `--json` | Emit the plan as JSON on stdout |
 
-Exits `3` when anything would change, `0` when compliant.
+Exits `3` when anything would change, `0` when compliant. `PRESERVE` rows
+are not drift: a repo with only `PRESERVE` rows prints the table and exits `0`.
 
 **`fix <owner/repo>`**
 
 | Option | Description |
 |---|---|
+| `--all` | Apply every differing setting, including ones a person changed from GitHub's default (no `PRESERVE` rows). See [What `fix` leaves alone](#what-fix-leaves-alone) |
 | `--dry-run` | Show the settings diff without applying it (exit `0`) |
 | `--yes`, `-y` | Skip the confirmation prompt. Required when stdin is not a terminal |
 | `--migrate-branch-protection` | Convert classic branch protection to a ruleset. See [Branch protection](#branch-protection) |
@@ -308,9 +350,13 @@ is not a terminal or `NO_COLOR` is set.
 | Type | Meaning |
 |---|---|
 | `ADD` | New setting being applied |
-| `UPDATE` | Existing setting being changed |
+| `UPDATE` | Existing setting being changed. `⚠ weakened from default` after the arrow means someone relaxed a security control below GitHub's default and `fix` is restoring it |
 | `DELETE` | Setting or file being removed |
+| `PRESERVE` | `audit`/`fix` only: the setting differs but a person changed it from GitHub's default, so it is kept. The note says why: `(changed from default)` or `(stricter than 1)`. See [What `fix` leaves alone](#what-fix-leaves-alone) |
 | `SKIP` | Nothing to do: already correct, or unavailable on this plan/visibility |
+
+The summary line counts them separately: `2 change(s) to apply, 3 preserved,
+4 skipped`.
 
 ### JSON
 
@@ -328,15 +374,24 @@ prompts and the banner go to stderr.
 ```json
 {
   "changes": [
-    { "type": "update", "category": "actions",         "key": "default_workflow_permissions", "old": "write", "new": "read", "reason": null },
-    { "type": "skip", "category": "branch_protection", "key": "branch_protection", "old": null, "new": null,  "reason": "Branch protection requires a public repo or paid GitHub plan" }
+    { "type": "update",   "category": "actions",           "key": "default_workflow_permissions", "old": "write", "new": "read", "reason": null,
+      "tier": "security",   "github_default": "write", "weakened": false },
+    { "type": "preserve", "category": "repo",              "key": "has_wiki",                     "old": false,   "new": true,   "reason": "changed from default",
+      "tier": "preference", "github_default": true,    "weakened": false },
+    { "type": "skip",     "category": "branch_protection", "key": "branch_protection",            "old": null,    "new": null,   "reason": "Branch protection requires a public repo or paid GitHub plan",
+      "tier": null,         "github_default": null,    "weakened": false }
   ],
-  "summary": { "add": 5, "skip": 2 }
+  "summary": { "update": 1, "preserve": 1, "skip": 1 }
 }
 ```
 
 `summary` only lists types present in the plan; use `.get("delete", 0)`
-rather than assuming all four keys.
+rather than assuming all five keys. Every change carries the merge context
+from [What `fix` leaves alone](#what-fix-leaves-alone): `tier` (`security`,
+`preference`, or `null` for rows that are not a per-key setting),
+`github_default` (what a new repo holds; `null` when not applicable) and
+`weakened` (`true` on an `UPDATE` that restores a security control someone
+relaxed).
 
 `scan --json`:
 
@@ -425,10 +480,10 @@ no checks and `"ok": true`.
 
 | Code | Meaning |
 |---|---|
-| `0` | Success, or the user declined at an interactive prompt. For `audit`, the repo is compliant. For the mutating commands, success means everything applied was read back and verified |
+| `0` | Success, or the user declined at an interactive prompt. For `audit`, the repo is compliant (`PRESERVE` rows do not count). For the mutating commands, success means everything applied was read back and verified |
 | `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure, or a failed code push (the repo exists but is empty; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
 | `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, `--config` with `--no-config`, an unknown flag |
-| `3` | `audit` found settings that `fix` would change. Or a mutating command applied the changes but at least one did not stick when read back |
+| `3` | `audit` found settings that `fix` would change (`ADD`/`UPDATE`/`DELETE` rows; never `PRESERVE`). Or a mutating command applied the changes but at least one did not stick when read back |
 | `130` | Interrupted with Ctrl-C |
 
 An unattended run never exits `0` without doing the work. With no terminal

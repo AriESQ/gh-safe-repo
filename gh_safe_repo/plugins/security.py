@@ -21,6 +21,21 @@ from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError
 from .base import BasePlugin
 
+# What a brand-new repo holds, as far as this plugin can tell. GitHub turns
+# some of these on by itself (secret scanning on public repos; Dependabot
+# alerts when the account opted into "enable for new repositories"), which
+# the API cannot distinguish from a human turning them on, so the base is
+# "off" for all of them: a disabled toggle is never reported as ⚠ weakened,
+# it is simply enabled. Keyed by plan key (see _plan_toggle).
+GITHUB_DEFAULTS = {
+    "dependabot_alerts": False,
+    "secret_scanning": False,
+    "dependabot_security_updates": False,
+    "private_vulnerability_reporting": False,
+    "enable_secret_scanning_push_protection": False,
+    "enable_dependency_graph": False,
+}
+
 # Settings managed via PATCH /repos with security_and_analysis body.
 # Maps config key → security_and_analysis sub-key.
 SECURITY_ANALYSIS_SETTINGS = {
@@ -43,6 +58,9 @@ AUTO_PUBLIC_SETTINGS = {
 
 
 class SecurityPlugin(BasePlugin):
+    section = "security"
+    github_defaults = GITHUB_DEFAULTS
+
     def __init__(self, client, owner, repo, config, is_public=False, is_paid_plan=False):
         super().__init__(client, owner, repo, config)
         self.is_public = is_public
@@ -209,20 +227,20 @@ class SecurityPlugin(BasePlugin):
         if is_audit:
             current = current_state.get(plan_key, False)
             if current:
-                plan.add(Change(
+                plan.add(self.annotate(Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.SECURITY,
                     key=plan_key,
                     reason="Already at desired value",
-                ))
+                )))
             else:
-                plan.add(Change(
+                plan.add(self.annotate(Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.SECURITY,
                     key=plan_key,
                     old=False,
                     new=True,
-                ))
+                )))
         else:
             plan.add(Change(
                 type=ChangeType.ADD,

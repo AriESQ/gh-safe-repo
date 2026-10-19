@@ -44,6 +44,9 @@ def _parse_bool(value):
 
 
 class RepositoryPlugin(BasePlugin):
+    section = "repo"
+    github_defaults = GITHUB_DEFAULTS
+
     def __init__(self, client, owner, repo, config, auto_init: bool = None,
                  source_description="", source_topics=None, suppress_readme: bool = False):
         super().__init__(client, owner, repo, config)
@@ -91,7 +94,7 @@ class RepositoryPlugin(BasePlugin):
             if current is None:
                 continue
             if desired != current:
-                plan.add(
+                plan.add(self.annotate(
                     Change(
                         type=ChangeType.UPDATE,
                         category=ChangeCategory.REPO,
@@ -99,16 +102,16 @@ class RepositoryPlugin(BasePlugin):
                         old=current,
                         new=desired,
                     )
-                )
+                ))
             elif is_audit:
-                plan.add(
+                plan.add(self.annotate(
                     Change(
                         type=ChangeType.SKIP,
                         category=ChangeCategory.REPO,
                         key=key,
                         reason="Already at desired value",
                     )
-                )
+                ))
 
         if not is_audit and self._source_description:
             plan.add(

@@ -23,6 +23,9 @@ RULESET_NAME = "gh-safe-repo tag defaults"
 
 
 class TagProtectionPlugin(BasePlugin):
+    section = "tag_protection"
+    github_defaults = GITHUB_DEFAULTS
+
     def __init__(self, client, owner, repo, config, is_public=False, is_paid_plan=False):
         super().__init__(client, owner, repo, config)
         self.is_public = is_public
@@ -140,20 +143,20 @@ class TagProtectionPlugin(BasePlugin):
             if current_val is None:
                 continue
             if desired_val != current_val:
-                plan.add(Change(
+                plan.add(self.annotate(Change(
                     type=ChangeType.UPDATE if is_audit else ChangeType.ADD,
                     category=ChangeCategory.TAG_PROTECTION,
                     key=key,
                     old=current_val if is_audit else None,
                     new=desired_val,
-                ))
+                )))
             elif is_audit:
-                plan.add(Change(
+                plan.add(self.annotate(Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.TAG_PROTECTION,
                     key=key,
                     reason="Already at desired value",
-                ))
+                )))
 
         return plan
 
@@ -165,7 +168,10 @@ class TagProtectionPlugin(BasePlugin):
         if not tag_changes:
             return
 
+        # One ruleset body: carry the human's value for any PRESERVEd key
+        # (see BranchProtectionPlugin.apply).
         desired = self._desired()
+        desired.update(self.preserved_values(plan))
         body = self._build_tag_ruleset_body(desired)
         path = self.client.repo_path(self.owner, self.repo, "rulesets")
         self.client.call_json("POST", path, body)

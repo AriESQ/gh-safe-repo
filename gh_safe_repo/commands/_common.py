@@ -27,6 +27,11 @@ _DIM    = "\033[2m"  if _COLOR else ""
 _RED    = "\033[31m" if _COLOR else ""
 _GREEN  = "\033[32m" if _COLOR else ""
 _YELLOW = "\033[33m" if _COLOR else ""
+_CYAN   = "\033[36m" if _COLOR else ""
+
+# Marker for an UPDATE whose current value is a weaker security posture than
+# GitHub's default (someone relaxed a control; the three-way merge in fix).
+_WEAKENED = "⚠ weakened from default"
 
 
 def _c(code, text):
@@ -215,6 +220,12 @@ def warn(msg):
 
 
 def print_plan(plan):
+    """Print the plan table.
+
+    PRESERVE rows (fix/audit three-way merge) show the value being kept and
+    why: ``true (changed from default)`` or ``3 (stricter than 1)``. An UPDATE
+    whose ``weakened`` flag is set carries the ⚠ marker after the arrow.
+    """
     headers = ["Type", "Category", "Setting", "Value / Note"]
 
     rows = []
@@ -224,9 +235,15 @@ def print_plan(plan):
         elif change.type == ChangeType.ADD:
             rows.append(("ADD", change.category.value, change.key, str(change.new), "add"))
         elif change.type == ChangeType.UPDATE:
-            rows.append(("UPDATE", change.category.value, change.key, f"{change.old!r} → {change.new!r}", "update"))
+            value = f"{change.old!r} → {change.new!r}"
+            if change.weakened:
+                value += f"  {_c(_YELLOW, _WEAKENED)}"
+            rows.append(("UPDATE", change.category.value, change.key, value, "update"))
         elif change.type == ChangeType.DELETE:
             rows.append(("DELETE", change.category.value, change.key, str(change.old), "delete"))
+        elif change.type == ChangeType.PRESERVE:
+            value = f"{change.old!r} ({change.reason})" if change.reason else repr(change.old)
+            rows.append(("PRESERVE", change.category.value, change.key, value, "preserve"))
 
     col_widths = [len(h) for h in headers]
     for row in rows:
@@ -267,6 +284,13 @@ def print_plan(plan):
                 + key.ljust(col_widths[2]) + sep
                 + value
             )
+        elif kind == "preserve":
+            print(
+                _c(_CYAN, type_str.ljust(col_widths[0])) + sep
+                + cat.ljust(col_widths[1]) + sep
+                + key.ljust(col_widths[2]) + sep
+                + value
+            )
     print()
 
 
@@ -276,6 +300,12 @@ def format_plan_json(plan, verification=None):
     With `verification` (a verify.Verification), the document gains a
     top-level "verification" block. Non-dry-run create/fix print this once,
     at the end of the run; --dry-run never passes it.
+
+    Every change carries the merge context: ``tier`` ("security" /
+    "preference" / null), ``github_default`` (what a fresh repo holds, null
+    when unknown) and ``weakened`` (true on an UPDATE that restores a
+    security control someone relaxed). ``summary`` gains ``"preserve"`` when
+    the plan has PRESERVE rows.
     """
     counts = plan.count_by_type()
     doc = {
@@ -287,6 +317,9 @@ def format_plan_json(plan, verification=None):
                 "old": c.old,
                 "new": c.new,
                 "reason": c.reason,
+                "tier": c.tier,
+                "github_default": c.github_default,
+                "weakened": bool(c.weakened),
             }
             for c in plan.changes
         ],

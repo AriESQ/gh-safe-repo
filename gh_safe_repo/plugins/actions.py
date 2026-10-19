@@ -51,6 +51,9 @@ def _parse_patterns(value):
 
 
 class ActionsPlugin(BasePlugin):
+    section = "actions"
+    github_defaults = GITHUB_DEFAULTS
+
     def __init__(self, client, owner, repo, config, is_public=True):
         super().__init__(client, owner, repo, config)
         self.is_public = is_public
@@ -122,7 +125,7 @@ class ActionsPlugin(BasePlugin):
         )
 
         if desired_allowed != current_allowed:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -130,16 +133,16 @@ class ActionsPlugin(BasePlugin):
                     old=current_allowed,
                     new=desired_allowed,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="allowed_actions",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
         # --- selected-actions sub-settings (only when desired is "selected") ---
         if desired_allowed == "selected":
@@ -160,7 +163,7 @@ class ActionsPlugin(BasePlugin):
             current_sha_pinning = _parse_bool(current_sha_pinning)
 
         if desired_sha_pinning != current_sha_pinning:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -168,16 +171,16 @@ class ActionsPlugin(BasePlugin):
                     old=current_sha_pinning,
                     new=desired_sha_pinning,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="sha_pinning_required",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
         # --- default_workflow_permissions ---
         desired_workflow_perms = settings.get(
@@ -190,7 +193,7 @@ class ActionsPlugin(BasePlugin):
         )
 
         if desired_workflow_perms != current_workflow_perms:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -198,16 +201,16 @@ class ActionsPlugin(BasePlugin):
                     old=current_workflow_perms,
                     new=desired_workflow_perms,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="default_workflow_permissions",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
         # --- can_approve_pull_request_reviews ---
         desired_can_approve = _parse_bool(
@@ -224,7 +227,7 @@ class ActionsPlugin(BasePlugin):
             current_can_approve = _parse_bool(current_can_approve)
 
         if desired_can_approve != current_can_approve:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -232,37 +235,37 @@ class ActionsPlugin(BasePlugin):
                     old=current_can_approve,
                     new=desired_can_approve,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="can_approve_pull_request_reviews",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
         # --- fork_pr_approval_policy ---
         # Not available for private repos (API returns 422)
         current_fork_policy = baseline.get("fork_pr_approval_policy")
         if not self.is_public or current_fork_policy is None:
             if is_audit:
-                plan.add(
+                plan.add(self.annotate(
                     Change(
                         type=ChangeType.SKIP,
                         category=ChangeCategory.ACTIONS,
                         key="fork_pr_approval_policy",
                         reason="Not available for private repositories",
                     )
-                )
+                ))
         else:
             desired_fork_policy = settings.get(
                 "fork_pr_approval_policy",
                 GITHUB_DEFAULTS["fork_pr_approval_policy"],
             )
             if desired_fork_policy != current_fork_policy:
-                plan.add(
+                plan.add(self.annotate(
                     Change(
                         type=ChangeType.UPDATE,
                         category=ChangeCategory.ACTIONS,
@@ -270,16 +273,16 @@ class ActionsPlugin(BasePlugin):
                         old=current_fork_policy,
                         new=desired_fork_policy,
                     )
-                )
+                ))
             elif is_audit:
-                plan.add(
+                plan.add(self.annotate(
                     Change(
                         type=ChangeType.SKIP,
                         category=ChangeCategory.ACTIONS,
                         key="fork_pr_approval_policy",
                         reason="Already at desired value",
                     )
-                )
+                ))
 
         return plan
 
@@ -300,7 +303,7 @@ class ActionsPlugin(BasePlugin):
             current_gh_owned = _parse_bool(current_gh_owned)
 
         if desired_gh_owned != current_gh_owned:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -308,16 +311,16 @@ class ActionsPlugin(BasePlugin):
                     old=current_gh_owned,
                     new=desired_gh_owned,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="github_owned_allowed",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
         # verified_allowed
         desired_verified = _parse_bool(
@@ -334,7 +337,7 @@ class ActionsPlugin(BasePlugin):
             current_verified = _parse_bool(current_verified)
 
         if desired_verified != current_verified:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -342,16 +345,16 @@ class ActionsPlugin(BasePlugin):
                     old=current_verified,
                     new=desired_verified,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="verified_allowed",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
         # patterns_allowed
         desired_patterns = _parse_patterns(
@@ -362,7 +365,7 @@ class ActionsPlugin(BasePlugin):
         )
 
         if desired_patterns != current_patterns:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.UPDATE,
                     category=ChangeCategory.ACTIONS,
@@ -370,16 +373,16 @@ class ActionsPlugin(BasePlugin):
                     old=current_patterns,
                     new=desired_patterns,
                 )
-            )
+            ))
         elif is_audit:
-            plan.add(
+            plan.add(self.annotate(
                 Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.ACTIONS,
                     key="patterns_allowed",
                     reason="Already at desired value",
                 )
-            )
+            ))
 
     def apply(self, plan: Plan) -> None:
         perms_body = {}

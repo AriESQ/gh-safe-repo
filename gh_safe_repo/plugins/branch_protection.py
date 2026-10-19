@@ -38,6 +38,9 @@ RULESET_NAME = "gh-safe-repo defaults"
 
 
 class BranchProtectionPlugin(BasePlugin):
+    section = "branch_protection"
+    github_defaults = GITHUB_DEFAULTS
+
     def __init__(self, client, owner, repo, config, is_public=False, is_paid_plan=False,
                  branches=None, migrate=False):
         super().__init__(client, owner, repo, config)
@@ -310,20 +313,20 @@ class BranchProtectionPlugin(BasePlugin):
             if current_val is None:
                 continue
             if desired_val != current_val:
-                plan.add(Change(
+                plan.add(self.annotate(Change(
                     type=ChangeType.UPDATE if is_audit else ChangeType.ADD,
                     category=ChangeCategory.BRANCH_PROTECTION,
                     key=key,
                     old=current_val if is_audit else None,
                     new=desired_val,
-                ))
+                )))
             elif is_audit:
-                plan.add(Change(
+                plan.add(self.annotate(Change(
                     type=ChangeType.SKIP,
                     category=ChangeCategory.BRANCH_PROTECTION,
                     key=key,
                     reason="Already at desired value",
-                ))
+                )))
 
         return plan
 
@@ -337,7 +340,12 @@ class BranchProtectionPlugin(BasePlugin):
         if not bp_changes:
             return
 
+        # The ruleset (or classic protection) is written as one body, so a
+        # key the merge policy PRESERVEd must be written with the human's
+        # current value, not ours — otherwise fixing allow_force_pushes would
+        # silently reset required_approving_reviews from 3 back to 1.
         desired = self._desired()
+        desired.update(self.preserved_values(plan))
 
         if self._use_rulesets():
             self._apply_ruleset(desired)

@@ -25,17 +25,17 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `commands/create.py` | the `new` subcommand (file keeps its old name) — empty repo with safe defaults. `run()` is also the engine for `push` (`args.local_path`) and `copy` (`args.from_repo`) |
 | `commands/push.py` | `push <path> <owner/repo>` — sets `args.local_path` and delegates to `create.run` |
 | `commands/copy.py` | `copy <src-owner/repo> <owner/repo>` — sets `args.from_repo` and delegates to `create.run` |
-| `commands/audit.py` | `audit <owner/repo>` — calls `fix.run(args, audit=True)`: dry run, no prompt, exit 3 on drift |
-| `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections; `run(args, audit=False)` |
+| `commands/audit.py` | `audit <owner/repo>` — calls `fix.run(args, audit=True)`: dry run, no prompt, exit 3 on drift (`ADD`/`UPDATE`/`DELETE` rows only; `PRESERVE` is not drift) |
+| `commands/fix.py` | `fix` subcommand — audit existing repo, show diff, apply corrections; `run(args, audit=False)`. `apply_merge_policy(plan, config, all_=False)` is the three-way merge (the only place that knows the policy): per UPDATE row, `old` vs `github_default` decides whether a person changed it, then `tier` + `is_stricter()` + `config.is_declared(section)` turn it into `PRESERVE` or flag it `weakened`; `--all` returns the plan unchanged. Applied to every plugin plan before display/apply and passed to `verify_plugins(policy=)` so the re-read is judged the same way. `add_all_arg()` is shared with `audit` |
 | `commands/scan.py` | `scan` subcommand — local-only secret scanning |
 | `github_client.py` | Wrapper around `gh api` (subprocess); `copy_repo()`, `push_local()` (bare-clones so all branches push; pushes and sets `default_branch`; returns a `LocalWiring` describing the default branch, the `origin`/upstream setup on the user's repo, a foreign `origin` left untouched, and the pushed `{branch: sha}` / `{tag: sha}` maps), `copy_repo(default_branch=)` sets the source's default after the mirror, `matching_refs(owner, repo, "heads"|"tags")` (`{name: sha}` via `git/matching-refs`, paginated with `get_json_pages()`; 409 empty repo → `{}`), `clone_for_scan()`; `git_remote_url()` builds URLs per `gh config get git_protocol`; `verify_git_credentials()` pre-flight probes SSH |
 | `git_transport.py` | Frozen `GitTransport` (protocol, env, URLs, redaction, `preflight()`, `run_remote()` which retries a missed `*-SK` touch once) built by `discover_transport()`; `security_key_hint()` names a missed `*-SK` hardware-key touch in git errors, and `GitTransport.auth_hint()` adds the directory the SSH settings were read from for a plain publickey failure |
-| `config_manager.py` | INI config parsing via `configparser`; holds `SAFE_DEFAULTS` |
-| `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()` |
+| `config_manager.py` | INI config parsing via `configparser`; holds `SAFE_DEFAULTS`, plus the merge metadata: `MERGE_SECTIONS` (the five repo-state sections; `[pre_flight_scan]`/`[git_transport]` are tool-run behaviour and excluded), `SETTING_TIERS` (`(section, key)` → `security`/`preference`, keyed by plan row), `SAFE_DIRECTIONS` (which value is stricter: a strict boolean, `"higher"`, `"subset"`, or an enum tuple weakest → strictest), `setting_tier()`, `is_stricter()`, `has_direction()`. `ConfigManager.declared_sections` / `is_declared()` are the sections named in the user's own INI file (explicit intent), as opposed to values seeded from `SAFE_DEFAULTS` |
+| `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()`. `ChangeType.PRESERVE` plus the merge fields on `Change` (`tier`, `github_default`, `weakened`); `actionable_changes` excludes both `SKIP` and `PRESERVE`, `preserved_changes` lists the latter |
 | `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block), `verify_plugins()` (re-audits plugins after apply, `fix`), `Probe` + `verify()` (plugin audits and dedicated reads in one set of 1s/2s/4s retry rounds), and `create_probes()` / `verify_create()` (`create`: repo exists, visibility, README removed, `copy` description/topics, protection presence; repo-exists runs first and short-circuits), plus the `push`/`copy` probes passed as `extra_probes`: `pushed_ref_probes()` / `mirrored_ref_probes()` (fatal, refs via the API), `default_branch_probe()` and `local_wiring_probes()` (advisory, local git config, `retry=False`) |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |
 | `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` (tracked files only in git repos, NUL-byte binary sniff, TTY progress line). `scan()` records the engine that ran (`engine_used`, `fell_back`, `fallback_reason`); `engine_error()` turns a fallback under explicit `native`/`docker` into an error message |
-| `plugins/base.py` | Abstract `BasePlugin` — defines the `fetch_current_state(strict=False)` / `plan()` / `apply()` interface |
+| `plugins/base.py` | Abstract `BasePlugin` — defines the `fetch_current_state(strict=False)` / `plan()` / `apply()` interface; class attrs `section` / `github_defaults`, `annotate(change)` (tags a per-key row with `tier` + `github_default`), `preserved_values(plan)` (the `{key: current}` a composite write must carry) |
 | `plugins/repository.py` | Repo creation (`POST /user/repos`) and basic repo settings (`PATCH`) |
 | `plugins/actions.py` | GitHub Actions permissions (allowed actions, workflow perms, SHA pinning) |
 | `plugins/branch_protection.py` | Branch protection via Rulesets API (default; classic per-branch path behind `use_rulesets = false`) |
@@ -67,6 +67,26 @@ Each plugin follows a fetch → diff → apply cycle:
 This means audit mode and create mode share the same code path. The only difference
 is whether current state is fetched from an existing repo or assumed to be GitHub
 defaults.
+
+Plugins are two-way diffs and stay that way. The three-way merge that `fix`/`audit`
+run on an existing repo (`commands/fix.py:apply_merge_policy`) sits between
+`plan()` and `apply()`:
+
+- `plan()` calls `self.annotate(change)` on every per-key row, which sets
+  `change.tier` (from `config_manager.setting_tier(self.section, key)`) and
+  `change.github_default` (from `self.github_defaults`, the module's
+  `GITHUB_DEFAULTS`). Rows without a GitHub default (create-only rows,
+  plan-limit `SKIP`s) stay unannotated and pass through the policy.
+- The policy turns an `UPDATE` into `PRESERVE` or sets `weakened`. `PRESERVE`
+  is not in `plan.actionable_changes`, so `apply()` never writes it and
+  `verify_plugins(policy=...)` never expects it to have changed.
+- **Composite writes must honour `PRESERVE`.** Branch and tag protection are
+  written as one ruleset body built from `_desired()`, not from the rows. Their
+  `apply()` overlays `self.preserved_values(plan)` on the desired dict first, so
+  fixing `allow_force_pushes` does not reset a preserved
+  `required_approving_reviews = 3` to `1`. Any new plugin that writes a body
+  wider than its actionable rows must do the same.
+- `create` never calls the policy.
 
 ```
 cli.main()
@@ -125,8 +145,12 @@ attempt (the `copy` source refs).
 2. Add the key and safe default to `config_manager.py:SAFE_DEFAULTS`.
 3. Add the corresponding entry (with a comment) to `gh-safe-repo.ini.example` in the repo root.
    `test_config_consistency.py` will fail if the example file and `SAFE_DEFAULTS` diverge.
-4. Update the appropriate plugin's `plan()` and `apply()` methods.
-5. Add tests in `tests/test_plugins.py` — all `subprocess` calls must be mocked.
+4. Add its tier to `config_manager.py:SETTING_TIERS` and, for a security-tier
+   setting, its direction to `SAFE_DIRECTIONS` (`tests/test_merge_policy.py`
+   fails otherwise). Add the GitHub default to the plugin's `GITHUB_DEFAULTS`.
+5. Update the appropriate plugin's `plan()` (wrap per-key rows in `self.annotate(...)`)
+   and `apply()` methods.
+6. Add tests in `tests/test_plugins.py` — all `subprocess` calls must be mocked.
 
 ## Key design rules
 

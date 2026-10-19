@@ -9,6 +9,12 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-19
+
+**Breaking.** The verbs were rewritten. `create`, `create --local`,
+`create --from` and bare `--config` no longer exist; see Removed below.
+There are no aliases, so scripts and the agent skill must be updated.
+
 ### Added
 - `new <owner/repo>`: create an empty repo with safe defaults (what plain
   `create` did).

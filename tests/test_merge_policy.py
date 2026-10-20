@@ -12,6 +12,7 @@ import pytest
 
 from gh_safe_repo.commands.fix import apply_merge_policy
 from gh_safe_repo.config_manager import (
+    DEPENDENT_SETTINGS,
     MERGE_SECTIONS,
     PREFERENCE,
     SAFE_DEFAULTS,
@@ -218,6 +219,63 @@ class TestDeclaredSections:
 # ---------------------------------------------------------------------------
 # apply_merge_policy: the merge table
 # ---------------------------------------------------------------------------
+
+class TestDependentSettings:
+    """A sub-setting whose parent is preserved at a value where it has no
+    effect is SKIP, not drift (live case: allowed_actions kept at local_only
+    left verified_allowed reporting as UPDATE and audit exiting 3)."""
+
+    def _actions_plan(self, parent_old, sub_old=False, sub_new=True):
+        plan = Plan()
+        plan.add(update(ChangeCategory.ACTIONS, "allowed_actions", parent_old, "selected",
+                        tier=SECURITY, default="all"))
+        plan.add(update(ChangeCategory.ACTIONS, "verified_allowed", sub_old, sub_new,
+                        tier=SECURITY, default=False))
+        return plan
+
+    def test_every_dependent_has_a_tier_and_names_a_sibling_parent(self):
+        from gh_safe_repo.config_manager import SETTING_TIERS
+        for (section, key), (parent, _needs) in DEPENDENT_SETTINGS.items():
+            assert (section, key) in SETTING_TIERS
+            assert (section, parent) in SETTING_TIERS
+
+    def test_dependent_becomes_skip_when_parent_preserved_elsewhere(self):
+        out = by_key(apply_merge_policy(self._actions_plan("local_only"), make_config()))
+        assert out["allowed_actions"].type == ChangeType.PRESERVE
+        sub = out["verified_allowed"]
+        assert sub.type == ChangeType.SKIP
+        assert "allowed_actions is 'local_only'" in sub.reason
+        assert sub.weakened is False
+
+    def test_skipped_dependent_is_not_actionable(self):
+        out = apply_merge_policy(self._actions_plan("local_only"), make_config())
+        assert out.actionable_changes == []
+
+    def test_dependent_stays_update_when_parent_is_updated(self):
+        # Parent at GitHub's default ("all"): nobody chose it, so it is UPDATE
+        # to "selected" and the sub-setting is written with it.
+        out = by_key(apply_merge_policy(self._actions_plan("all"), make_config()))
+        assert out["allowed_actions"].type == ChangeType.UPDATE
+        assert out["verified_allowed"].type == ChangeType.UPDATE
+
+    def test_dependent_stays_update_when_parent_already_selected(self):
+        plan = Plan()
+        plan.add(update(ChangeCategory.ACTIONS, "verified_allowed", False, True,
+                        tier=SECURITY, default=False))
+        out = by_key(apply_merge_policy(plan, make_config()))
+        assert out["verified_allowed"].type == ChangeType.UPDATE
+
+    def test_declared_section_keeps_parent_and_dependent_as_update(self, tmp_path):
+        config = make_config("[actions]\nallowed_actions = selected\n", tmp_path)
+        out = by_key(apply_merge_policy(self._actions_plan("local_only"), config))
+        assert out["allowed_actions"].type == ChangeType.UPDATE
+        assert out["verified_allowed"].type == ChangeType.UPDATE
+
+    def test_all_leaves_everything_as_update(self):
+        out = by_key(apply_merge_policy(self._actions_plan("local_only"), make_config(), all_=True))
+        assert out["allowed_actions"].type == ChangeType.UPDATE
+        assert out["verified_allowed"].type == ChangeType.UPDATE
+
 
 class TestMergeTable:
     """One test per row of the doc's merge table, both tiers, both directions."""

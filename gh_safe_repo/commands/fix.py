@@ -3,7 +3,7 @@
 import sys
 from dataclasses import replace
 
-from ..config_manager import PREFERENCE, SECURITY, is_stricter
+from ..config_manager import DEPENDENT_SETTINGS, PREFERENCE, SECURITY, is_stricter
 from ..diff import ChangeType, Plan
 from ..errors import APIError, SafeRepoError
 from ..plugins.actions import ActionsPlugin
@@ -93,27 +93,51 @@ def apply_merge_policy(plan, config, all_=False):
       except when the user's INI file declares the section: explicit config
       wins, the row stays UPDATE (still flagged weakened where that holds).
 
+    A dependent setting (``DEPENDENT_SETTINGS``, e.g. the selected-actions
+    sub-settings under ``allowed_actions``) whose parent was preserved at a
+    value where it has no effect becomes SKIP: it is not drift, and writing it
+    would do nothing.
+
     ``all_`` skips the policy: every row is returned as the plugin emitted it.
     Rows without merge context (no ``tier``: SKIP rows, create-only rows,
     mock plans) pass through. Returns a new Plan; ``plan`` is not modified.
     """
     if all_:
         return plan
-    out = Plan()
+    resolved = []
     for c in plan.changes:
         if c.type != ChangeType.UPDATE or c.tier is None or c.old == c.github_default:
-            out.add(c)
+            resolved.append(c)
             continue
         section = c.category.value
         weaker = c.tier == SECURITY and is_stricter(section, c.key, c.new, c.old)
         if config.is_declared(section):
-            out.add(replace(c, weakened=weaker))
+            resolved.append(replace(c, weakened=weaker))
         elif c.tier == PREFERENCE:
-            out.add(replace(c, type=ChangeType.PRESERVE, reason="changed from default"))
+            resolved.append(replace(c, type=ChangeType.PRESERVE, reason="changed from default"))
         elif is_stricter(section, c.key, c.old, c.new):
-            out.add(replace(c, type=ChangeType.PRESERVE, reason=f"stricter than {c.new!r}"))
+            resolved.append(replace(c, type=ChangeType.PRESERVE, reason=f"stricter than {c.new!r}"))
         else:
-            out.add(replace(c, weakened=weaker))
+            resolved.append(replace(c, weakened=weaker))
+
+    # Dependents of a preserved parent: the parent keeps its current value
+    # (c.old), so a dependent that only applies at another value is inert.
+    preserved = {
+        (c.category.value, c.key): c.old
+        for c in resolved if c.type == ChangeType.PRESERVE
+    }
+    out = Plan()
+    for c in resolved:
+        dep = DEPENDENT_SETTINGS.get((c.category.value, c.key))
+        if dep and c.type == ChangeType.UPDATE:
+            parent_key, needs = dep
+            parent_value = preserved.get((c.category.value, parent_key), needs)
+            if parent_value != needs:
+                c = replace(
+                    c, type=ChangeType.SKIP, old=None, new=None, weakened=False,
+                    reason=f"Not applicable while {parent_key} is {parent_value!r} (preserved)",
+                )
+        out.add(c)
     return out
 
 

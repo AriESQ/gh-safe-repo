@@ -39,6 +39,12 @@ since the initial release.
   resetting it to the desired one.
 - `new`, `push` and `copy` are unaffected: no merge logic on a repo that
   does not exist yet.
+- A sub-setting whose parent is preserved at a value where it has no effect
+  is `SKIP`, not `UPDATE`. Found live: with `allowed_actions` kept at
+  `local_only`, `verified_allowed` was reported as drift and `audit` exited
+  `3` for a setting GitHub ignores. `config_manager.DEPENDENT_SETTINGS`
+  records the dependency (the three selected-actions keys on
+  `allowed_actions == "selected"`) and `apply_merge_policy` applies it.
 
 ## [0.9.0] - 2026-10-19
 

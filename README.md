@@ -242,6 +242,13 @@ everything under `[repo]` (wiki, merge strategies, ...), whether Actions is
 enabled at all, and the branch-protection policy knobs (`enforce_admins`,
 `require_conversation_resolution`, `use_rulesets`).
 
+A setting that only takes effect under a particular parent value is tied
+to that parent. The selected-actions sub-settings (`github_owned_allowed`,
+`verified_allowed`, `patterns_allowed`) only apply while `allowed_actions`
+is `selected`, so when the parent is preserved at `local_only` or `all` they
+are reported as `SKIP` (`Not applicable while allowed_actions is
+'local_only' (preserved)`) rather than as drift.
+
 Two ways to enforce a `PRESERVE` row:
 
 - **Declare the section in your config.** A `[repo]` section in your INI

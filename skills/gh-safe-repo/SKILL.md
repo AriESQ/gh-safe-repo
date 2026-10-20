@@ -205,6 +205,9 @@ settings when the current value is *stricter* than the desired one (e.g.
   file, which enforces every setting in that section, or pass `--all` to
   `audit`/`fix`, which treats every difference as a change. Never add
   `--all` on your own to make a `PRESERVE` row go away.
+- A `SKIP` row reading `Not applicable while allowed_actions is 'local_only'
+  (preserved)` is a sub-setting whose parent was preserved; it is inert, not
+  drift. Do not try to apply it separately.
 - `new`, `push` and `copy` never produce `PRESERVE` rows.
 
 ## Failure modes

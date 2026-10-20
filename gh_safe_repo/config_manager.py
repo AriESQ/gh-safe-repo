@@ -197,6 +197,18 @@ SAFE_DIRECTIONS = {
 }
 
 
+# (section, key) → (parent key in the same section, parent value it needs).
+# A dependent setting has no effect unless its parent holds that value; when
+# the merge policy preserves the parent at anything else, the dependent rows
+# are not drift and become SKIP. GitHub only reads the selected-actions
+# sub-settings while allowed_actions == "selected".
+DEPENDENT_SETTINGS = {
+    ("actions", "github_owned_allowed"): ("allowed_actions", "selected"),
+    ("actions", "verified_allowed"): ("allowed_actions", "selected"),
+    ("actions", "patterns_allowed"): ("allowed_actions", "selected"),
+}
+
+
 def setting_tier(section, key):
     """Tier of a plan row: "security", "preference", or None outside MERGE_SECTIONS."""
     if section not in MERGE_SECTIONS:

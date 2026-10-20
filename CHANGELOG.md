@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-20
+
 ### Added
 - `audit` and `fix` now resolve each setting with a three-way comparison
   (GitHub's default, the repo's current value, the desired value). A setting

@@ -600,7 +600,12 @@ directory and the `core.sshCommand` it found; `--debug` prints it up front.
 
 ### `push <path> <owner/repo>`
 
-`path` must be an initialized git repository.
+`path` must be an initialized git repository: a main checkout, a linked
+worktree (`git worktree add`) or a submodule checkout. A worktree shares its
+refs with the main repository, so pushing from one pushes **every branch of
+the main repository**, not only the worktree's branch; the plan's branch
+count shows this. Uncommitted changes are never pushed or committed, in any
+of the three.
 
 1. The [pre-flight scanner](#pre-flight-scanner) runs on the directory.
 2. You review findings and confirm, or abort.

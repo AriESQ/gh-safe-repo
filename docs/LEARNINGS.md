@@ -326,6 +326,36 @@ copies all heads as `refs/heads/*`. The default branch is chosen as
 first, then set explicitly with `PATCH /repos {default_branch}` instead of
 relying on push order.
 
+## Worktrees and Submodules Have a `.git` File (#103)
+
+In a linked worktree `.git` is a file (`gitdir: <main>/.git/worktrees/<name>`);
+in a submodule it is `gitdir: ../.git/modules/<name>`. Validation tested
+`exists(.git)` but everything after it tested `isdir(.git)`, so such a source
+took `push_local`'s non-git path: `copytree` copied the `.git` file, and
+`git init` / `add -A` / `commit` in the temp copy then acted on the **real**
+repo through it (`git init` says "Reinitialized existing Git repository"),
+committing the user's WIP onto their branch. One helper,
+`local_repo.is_git_checkout()`, is now the only test (a `.git` dir, or a
+`.git` file starting `gitdir:`); it is filesystem-only on purpose, because
+`git -C PATH rev-parse` walks up into a parent repo. The non-git path also
+copies with `ignore_patterns(".git")` so no `.git` entry at any depth can aim
+git at another repository.
+
+- `git clone --bare <worktree>` and `<submodule>` both work: clone follows
+  the `.git` file. A worktree's bare clone has **all** of the main repo's
+  heads (refs are shared); that is the intended "every local branch".
+  A submodule's has only its own heads, not its upstream's remote-tracking
+  refs.
+- Wiring (`remote add origin`, `update-ref refs/remotes/origin/*`) from a
+  worktree writes to the shared config and refs, so the main checkout gets
+  the same `origin`.
+- Container truffleHog mounts only the scanned dir, so the `.git` file
+  pointed outside the container. `external_git_dir()` (`rev-parse
+  --path-format=absolute --git-common-dir`, needs git ≥ 2.31) is mounted
+  too. The common dir, not the per-worktree gitdir: the latter has no
+  objects and sits inside the common dir anyway. The path is kept as git
+  reports it, not `realpath`'d, since that is what the `.git` file names.
+
 ## Post-Apply Verification (#77)
 
 Success used to mean "no exception escaped the apply loop". `fix` caught

@@ -3,6 +3,8 @@
 import json
 import os
 import sys
+import time
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import subprocess
@@ -36,6 +38,27 @@ def make_config(overrides=None):
     if overrides:
         config.apply_overrides(overrides)
     return config
+
+
+@contextmanager
+def patch_verify_sleep():
+    """Mock the sleep between verify.py's retry rounds, and only that one.
+
+    Never ``patch("gh_safe_repo.verify.time.sleep")``: that replaces the
+    attribute on the shared ``time`` module, so it also catches stdlib
+    sleeps, notably ``subprocess``'s ``waitpid`` polling when a ``git``
+    child (the local-wiring probes) closes its pipes a moment before it
+    exits. Each such poll counted as a retry round (#109). Swapping
+    verify's own ``time`` reference keeps the mock private to verify.py.
+    """
+    with patch("gh_safe_repo.verify.time") as fake_time:
+        yield fake_time.sleep
+
+
+def test_patch_verify_sleep_leaves_time_sleep_alone():
+    with patch_verify_sleep() as sleep:
+        time.sleep(0)  # what subprocess's wait loop calls
+    sleep.assert_not_called()
 
 
 class TestParseRepoArg:
@@ -1393,7 +1416,7 @@ class TestFixVerification:
             argv = ["gh-safe-repo", "fix", "alice/demo", "--yes", *argv_extra]
             with patch("sys.argv", argv), \
                  patch("gh_safe_repo.commands.fix.build_context") as ctx, \
-                 patch("gh_safe_repo.verify.time.sleep") as sleep:
+                 patch_verify_sleep() as sleep:
                 ctx.return_value = MagicMock(
                     client=client, owner="alice", plan_name="free",
                     is_paid_plan=False, config=make_config(),
@@ -1689,7 +1712,7 @@ class TestMergePolicyCli:
             argv = ["gh-safe-repo", verb, "alice/demo", *argv_extra]
             with patch("sys.argv", argv), \
                  patch("gh_safe_repo.commands.fix.build_context") as ctx, \
-                 patch("gh_safe_repo.verify.time.sleep"), \
+                 patch_verify_sleep(), \
                  patch("builtins.input") as prompt:
                 ctx.return_value = MagicMock(
                     client=client, owner="alice", plan_name="free",
@@ -2052,7 +2075,7 @@ class TestCreateVerification:
                  patch("gh_safe_repo.commands.create.build_context") as ctx, \
                  patch("gh_safe_repo.commands.create.check_repo_exists",
                        side_effect=lambda c, o, r: r == "src"), \
-                 patch("gh_safe_repo.verify.time.sleep") as sleep, \
+                 patch_verify_sleep() as sleep, \
                  patch("builtins.input",
                        side_effect=lambda prompt: print(prompt, end="") or (answer or "")):
                 ctx.return_value = MagicMock(
@@ -2474,7 +2497,7 @@ class TestConfirmationPromptUnattended:
             argv = ["gh-safe-repo", "fix", "alice/demo", *argv_extra]
             with patch("sys.argv", argv), \
                  patch("gh_safe_repo.commands.fix.build_context") as ctx, \
-                 patch("gh_safe_repo.verify.time.sleep"), \
+                 patch_verify_sleep(), \
                  patch("builtins.input", side_effect=self._input(answer)) as inp:
                 ctx.return_value = MagicMock(
                     client=client, owner="alice", plan_name="free",

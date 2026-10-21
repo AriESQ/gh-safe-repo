@@ -407,7 +407,9 @@ def verify_plugins(
 
     ``remediation`` is attached to mismatch checks (e.g. the exact
     ``gh-safe-repo fix owner/repo --yes`` command). ``sleep`` defaults to
-    ``time.sleep`` resolved at call time, so tests can patch or inject it.
+    ``time.sleep`` resolved at call time, so tests can inject it or patch
+    ``gh_safe_repo.verify.time`` (not ``time.sleep`` itself: that is global
+    and also catches ``subprocess``'s own wait polling, #109).
     ``policy`` is applied to every re-audit plan first (the ``fix`` merge
     policy): a PRESERVE row is not actionable and so never a mismatch.
     """

@@ -390,6 +390,14 @@ plan-limits tables said it was; `GET private-vulnerability-reporting` on a
 free-plan private repo returns 404 (checked live 2026-10-14), so the plugin's
 SKIP there is correct and the tables were wrong.
 
+**…nor on paid + private: it is public-only.** GitHub's docs gate the feature
+as "available for public repositories" (`data/reusables/gated-features/
+private-vulnerability-reporting.md` in the docs source), with no plan that
+extends it to private repos, and the REST spec lists `422` for the enable
+`PUT`. The plugin used to plan that `PUT` for paid + private; it now SKIPs on
+any private repo. `fetch_current_state()` still reads it (a 404 there reads
+as off), so `audit` state is unchanged.
+
 **`GET private-vulnerability-reporting` answers 200 when the feature is off.**
 The body is `{"enabled": false}`. The bare 2xx check above (Security Plugin
 Expansion) read that as enabled, so `fix` never proposed turning it on, and

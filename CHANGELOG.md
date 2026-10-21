@@ -10,6 +10,13 @@ since the initial release.
 ## [Unreleased]
 
 ### Fixed
+- Private vulnerability reporting is now `SKIP` ("Only available for public
+  repositories") on every private repo. GitHub offers it for public repos
+  only, but on a paid plan the plugin planned a `PUT` for private repos that
+  GitHub would refuse. The plan-limits tables in the README and the agent
+  skill said paid + private was supported; they now say it is not.
+
+### Fixed
 - `push` from a linked worktree (`git worktree add`) or a submodule checkout
   no longer commits your uncommitted changes into the real repository
   (#103). Their `.git` is a file, not a directory, so the source was

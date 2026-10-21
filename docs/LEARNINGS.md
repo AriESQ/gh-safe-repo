@@ -507,6 +507,21 @@ the 7s budget. An `origin` that already pointed elsewhere was left untouched
 on purpose (#70): it is reported with that explanation, and no tracking
 check is made, since any upstream would belong to the old remote.
 
+**Patching `module.time.sleep` patches every sleep in the process (#109).**
+The `create` tests counted retry rounds with
+`patch("gh_safe_repo.verify.time.sleep")`, which resolves to the shared
+`time` module and swaps its `sleep` attribute globally. The local-wiring
+probes run real `git config` through `subprocess.run(..., timeout=5)`, and
+with a timeout `Popen._wait()` polls `waitpid(WNOHANG)` with `time.sleep`
+between attempts. Normally the child has exited by the time its pipes reach
+EOF, but on a loaded runner it sometimes has not, so one poll landed on the
+mock and a 3-round run counted 4 sleeps (CI, Python 3.14, once). A `git`
+wrapper that closes its pipes and lingers 50ms before exiting reproduces it
+every time. Tests now patch verify's own `time` reference
+(`patch_verify_sleep()` in `tests/test_cli.py`) so stdlib sleeps are
+untouched. The `plugins.repository.time.sleep` patches in `test_plugins.py`
+share the shape but run no subprocess.
+
 ## Scan Engine Reporting (#77)
 
 `scanner_description` is a plan-time guess: it runs discovery

@@ -80,6 +80,12 @@ at the top of that file.
 `test_plugins.py` sets up the `repo_path()` side-effect so path construction works without
 a real client.
 
+**Mock a module's `time`, not `time.sleep`.** `patch("pkg.mod.time.sleep")`
+swaps the attribute on the shared `time` module, so it also counts stdlib
+sleeps such as `subprocess`'s wait polling when a test runs real `git` (#109).
+Retry-round counts in `test_cli.py` go through `patch_verify_sleep()`, which
+patches `gh_safe_repo.verify.time`.
+
 **`FakeConfig`** in `test_security_scanner.py` is a lightweight dict-backed stand-in for
 `ConfigManager`. The scanner only calls `config.getbool()` and `config.get()` so a full
 `ConfigManager` instance is not needed.

@@ -57,7 +57,10 @@ gh-safe-repo fix alice/my-repo --yes                    # 2. apply
 one. The default branch is `init.defaultBranch`, else `main`, else `master`,
 else the current branch; the plan's `code` entry names it
 (`Push N branch(es) from PATH (default: X)`). Check it before `--yes`: any
-local branch, including unfinished work, will be pushed.
+local branch, including unfinished work, will be pushed. `path` may be a
+linked worktree or a submodule checkout; a worktree pushes every branch of
+its **main** repository (worktrees share refs), so the branch count can be
+higher than the worktree suggests. Uncommitted changes are never pushed.
 
 `copy` creates a fresh repository. It is **not** a GitHub fork and has no
 "forked from" link; say so if the user asked to "fork" something.

@@ -9,6 +9,21 @@ since the initial release.
 
 ## [Unreleased]
 
+### Fixed
+- `push` from a linked worktree (`git worktree add`) or a submodule checkout
+  no longer commits your uncommitted changes into the real repository
+  (#103). Their `.git` is a file, not a directory, so the source was
+  treated as a plain directory: it was copied along with that `.git` file,
+  and the `git add`/`commit` run on the copy landed on your real branch. A
+  clean worktree pushed nothing at all. Both now push like a main checkout
+  (every local branch and tag; for a worktree that means the main
+  repository's branches), and the plain-directory path never copies a
+  `.git` entry.
+- The pre-flight scan of a worktree or submodule now covers tracked files
+  only, as in a main checkout, so gitignored files such as `.env` no longer
+  produce findings. Container-mode truffleHog mounts the repository the
+  `.git` file points at, so its git-history scan can read it.
+
 ## [0.10.0] - 2026-10-20
 
 ### Added

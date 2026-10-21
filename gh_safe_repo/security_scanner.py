@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Set, Tuple
 
+from .local_repo import external_git_dir, is_git_checkout
+
 
 # --- Module-level constants ---
 
@@ -505,7 +507,7 @@ class SecurityScanner:
         if self.debug:
             print(f"[debug] SKIP_DIRS: {sorted(SKIP_DIRS)}", file=sys.stderr)
 
-        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
+        is_git_repo = is_git_checkout(root_path)
 
         # truffleHog handles secrets (including full git history) when available
         secrets_via_trufflehog = False
@@ -918,7 +920,7 @@ class SecurityScanner:
         if disc["method"] == "none":
             return None
 
-        is_git_repo = os.path.isdir(os.path.join(root_path, ".git"))
+        is_git_repo = is_git_checkout(root_path)
 
         # Build optional banned-strings config file
         config_path: Optional[str] = None
@@ -953,6 +955,12 @@ class SecurityScanner:
                 )
                 runtime = disc["runtime_path"]
                 volume_args = ["--volume", f"{root_path}:{root_path}:ro"]
+                # A worktree or submodule .git file points outside root_path;
+                # mount the repository it names too, or the git scan fails
+                # inside the container (#103).
+                git_dir = external_git_dir(root_path) if is_git_repo else None
+                if git_dir:
+                    volume_args += ["--volume", f"{git_dir}:{git_dir}:ro"]
                 if config_path:
                     volume_args += ["--volume", f"{config_path}:{config_path}:ro"]
                 if exclude_path_file:

@@ -14,6 +14,7 @@ from typing import Optional
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
 from ..github_client import LocalWiring
+from ..local_repo import is_git_checkout
 from ..git_transport import (
     discover_transport,
     git_protocol_preference,
@@ -94,7 +95,7 @@ def _abort_on_scan(decision, _info):
 def _local_branch(local_path):
     """Current branch of local_path, or None (not a repo, detached HEAD)."""
     # Same test push_local uses; `git -C` alone would walk up into a parent repo.
-    if not os.path.isdir(os.path.join(local_path, ".git")):
+    if not is_git_checkout(local_path):
         return None
     try:
         result = subprocess.run(
@@ -113,7 +114,7 @@ def _local_branches(local_path):
     main, then master, when one exists locally; otherwise the current branch
     (#86 — previously whatever happened to be checked out).
     """
-    if not os.path.isdir(os.path.join(local_path, ".git")):
+    if not is_git_checkout(local_path):
         return [], None
     def git(*args):
         try:
@@ -194,7 +195,7 @@ def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
     if not isinstance(wiring, LocalWiring):
         wiring = LocalWiring()
     where = shlex.quote(local_path)
-    is_git = os.path.isdir(os.path.join(local_path, ".git"))
+    is_git = is_git_checkout(local_path)
     if is_git:
         remediation = (
             f"Push it again: cd {where} && git push {dest} "
@@ -292,7 +293,7 @@ def run(args):
         if not os.path.isdir(local_path):
             error(f"Source path '{args.local_path}' is not a directory")
             sys.exit(2)
-        if not os.path.exists(os.path.join(local_path, ".git")):
+        if not is_git_checkout(local_path):
             error(f"Source path '{args.local_path}' is not a git repository (run 'git init' first)")
             sys.exit(2)
 

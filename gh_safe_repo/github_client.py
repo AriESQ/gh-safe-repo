@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 
 from .errors import APIError, AuthError
 from .git_transport import GitTransport
+from .local_repo import is_git_checkout
 
 
 @dataclass(frozen=True)
@@ -299,10 +300,14 @@ class GitHubClient:
 
         default_branch is pushed first and then set as the repo default
         (#86); without it GitHub picks whichever branch arrives first.
+
+        A linked worktree or submodule (`.git` file) takes the git path:
+        `clone --bare` follows the gitdir. A worktree shares its main repo's
+        refs, so "every local branch" is the main repo's branches (#103).
         """
         transport = self._require_transport()
         dest_url = transport.remote_url(owner, dest_repo)
-        is_git_repo = os.path.isdir(os.path.join(local_path, ".git"))
+        is_git_repo = is_git_checkout(local_path)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             work_path = os.path.join(tmpdir, "work")
@@ -319,7 +324,12 @@ class GitHubClient:
                 # Not a git repo — copy files and create an initial commit.
                 # These local-only ops don't need transport env; using it for
                 # consistency keeps a single subprocess path.
-                shutil.copytree(local_path, work_path)
+                # Never copy a .git entry: a .git file would point the git
+                # commands below at the real repository and commit into it
+                # (#103). is_git_checkout() routes worktrees and submodules to
+                # the clone path above; this guards anything it misses.
+                shutil.copytree(local_path, work_path,
+                                ignore=shutil.ignore_patterns(".git"))
                 try:
                     transport.run(["git", "init", work_path])
                     transport.run(["git", "-C", work_path, "add", "-A"])

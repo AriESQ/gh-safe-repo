@@ -6,7 +6,8 @@ Dependabot alerts: available for public repos on free plan; private repos need p
 Secret scanning: automatically enabled by GitHub for all public repos (no API call needed);
     for private repos on paid plans, enabled via PATCH security_and_analysis.
 Push protection: blocks commits containing supported secrets.
-Private vulnerability reporting: lets security researchers report vulnerabilities privately.
+Private vulnerability reporting: lets security researchers report vulnerabilities privately;
+    public repos only, on every plan (SKIP for private repos, paid or not).
 Dependabot security updates: auto-opens PRs for vulnerable dependencies.
 
 Not available via REST API (UI-only or dependabot.yml):
@@ -178,12 +179,21 @@ class SecurityPlugin(BasePlugin):
             plan_key="dependabot_security_updates",
         )
 
-        # Private vulnerability reporting (PUT toggle)
-        self._plan_toggle(
-            plan, is_audit, current_state,
-            config_key="enable_private_vulnerability_reporting",
-            plan_key="private_vulnerability_reporting",
-        )
+        # Private vulnerability reporting (PUT toggle): public repos only, on
+        # every plan; a paid plan does not unlock it for private repos.
+        if self.is_public:
+            self._plan_toggle(
+                plan, is_audit, current_state,
+                config_key="enable_private_vulnerability_reporting",
+                plan_key="private_vulnerability_reporting",
+            )
+        else:
+            plan.add(Change(
+                type=ChangeType.SKIP,
+                category=ChangeCategory.SECURITY,
+                key="private_vulnerability_reporting",
+                reason="Only available for public repositories",
+            ))
 
         # security_and_analysis settings (push protection)
         for config_key in SECURITY_ANALYSIS_SETTINGS:

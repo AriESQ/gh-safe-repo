@@ -846,7 +846,7 @@ mode = auto
 | Dependabot security updates | Yes | No | Yes |
 | Secret scanning | Auto | No | Yes |
 | Push protection | Yes | No | Yes |
-| Private vulnerability reporting | Yes | No | Yes |
+| Private vulnerability reporting | Yes | No | No (public repos only) |
 | Dependency graph | Auto | No | Yes |
 
 Plan level and visibility are detected at runtime. Unavailable features

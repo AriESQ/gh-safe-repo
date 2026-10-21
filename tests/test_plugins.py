@@ -769,6 +769,17 @@ class TestSecurityPlugin:
         assert pvr is not None
         assert pvr.new is True
 
+    def test_plan_private_paid_repo_skips_private_vuln_reporting(self):
+        # GitHub offers it for public repos only; a paid plan does not unlock it.
+        client = make_mock_client()
+        plugin = SecurityPlugin(
+            client, "alice", "my-repo", make_config(), is_public=False, is_paid_plan=True
+        )
+        pvr = [c for c in plugin.plan().changes if c.key == "private_vulnerability_reporting"]
+        assert len(pvr) == 1
+        assert pvr[0].type == ChangeType.SKIP
+        assert "public" in pvr[0].reason
+
     def test_plan_public_repo_has_push_protection_add(self):
         client = make_mock_client()
         plugin = SecurityPlugin(client, "alice", "my-repo", make_config(), is_public=True)
@@ -843,8 +854,9 @@ class TestSecurityPlugin:
         adds = [c for c in plan.changes if c.type == ChangeType.ADD]
         add_keys = {c.key for c in adds}
         assert "dependabot_security_updates" in add_keys
-        assert "private_vulnerability_reporting" in add_keys
         assert "enable_secret_scanning_push_protection" in add_keys
+        # private vulnerability reporting is public-only, even on paid plans
+        assert "private_vulnerability_reporting" not in add_keys
         # dependency_graph should be SKIP (no REST API)
         skips = [c for c in plan.changes if c.type == ChangeType.SKIP]
         assert any(c.key == "enable_dependency_graph" for c in skips)
@@ -866,11 +878,12 @@ class TestSecurityPlugin:
         assert sa_body["secret_scanning"] == {"status": "enabled"}
         assert sa_body["secret_scanning_push_protection"] == {"status": "enabled"}
 
-        # PUT calls: dependabot alerts, security updates, private vuln reporting
+        # PUT calls: dependabot alerts, security updates; never private vuln
+        # reporting, which GitHub offers for public repos only
         put_calls = [c for c in client.call_json.call_args_list if c.args[0] == "PUT"]
         assert any("vulnerability-alerts" in c.args[1] for c in put_calls)
         assert any("automated-security-fixes" in c.args[1] for c in put_calls)
-        assert any("private-vulnerability-reporting" in c.args[1] for c in put_calls)
+        assert not any("private-vulnerability-reporting" in c.args[1] for c in put_calls)
 
 
 # ── Audit mode: fetch_current_state() and plan(current_state=...) ─────────────

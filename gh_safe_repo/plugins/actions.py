@@ -41,6 +41,12 @@ def _parse_bool(value):
     return str(value).lower() in ("true", "1", "yes")
 
 
+def _field(body, key, kind):
+    """``body[key]`` if it is a ``kind``, else GitHub's default for ``key``."""
+    value = (body or {}).get(key)
+    return value if isinstance(value, kind) else GITHUB_DEFAULTS[key]
+
+
 def _parse_patterns(value):
     """Parse a comma-separated patterns string into a sorted list."""
     if isinstance(value, list):
@@ -66,14 +72,17 @@ class ActionsPlugin(BasePlugin):
         )
         workflow = self.client.get_json(workflow_path)
 
+        # A null or missing field reads as GitHub's default. With Actions
+        # disabled the body is just {"enabled": false} (#94).
         state = {
-            "allowed_actions": perms.get("allowed_actions", "all"),
-            "sha_pinning_required": perms.get("sha_pinning_required", False),
-            "default_workflow_permissions": workflow.get(
-                "default_workflow_permissions", "write"
+            "enabled": _field(perms, "enabled", bool),
+            "allowed_actions": _field(perms, "allowed_actions", str),
+            "sha_pinning_required": _field(perms, "sha_pinning_required", bool),
+            "default_workflow_permissions": _field(
+                workflow, "default_workflow_permissions", str
             ),
-            "can_approve_pull_request_reviews": workflow.get(
-                "can_approve_pull_request_reviews", True
+            "can_approve_pull_request_reviews": _field(
+                workflow, "can_approve_pull_request_reviews", bool
             ),
         }
 
@@ -83,10 +92,10 @@ class ActionsPlugin(BasePlugin):
                 self.owner, self.repo, "actions/permissions/selected-actions"
             )
             selected = self.client.get_json(selected_path)
-            state["github_owned_allowed"] = selected.get("github_owned_allowed", True)
-            state["verified_allowed"] = selected.get("verified_allowed", False)
+            state["github_owned_allowed"] = _field(selected, "github_owned_allowed", bool)
+            state["verified_allowed"] = _field(selected, "verified_allowed", bool)
             state["patterns_allowed"] = _parse_patterns(
-                selected.get("patterns_allowed", [])
+                selected.get("patterns_allowed") or []
             )
 
         # Fetch fork PR contributor approval policy
@@ -115,6 +124,20 @@ class ActionsPlugin(BasePlugin):
         settings = self.config.actions_settings()
         baseline = current_state if current_state is not None else GITHUB_DEFAULTS
         is_audit = current_state is not None
+
+        # With Actions disabled no workflow runs, which is stricter than any
+        # policy. PUT actions/permissions requires "enabled", so changing the
+        # policy would switch Actions back on: leave it alone (#94).
+        if is_audit and baseline.get("enabled") is False:
+            for key in ("allowed_actions", "sha_pinning_required"):
+                plan.add(Change(
+                    type=ChangeType.SKIP,
+                    category=ChangeCategory.ACTIONS,
+                    key=key,
+                    reason="GitHub Actions is disabled for this repository",
+                ))
+            self._plan_workflow_and_fork(plan, settings, baseline, is_audit)
+            return plan
 
         # --- allowed_actions ---
         desired_allowed = settings.get(
@@ -182,6 +205,11 @@ class ActionsPlugin(BasePlugin):
                 )
             ))
 
+        self._plan_workflow_and_fork(plan, settings, baseline, is_audit)
+        return plan
+
+    def _plan_workflow_and_fork(self, plan, settings, baseline, is_audit):
+        """Plan workflow permissions and the fork-PR approval policy."""
         # --- default_workflow_permissions ---
         desired_workflow_perms = settings.get(
             "default_workflow_permissions",
@@ -283,8 +311,6 @@ class ActionsPlugin(BasePlugin):
                         reason="Already at desired value",
                     )
                 ))
-
-        return plan
 
     def _plan_selected_actions(self, plan, settings, baseline, is_audit):
         """Add plan entries for selected-actions sub-settings."""

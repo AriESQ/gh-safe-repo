@@ -9,6 +9,25 @@ since the initial release.
 
 ## [Unreleased]
 
+### Fixed
+- Every GitHub API read now checks the response body, not just the status
+  code (#94):
+  - **Rulesets:** a branch or tag ruleset whose enforcement is `disabled`
+    (or `evaluate`) no longer counts as protection. `fix` re-enables it.
+  - **Tag ruleset updates:** `fix` on a repo that already has the tag
+    ruleset now updates it with `PUT`. It used to always `POST`, which
+    failed with `422` "Name must be unique". Branch-ruleset updates use
+    `PUT` instead of `PATCH`, which GitHub answers with `404`, so `fix`
+    could not update an existing branch ruleset either.
+  - **Actions disabled:** `fix` no longer turns Actions back on for a repo
+    where they are disabled. `allowed_actions` and `sha_pinning_required`
+    are `SKIP` there. Null fields in the Actions permission responses now
+    read as GitHub's defaults.
+  - **Dependabot security updates:** `enabled: true, paused: true` counts
+    as off, so `fix` proposes turning updates back on.
+  - **Secret scanning on public repos:** read from the API instead of
+    assumed on. If it is turned off, `fix` turns it back on.
+
 ## [0.10.1] - 2026-10-22
 
 ### Fixed

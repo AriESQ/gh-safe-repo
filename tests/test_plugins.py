@@ -599,9 +599,10 @@ class TestBranchProtectionPlugin:
         assert call.args[0] == "POST"
         assert call.args[1].endswith("/rulesets")
 
-    def test_apply_patches_existing_ruleset(self):
+    def test_apply_puts_existing_ruleset(self):
         client = make_mock_client()
-        # Existing ruleset present → upsert should PATCH, not POST.
+        # Existing ruleset present → upsert should PUT (the documented
+        # update method; there is no PATCH), not POST.
         existing = json.dumps([
             {"id": 99, "name": "gh-safe-repo defaults", "target": "branch"},
         ])
@@ -611,7 +612,7 @@ class TestBranchProtectionPlugin:
         plan = plugin.plan()
         plugin.apply(plan)
         call = client.call_json.call_args
-        assert call.args[0] == "PATCH"
+        assert call.args[0] == "PUT"
         assert call.args[1].endswith("/rulesets/99")
 
     def test_apply_uses_classic_endpoint_when_disabled(self):
@@ -1217,6 +1218,7 @@ class TestBranchProtectionRulesetAudit:
             "id": 7,
             "name": "gh-safe-repo defaults",
             "target": "branch",
+            "enforcement": "active",
             "rules": [
                 {"type": "non_fast_forward"},
                 {"type": "deletion"},
@@ -1273,6 +1275,7 @@ class TestBranchProtectionRulesetAudit:
         ])
         detail = json.dumps({
             "id": 7, "name": "gh-safe-repo defaults", "target": "branch",
+            "enforcement": "active",
             "rules": [{"type": "non_fast_forward"}],
             "bypass_actors": [],
         })
@@ -1539,6 +1542,7 @@ class TestTagProtectionPlugin:
 
     def test_apply_posts_tag_ruleset(self):
         client = make_mock_client()
+        client.call_api.return_value = (200, "[]")  # no existing ruleset
         client.call_json.return_value = {}
         plugin = TagProtectionPlugin(
             client, "alice", "my-repo", make_config(), is_public=True,
@@ -1648,6 +1652,7 @@ class TestTagProtectionPluginAudit:
             "id": 42,
             "name": "gh-safe-repo tag defaults",
             "target": "tag",
+            "enforcement": "active",
             "rules": [{"type": "deletion"}, {"type": "update"}],
         })
         client.call_api.side_effect = [
@@ -1755,7 +1760,7 @@ class TestProtectionPresenceReads:
     def test_ruleset_include_list(self):
         client = make_mock_client()
         listing = json.dumps([{"id": 7, "name": "gh-safe-repo defaults", "target": "branch"}])
-        detail = json.dumps({"conditions": {"ref_name": {
+        detail = json.dumps({"enforcement": "active", "conditions": {"ref_name": {
             "include": ["refs/heads/main", "refs/heads/dev"], "exclude": []}}})
         client.call_api.side_effect = [(200, listing), (200, detail)]
         assert self._bp(client).protected_branches() == ["main", "dev"]
@@ -1790,7 +1795,10 @@ class TestProtectionPresenceReads:
         client = make_mock_client()
         listing = json.dumps([{"id": 9, "name": "gh-safe-repo tag defaults", "target": "tag"}])
         client.call_api.side_effect = [(200, listing)]
-        client.get_json.return_value = {"conditions": {"ref_name": {"include": ["refs/tags/*"]}}}
+        client.get_json.return_value = {
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["refs/tags/*"]}},
+        }
         assert self._tag(client).protected_tags() == ["*"]
         client.get_json.assert_called_with("/repos/alice/my-repo/rulesets/9")
 
@@ -1801,3 +1809,185 @@ class TestProtectionPresenceReads:
         client.call_api.side_effect = [(403, "")]
         with pytest.raises(APIError):
             self._tag(client).protected_tags()
+
+
+# ── API read shapes (#94) ────────────────────────────────────────────────────
+# Each test pins a response shape observed against the live API (2026-10-22,
+# see docs/LEARNINGS.md "API read shapes") where the status code alone would
+# have read a setting as on.
+
+
+class TestApiReadShapes:
+    def _security(self, client, **kw):
+        kw.setdefault("is_public", True)
+        return SecurityPlugin(client, "alice", "my-repo", make_config(), **kw)
+
+    def test_security_updates_200_enabled_false_is_off(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [
+            (204, ""), (200, '{"enabled": false, "paused": false}'), (200, '{"enabled": true}'),
+        ]
+        client.get_repo_data.return_value = {"security_and_analysis": {}}
+        state = self._security(client).fetch_current_state()
+        assert state["dependabot_security_updates"] is False
+
+    def test_security_updates_paused_is_off(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [
+            (204, ""), (200, '{"enabled": true, "paused": true}'), (200, '{"enabled": true}'),
+        ]
+        client.get_repo_data.return_value = {"security_and_analysis": {}}
+        state = self._security(client).fetch_current_state()
+        assert state["dependabot_security_updates"] is False
+        plan = self._security(client).plan(current_state=state)
+        update = next(c for c in plan.changes if c.key == "dependabot_security_updates")
+        assert update.type == ChangeType.UPDATE
+
+    def test_public_secret_scanning_disabled_is_read_and_fixed(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(204, ""), (200, '{"enabled": true}'), (200, '{"enabled": true}')]
+        client.get_repo_data.return_value = {"security_and_analysis": {
+            "secret_scanning": {"status": "disabled"},
+            "secret_scanning_push_protection": {"status": "disabled"},
+        }}
+        plugin = self._security(client)
+        state = plugin.fetch_current_state()
+        assert state["secret_scanning"] is False
+        plan = plugin.plan(current_state=state)
+        ss = next(c for c in plan.changes if c.key == "secret_scanning")
+        assert ss.type == ChangeType.UPDATE
+        client.call_json.return_value = {}
+        plugin.apply(plan)
+        patch = next(c for c in client.call_json.call_args_list if c.args[0] == "PATCH")
+        assert patch.args[2]["security_and_analysis"]["secret_scanning"] == {"status": "enabled"}
+
+    def test_public_secret_scanning_missing_key_assumes_github_default(self):
+        client = make_mock_client()
+        client.call_api.side_effect = [(204, ""), (200, '{"enabled": true}'), (200, '{"enabled": true}')]
+        client.get_repo_data.return_value = {"security_and_analysis": None}
+        state = self._security(client).fetch_current_state()
+        assert state["secret_scanning"] is True
+        plan = self._security(client).plan(current_state=state)
+        ss = next(c for c in plan.changes if c.key == "secret_scanning")
+        assert ss.type == ChangeType.SKIP
+
+    def test_free_private_security_and_analysis_null(self):
+        """Free+private: GET /repos has "security_and_analysis": null."""
+        client = make_mock_client()
+        client.call_api.side_effect = [
+            (404, ""), (200, '{"enabled": false, "paused": false}'), (404, ""),
+        ]
+        client.get_repo_data.return_value = {"private": True, "security_and_analysis": None}
+        state = self._security(client, is_public=False).fetch_current_state()
+        assert not any(state.values())
+
+    # ── Actions ──
+
+    def _actions_state(self, *bodies, is_public=True):
+        client = make_mock_client()
+        client.get_json.side_effect = list(bodies)
+        return ActionsPlugin(
+            client, "alice", "my-repo", make_config(), is_public=is_public
+        ).fetch_current_state(), client
+
+    def test_actions_disabled_body(self):
+        state, _ = self._actions_state(
+            {"enabled": False},
+            {"default_workflow_permissions": "write", "can_approve_pull_request_reviews": True},
+            {"approval_policy": "first_time_contributors"},
+        )
+        assert state["enabled"] is False
+
+    def test_actions_disabled_is_not_switched_back_on(self):
+        state, client = self._actions_state(
+            {"enabled": False},
+            {"default_workflow_permissions": "write", "can_approve_pull_request_reviews": True},
+            {"approval_policy": "first_time_contributors"},
+        )
+        plugin = ActionsPlugin(client, "alice", "my-repo", make_config())
+        plan = plugin.plan(current_state=state)
+        by_key = {c.key: c for c in plan.changes}
+        for key in ("allowed_actions", "sha_pinning_required"):
+            assert by_key[key].type == ChangeType.SKIP
+            assert "disabled" in by_key[key].reason
+        assert "patterns_allowed" not in by_key
+        # Workflow permissions are still fixed.
+        assert by_key["default_workflow_permissions"].type == ChangeType.UPDATE
+        client.call_json.return_value = {}
+        plugin.apply(plan)
+        paths = [c.args[1] for c in client.call_json.call_args_list]
+        assert not any(p.endswith("/actions/permissions") for p in paths)
+        assert not any("selected-actions" in p for p in paths)
+
+    def test_actions_null_fields_read_as_github_defaults(self):
+        state, _ = self._actions_state(
+            {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": None},
+            {"default_workflow_permissions": None, "can_approve_pull_request_reviews": None},
+            {"github_owned_allowed": None, "verified_allowed": None, "patterns_allowed": None},
+            {"approval_policy": "first_time_contributors"},
+        )
+        assert state["sha_pinning_required"] is False
+        assert state["default_workflow_permissions"] == "write"
+        assert state["can_approve_pull_request_reviews"] is True
+        assert state["github_owned_allowed"] is True
+        assert state["verified_allowed"] is False
+        assert state["patterns_allowed"] == []
+
+    # ── Rulesets ──
+
+    @pytest.mark.parametrize("enforcement", ["disabled", "evaluate", None])
+    def test_inactive_branch_ruleset_is_not_protection(self, enforcement):
+        client = make_mock_client()
+        listing = json.dumps([{"id": 7, "name": "gh-safe-repo defaults", "target": "branch"}])
+        detail = {"id": 7, "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
+                  "conditions": {"ref_name": {"include": ["refs/heads/main"]}}}
+        if enforcement:
+            detail["enforcement"] = enforcement
+        client.call_api.side_effect = [(404, ""), (200, listing), (200, json.dumps(detail))]
+        plugin = BranchProtectionPlugin(
+            client, "alice", "my-repo", make_config(), is_public=True, branches=["main"],
+        )
+        state = plugin.fetch_current_state()
+        assert state["allow_deletions"] is True
+        assert state["allow_force_pushes"] is True
+        client.call_api.side_effect = [(200, listing), (200, json.dumps(detail))]
+        assert plugin.protected_branches() == []
+
+    @pytest.mark.parametrize("enforcement", ["disabled", "evaluate", None])
+    def test_inactive_tag_ruleset_is_not_protection(self, enforcement):
+        client = make_mock_client()
+        listing = json.dumps([{"id": 9, "name": "gh-safe-repo tag defaults", "target": "tag"}])
+        detail = {"id": 9, "rules": [{"type": "deletion"}, {"type": "update"}],
+                  "conditions": {"ref_name": {"include": ["refs/tags/*"]}}}
+        if enforcement:
+            detail["enforcement"] = enforcement
+        client.call_api.side_effect = [(200, listing), (200, json.dumps(detail))]
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        state = plugin.fetch_current_state()
+        assert state == {"prevent_tag_deletion": False, "prevent_tag_update": False}
+        client.call_api.side_effect = [(200, listing)]
+        client.get_json.return_value = detail
+        assert plugin.protected_tags() == []
+
+    def test_fix_on_existing_tag_ruleset_puts_instead_of_posting(self):
+        client = make_mock_client()
+        listing = json.dumps([{"id": 9, "name": "gh-safe-repo tag defaults", "target": "tag"}])
+        client.call_api.return_value = (200, listing)
+        client.call_json.return_value = {}
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        current = {"prevent_tag_deletion": False, "prevent_tag_update": False}
+        plugin.apply(plugin.plan(current_state=current))
+        call = client.call_json.call_args
+        assert call.args[0] == "PUT"
+        assert call.args[1].endswith("/rulesets/9")
+        assert call.args[2]["enforcement"] == "active"
+
+    def test_rulesets_empty_list_vs_403(self):
+        """Public repo, no rulesets: 200 []. Free+private: 403 "Upgrade to GitHub Pro"."""
+        client = make_mock_client()
+        client.call_api.side_effect = [(200, "[]")]
+        plugin = TagProtectionPlugin(client, "alice", "my-repo", make_config(), is_public=True)
+        assert plugin.fetch_current_state()["prevent_tag_deletion"] is False
+        client.call_api.side_effect = [(403, '{"message": "Upgrade to GitHub Pro"}')]
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)

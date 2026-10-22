@@ -212,6 +212,10 @@ settings when the current value is *stricter* than the desired one (e.g.
   (preserved)` is a sub-setting whose parent was preserved; it is inert, not
   drift. Do not try to apply it separately.
 - `new`, `push` and `copy` never produce `PRESERVE` rows.
+- A `SKIP` row reading `GitHub Actions is disabled for this repository`
+  (on `allowed_actions` and `sha_pinning_required`) means Actions is off
+  entirely. `fix` will not turn it back on. Do not suggest enabling Actions
+  just to clear the row.
 
 ## Failure modes
 

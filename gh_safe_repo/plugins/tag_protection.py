@@ -11,7 +11,7 @@ import sys
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError
-from .base import BasePlugin
+from .base import BasePlugin, ruleset_enforced
 
 # GitHub defaults: no tag protection at all
 GITHUB_DEFAULTS = {
@@ -76,6 +76,10 @@ class TagProtectionPlugin(BasePlugin):
                 raise APIError(f"GET {detail_path} returned non-JSON response")
             return dict(GITHUB_DEFAULTS)
 
+        # A disabled/evaluate ruleset enforces none of its rules (#94).
+        if not ruleset_enforced(detail):
+            return dict(GITHUB_DEFAULTS)
+
         rules = detail.get("rules", [])
         rule_types = {r.get("type") for r in rules}
 
@@ -109,6 +113,8 @@ class TagProtectionPlugin(BasePlugin):
             return []
         detail_path = self.client.repo_path(self.owner, self.repo, f"rulesets/{ours['id']}")
         detail = self.client.get_json(detail_path)
+        if not ruleset_enforced(detail):
+            return []
         include = ((detail.get("conditions") or {}).get("ref_name") or {}).get("include") or []
         prefix = "refs/tags/"
         return [r[len(prefix):] if r.startswith(prefix) else r for r in include]
@@ -173,8 +179,30 @@ class TagProtectionPlugin(BasePlugin):
         desired = self._desired()
         desired.update(self.preserved_values(plan))
         body = self._build_tag_ruleset_body(desired)
+        # Upsert: `fix` on a repo that already has our ruleset (drifted, or
+        # disabled) must update it — a second POST with the same name fails.
+        existing_id = self._find_ruleset_id()
+        if existing_id is not None:
+            path = self.client.repo_path(self.owner, self.repo, f"rulesets/{existing_id}")
+            self.client.call_json("PUT", path, body)
+        else:
+            path = self.client.repo_path(self.owner, self.repo, "rulesets")
+            self.client.call_json("POST", path, body)
+
+    def _find_ruleset_id(self):
+        """Return the id of our tag ruleset, or None (absent or unreadable)."""
         path = self.client.repo_path(self.owner, self.repo, "rulesets")
-        self.client.call_json("POST", path, body)
+        status, text = self.client.call_api("GET", path)
+        if status is None or not 200 <= status < 300:
+            return None
+        try:
+            rulesets = json.loads(text)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+        for rs in rulesets:
+            if rs.get("target") == "tag" and rs.get("name") == RULESET_NAME:
+                return rs.get("id")
+        return None
 
     def _build_tag_ruleset_body(self, desired: dict) -> dict:
         rules = []

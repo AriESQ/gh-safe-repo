@@ -260,6 +260,37 @@ gh-safe-repo branch or tag ruleset has been set to `disabled` (or
 `evaluate`), `audit` reports its rules as off and `fix` re-enables the
 existing ruleset. It does not create a second one.
 
+**Actions in use.** When the plan changes which actions may run
+(`allowed_actions`, `patterns_allowed`, `verified_allowed`,
+`github_owned_allowed` or `sha_pinning_required`), the plan gets a
+`Warnings` block before the confirmation prompt:
+
+- `⚠ removes allowlisted action <pattern>` for each entry the new
+  `patterns_allowed` drops.
+- `⚠ would block N actions in M workflows`: the `uses:` references in
+  `.github/workflows/*.yml` / `*.yaml` on the default branch (read through the
+  contents API, read-only; local composite actions are followed) that run
+  today and would not under the new policy. Each one names the file and line
+  and why: not GitHub-owned or allowlisted, `allowed_actions = local_only`,
+  or not pinned to a full-length commit SHA. For an unpinned reference the
+  SHA its tag resolves to now is printed (`→ pin: owner/action@<sha>  # v4`)
+  so pinning is copy-paste.
+- `? cannot confirm N actions ... will still run`: references allowed only
+  if their creator is verified. GitHub has no API for verified-creator
+  status, so these are reported as unknown, not blocked. `docker://`
+  references are reported the same way under `selected` / `local_only`;
+  local `./` actions are always allowed and never reported.
+
+These are warnings only. The change is still applied as planned (the
+allowlist is replaced, not merged), including under `--yes`, and the exit
+code is unchanged. To keep an action, add it to `patterns_allowed` in your
+config, pin it, or leave the section undeclared so a stricter or
+hand-tuned value is preserved. Only the default branch is scanned;
+workflows on other branches run under the same policy. `push` scans the
+local default branch with `git` (also under `--dry-run`); `copy` scans the
+source repo, and skips the scan under `--dry-run` (no API calls) with an
+`actions_scan_skipped` warning.
+
 Two ways to enforce a `PRESERVE` row:
 
 - **Declare the section in your config.** A `[repo]` section in your INI
@@ -376,6 +407,21 @@ is not a terminal or `NO_COLOR` is set.
 The summary line counts them separately: `2 change(s) to apply, 3 preserved,
 4 skipped`.
 
+A `Warnings` block after the table lists what an Actions-policy change would
+break (see [Actions in use](#what-fix-leaves-alone)):
+
+```
+Warnings
+  ⚠ removes allowlisted action astral-sh/setup-uv
+  ⚠ would block 2 actions in 1 workflow (branch main):
+      actions/checkout@v4  .github/workflows/ci.yml:12
+        - not pinned to a full-length commit SHA
+        → pin: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4
+      astral-sh/setup-uv@v5  .github/workflows/ci.yml:15
+        - not GitHub-owned or in patterns_allowed
+        - not pinned to a full-length commit SHA
+```
+
 ### JSON
 
 With `--json`, the document is the only thing on stdout. Progress, warnings,
@@ -399,9 +445,31 @@ prompts and the banner go to stderr.
     { "type": "skip",     "category": "branch_protection", "key": "branch_protection",            "old": null,    "new": null,   "reason": "Branch protection requires a public repo or paid GitHub plan",
       "tier": null,         "github_default": null,    "weakened": false }
   ],
-  "summary": { "update": 1, "preserve": 1, "skip": 1 }
+  "summary": { "update": 1, "preserve": 1, "skip": 1 },
+  "warnings": [
+    { "kind": "allowlist_pattern_removed", "message": "removes allowlisted action astral-sh/setup-uv",
+      "pattern": "astral-sh/setup-uv" },
+    { "kind": "actions_blocked", "message": "would block 1 action in 1 workflow",
+      "branch": "main", "source": "alice/demo", "workflows_scanned": 2,
+      "actions": [
+        { "uses": "actions/checkout@v4", "kind": "action", "workflow": ".github/workflows/ci.yml",
+          "file": ".github/workflows/ci.yml", "line": 12,
+          "reasons": ["not pinned to a full-length commit SHA"],
+          "pin": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683" }
+      ] }
+  ]
 }
 ```
+
+`warnings` is always present (often `[]`) and never changes what is applied
+or the exit code. `kind` is one of `allowlist_pattern_removed` (`pattern`),
+`actions_blocked` and `actions_unknown` (`branch`, `source`,
+`workflows_scanned`, `actions[]`: `uses`, `kind` = `action` /
+`reusable_workflow` / `docker`, `workflow`, `file` (differs from `workflow`
+for a step inside a local composite action), `line`, `reasons[]`, optional
+`pin`), or `actions_scan_skipped` (`reason`: `copy --dry-run`, or the
+workflows could not be read). Under `--json --yes` the warnings are also
+printed on stderr.
 
 `summary` only lists types present in the plan; use `.get("delete", 0)`
 rather than assuming all five keys. Every change carries the merge context

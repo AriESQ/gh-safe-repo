@@ -703,3 +703,69 @@ Decisions that follow from the shapes:
 - **Null fields read as GitHub's default.** The spec marks only `enabled`
   required on `actions/permissions`, and nothing on `selected-actions`, so
   `actions._field()` type-checks each value before using it.
+
+## Actions in Use: Warn Before a Policy Change Blocks Them (#111)
+
+`gh_safe_repo/actions_usage.py` turns an Actions-policy change into
+`PlanWarning`s (`diff.py`; `Plan.warnings`, merged by `Plan.merge()`,
+rendered by `_common.print_plan_warnings()` after the table and emitted as
+`warnings` by `format_plan_json()`). `fix.run()` calls `plan_warnings()` on
+the Actions plugin's post-merge-policy plan; `create.run()` calls it on the
+create-mode plan with `GITHUB_DEFAULTS` as the baseline. `plugins/actions.py`
+is untouched: the scan is a consumer of its rows, not part of the diff.
+
+**Decisions on #111's open questions (all "warn, change nothing"):**
+(1) replace-and-warn, no union: `patterns_allowed` is still replaced by the
+config value, and each dropped entry is a `allowlist_pattern_removed`
+warning. A union would silently make the config non-authoritative; the
+user can add the pattern to their config or leave `[actions]` undeclared so
+the merge policy decides. (2) Unattended runs (`--yes`, weekly CI `fix`)
+apply with the warning: no new flag, no new exit code; `--json --yes`
+repeats the warnings on stderr so a CI log shows them. (3) Verified
+creators: no REST endpoint says whether a publisher is verified, so a
+reference allowed *only* via `verified_allowed` is `actions_unknown`, never
+blocked. (4) Default branch only: one contents listing plus one GET per
+workflow file (and per local composite action), versus a branch-times-files
+fan-out. (5) Remediation: `GET /repos/{o}/{r}/commits/{ref}` resolves a tag
+or branch to the commit SHA in one call (annotated tags peeled); at most
+`MAX_PIN_LOOKUPS` (25) distinct refs, failures are silent.
+
+**Only newly broken references are reported.** Each reference is evaluated
+under the policy before (the repo's current Actions state, or GitHub's
+defaults for a new repo) and after (before + the plan's actionable policy
+rows). A reference already blocked today is not the change's fault and is
+not listed. `PRESERVE` / `SKIP` rows do not change the after-policy, so a
+preserved `local_only` triggers no scan.
+
+**Allowlist semantics as implemented** (GitHub docs, "Allowing select
+actions and reusable workflows to run"): under `selected`, local `./` / `$/`
+actions, actions owned by the repo owner, GitHub-owned actions (`actions/*`,
+`github/*`) when `github_owned_allowed`, and pattern matches run; a
+`!pattern` blocks. `local_only` allows only local and same-owner actions.
+SHA pinning applies to every action including GitHub-owned ones, but
+reusable workflows "can still be referenced by tag". Pattern matching is an
+approximation: `*` matches any run of characters including `/` (the docs'
+`octocat/*` is said to cover reusable workflows, which have slashes in
+their path), matching is case-insensitive, and a pattern without `@`
+(`astral-sh/setup-uv`, from the #62 field evidence where it worked) matches
+any ref. `docker://` references are not described by the allowlist docs and
+are reported as unknown under `selected` / `local_only`. The same-owner rule
+is from the UI label "Allow OWNER, and select non-OWNER, actions"; not
+verified live for user-owned repos.
+
+**Line-based `uses:` parsing, no YAML.** `^\s*(?:-\s+)?uses\s*:` with
+quotes and ` #` comments stripped; `${{ }}` expressions skipped. A flow
+mapping (`- {uses: x}`) or a multi-line scalar is missed; acceptable for a
+warning. Local composite actions are followed through `<dir>/action.yml` or
+`action.yaml` (cached per directory, recursion guarded per chain, depth 3)
+and attributed to every workflow that uses them; remote composite actions
+are not fetched.
+
+**`--dry-run` boundary.** The creating verbs keep "zero API calls": `copy
+--dry-run` adds `actions_scan_skipped` instead of reading the source;
+`push --dry-run` scans because it only runs `git ls-tree` / `git show`
+locally (no pin lookups). `fix --dry-run` and `audit` scan, like the rest
+of their audit: they already GET every setting. Tests for `GitSource` patch
+`GitSource._git` in command-level tests rather than `subprocess.run`, which
+is the shared module attribute the scanner's discovery also calls (the #109
+lesson, in another shape).

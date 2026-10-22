@@ -63,6 +63,23 @@ class Change:
         return f"{self.type.value} {self.category.value}/{self.key}"
 
 
+@dataclass
+class PlanWarning:
+    """Advisory note attached to a plan; never changes what is applied.
+
+    ``kind`` is a stable identifier (``allowlist_pattern_removed``,
+    ``actions_blocked``, ``actions_unknown``, ``actions_scan_skipped``);
+    ``message`` is the human line; ``details`` holds the structured fields
+    emitted alongside them in ``--json``.
+    """
+    kind: str
+    message: str
+    details: dict = field(default_factory=dict)
+
+    def to_dict(self):
+        return {"kind": self.kind, "message": self.message, **self.details}
+
+
 # Rows that never produce an API call.
 _INERT = frozenset({ChangeType.SKIP, ChangeType.PRESERVE})
 
@@ -70,6 +87,9 @@ _INERT = frozenset({ChangeType.SKIP, ChangeType.PRESERVE})
 @dataclass
 class Plan:
     changes: List[Change] = field(default_factory=list)
+    # Advisory warnings (#111): shown before the confirmation prompt and in
+    # --json, never applied.
+    warnings: List[PlanWarning] = field(default_factory=list)
 
     def add(self, change: Change):
         self.changes.append(change)
@@ -99,3 +119,4 @@ class Plan:
     def merge(self, other: "Plan"):
         """Merge another plan's changes into this one."""
         self.changes.extend(other.changes)
+        self.warnings.extend(other.warnings)

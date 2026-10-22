@@ -292,6 +292,33 @@ def print_plan(plan):
                 + value
             )
     print()
+    print_plan_warnings(plan)
+
+
+def print_plan_warnings(plan):
+    """The plan's advisory warnings (#111), after the table, before any prompt."""
+    warnings = getattr(plan, "warnings", None) or []
+    if not warnings:
+        return
+    print(f"{_BOLD}Warnings{_RESET}")
+    for w in warnings:
+        mark = "?" if w.kind == "actions_unknown" else "⚠"
+        where = w.details.get("branch")
+        suffix = f" (branch {where}):" if where and w.details.get("actions") else (
+            ":" if w.details.get("actions") else ""
+        )
+        print(f"  {_c(_YELLOW, mark + ' ' + w.message)}{suffix}")
+        for a in w.details.get("actions", []):
+            loc = f"{a.get('file') or a['workflow']}:{a['line']}"
+            if a.get("file") and a["file"] != a["workflow"]:
+                loc += f" (used by {a['workflow']})"
+            print(f"      {a['uses']}  {_c(_DIM, loc)}")
+            for r in a.get("reasons", []):
+                print(_c(_DIM, f"        - {r}"))
+            if a.get("pin"):
+                tag = a["uses"].split("@", 1)[-1]
+                print(_c(_DIM, f"        → pin: {a['pin']}  # {tag}"))
+    print()
 
 
 def format_plan_json(plan, verification=None):
@@ -305,7 +332,9 @@ def format_plan_json(plan, verification=None):
     "preference" / null), ``github_default`` (what a fresh repo holds, null
     when unknown) and ``weakened`` (true on an UPDATE that restores a
     security control someone relaxed). ``summary`` gains ``"preserve"`` when
-    the plan has PRESERVE rows.
+    the plan has PRESERVE rows. ``warnings`` (always present, often empty)
+    is the plan's advisory list (#111), e.g. actions a policy change would
+    block; warnings never change what is applied or the exit code.
     """
     counts = plan.count_by_type()
     doc = {
@@ -324,6 +353,7 @@ def format_plan_json(plan, verification=None):
             for c in plan.changes
         ],
         "summary": {t.value: n for t, n in counts.items()},
+        "warnings": [w.to_dict() for w in getattr(plan, "warnings", None) or []],
     }
     if verification is not None:
         doc["verification"] = verification.to_dict()

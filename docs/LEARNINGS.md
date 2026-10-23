@@ -655,6 +655,8 @@ observed live on 2026-10-22. "On" is from AriESQ/gh-safe-repo (public),
 "free+private" from a private repo on the free plan, and "off" from a
 throwaway public repo. A test in `tests/test_plugins.py::TestApiReadShapes`
 pins every row where the status alone would have been misread.
+Full evidence (every endpoint, every state, the probe script) is in
+`docs/2026-10-22_github-api-read-shapes.md`.
 
 | Read | On | Off | Free + private |
 |---|---|---|---|

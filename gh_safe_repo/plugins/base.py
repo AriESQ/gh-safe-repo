@@ -7,6 +7,15 @@ from ..diff import Change, ChangeType, Plan
 from ..github_client import GitHubClient
 
 
+def ruleset_enforced(ruleset: dict) -> bool:
+    """True only for an ``enforcement: "active"`` ruleset.
+
+    ``disabled`` and ``evaluate`` rulesets keep their rules but block nothing,
+    and a body without the field (the API always sends it) is not trusted.
+    """
+    return ruleset.get("enforcement") == "active"
+
+
 class BasePlugin(ABC):
     # Merge metadata (fix/audit three-way merge). ``section`` is the config
     # section / ChangeCategory value this plugin's per-key rows belong to;

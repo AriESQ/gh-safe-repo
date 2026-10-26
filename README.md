@@ -249,6 +249,17 @@ is `selected`, so when the parent is preserved at `local_only` or `all` they
 are reported as `SKIP` (`Not applicable while allowed_actions is
 'local_only' (preserved)`) rather than as drift.
 
+If GitHub Actions is disabled for the repo, nothing runs, which is stricter
+than any Actions policy. `allowed_actions` and `sha_pinning_required` are
+then reported as `SKIP` (`GitHub Actions is disabled for this repository`),
+because writing either one would switch Actions back on. Workflow
+permissions and fork PR approval are still checked.
+
+A ruleset counts as protection only when its enforcement is `active`. If the
+gh-safe-repo branch or tag ruleset has been set to `disabled` (or
+`evaluate`), `audit` reports its rules as off and `fix` re-enables the
+existing ruleset. It does not create a second one.
+
 Two ways to enforce a `PRESERVE` row:
 
 - **Declare the section in your config.** A `[repo]` section in your INI

@@ -21,7 +21,7 @@ import sys
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError
-from .base import BasePlugin
+from .base import BasePlugin, ruleset_enforced
 
 # GitHub's defaults for a newly created repo — no branch protection at all
 GITHUB_DEFAULTS = {
@@ -82,7 +82,7 @@ class BranchProtectionPlugin(BasePlugin):
         try:
             if self._use_rulesets():
                 detail = self._fetch_ruleset_detail()
-                if detail is None:
+                if detail is None or not ruleset_enforced(detail):
                     return []
                 include = (
                     (detail.get("conditions") or {}).get("ref_name") or {}
@@ -189,7 +189,9 @@ class BranchProtectionPlugin(BasePlugin):
         (404/403 on free+private).
         """
         detail = self._fetch_ruleset_detail()
-        if detail is None:
+        if detail is None or not ruleset_enforced(detail):
+            # A "disabled" (or Enterprise "evaluate") ruleset still lists its
+            # rules but enforces none of them, so it protects nothing (#94).
             return dict(GITHUB_DEFAULTS)
 
         rules = detail.get("rules", [])
@@ -356,8 +358,9 @@ class BranchProtectionPlugin(BasePlugin):
         body = self._build_ruleset_body(desired)
         existing_id = self._find_ruleset_id()
         if existing_id is not None:
+            # The update endpoint is PUT; the REST API documents no PATCH.
             path = self.client.repo_path(self.owner, self.repo, f"rulesets/{existing_id}")
-            self.client.call_json("PATCH", path, body)
+            self.client.call_json("PUT", path, body)
         else:
             path = self.client.repo_path(self.owner, self.repo, "rulesets")
             self.client.call_json("POST", path, body)

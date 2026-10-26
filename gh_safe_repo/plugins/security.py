@@ -71,8 +71,11 @@ class SecurityPlugin(BasePlugin):
         """Check a toggle endpoint: 2xx = enabled, 404 = disabled.
 
         Endpoints that answer 200 with a JSON ``{"enabled": bool}`` body
-        (private-vulnerability-reporting does, even when off) are read from
-        the body, so "200, enabled: false" is not mistaken for "on".
+        (private-vulnerability-reporting and automated-security-fixes do,
+        even when off) are read from the body, so "200, enabled: false" is
+        not mistaken for "on". ``"paused": true`` (automated-security-fixes
+        on an inactive repo) also counts as off: no update PRs are opened,
+        so `fix` proposes the PUT that turns it back on (#94).
 
         Any other status (403, 5xx, no status at all) is ambiguous. Planning
         (strict=False) keeps treating it as disabled, so `fix` proposes the
@@ -88,7 +91,7 @@ class SecurityPlugin(BasePlugin):
             except (json.JSONDecodeError, ValueError, TypeError):
                 body = None
             if isinstance(body, dict) and isinstance(body.get("enabled"), bool):
-                return body["enabled"]
+                return body["enabled"] and body.get("paused") is not True
             return True
         if status == 404 or not strict:
             return False
@@ -116,12 +119,18 @@ class SecurityPlugin(BasePlugin):
             data = None
         sa = ((data or {}).get("security_and_analysis") or {})
 
+        ss = sa.get("secret_scanning")
         if self.is_public:
-            result["secret_scanning"] = True
+            # GitHub turns secret scanning on for public repos, but an admin
+            # can turn it off, and GET /repos then says "disabled" (#94).
+            # Only a missing key falls back to GitHub's default. The
+            # dependency graph has no read endpoint, so it stays assumed.
+            result["secret_scanning"] = (
+                ss.get("status") == "enabled" if isinstance(ss, dict) else True
+            )
             result["enable_dependency_graph"] = True
         else:
-            ss = sa.get("secret_scanning") or {}
-            result["secret_scanning"] = ss.get("status") == "enabled"
+            result["secret_scanning"] = (ss or {}).get("status") == "enabled"
 
         for config_key, api_key in SECURITY_ANALYSIS_SETTINGS.items():
             entry = sa.get(api_key) or {}
@@ -156,8 +165,9 @@ class SecurityPlugin(BasePlugin):
             plan_key="dependabot_alerts",
         )
 
-        # Secret scanning
-        if self.is_public:
+        # Secret scanning: on by default for public repos, so only an audit
+        # that reads it as off proposes anything there.
+        if self.is_public and not (is_audit and not current_state.get("secret_scanning", True)):
             plan.add(Change(
                 type=ChangeType.SKIP,
                 category=ChangeCategory.SECURITY,

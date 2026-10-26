@@ -646,3 +646,60 @@ security plugin behaves identically with and without `--all`.
 returns `None` for anything else; a test pins that.
 
 **Dependent settings must follow a preserved parent (found live, 2026-10-19).** The Actions plugin plans the selected-actions sub-settings whenever the *config* wants `allowed_actions = selected`, without looking at the current value, because before the merge policy the parent was always about to be set to `selected` in the same run and the sub-settings had to be written with it. The policy broke that assumption: it kept `allowed_actions` at `local_only` (stricter, so `PRESERVE`) and the orphaned `verified_allowed` row stayed `UPDATE`, so `audit` exited `3` for a setting GitHub ignores under `local_only` and `fix` would have PUT a selected-actions body that changes nothing. The fix is data plus one policy pass, not a plugin change: `config_manager.DEPENDENT_SETTINGS` maps a dependent `(section, key)` to `(parent key, parent value it needs)`, and `apply_merge_policy` turns a dependent `UPDATE` into `SKIP` when its parent came out `PRESERVE` at any other value. Only the preserved case is special: when the parent is `UPDATE` (at GitHub's default, declared section, or `--all`) the sub-settings are written with it exactly as before. The same table is the place for any future parent/child pair (e.g. a ruleset knob that only matters under `use_rulesets = true`).
+
+## API Read Shapes (#94)
+
+**Read the body, not the status code.** Several endpoints answer `200` when
+a feature is off and put the real answer in the body. Each row below was
+observed live on 2026-10-22. "On" is from AriESQ/gh-safe-repo (public),
+"free+private" from a private repo on the free plan, and "off" from a
+throwaway public repo. A test in `tests/test_plugins.py::TestApiReadShapes`
+pins every row where the status alone would have been misread.
+Full evidence (every endpoint, every state, the probe script) is in
+`docs/2026-10-22_github-api-read-shapes.md`.
+
+| Read | On | Off | Free + private |
+|---|---|---|---|
+| `GET …/vulnerability-alerts` | `204`, no body | `404` "Vulnerability alerts are disabled." | `404` (same) |
+| `GET …/automated-security-fixes` | `200 {"enabled":true,"paused":false}` | `200 {"enabled":false,"paused":false}` | `200 {"enabled":false,…}` |
+| `GET …/private-vulnerability-reporting` | `200 {"enabled":true}` | `200 {"enabled":false}` | `404` |
+| `GET /repos` `security_and_analysis` | `{"status":"enabled"}` per key | `{"status":"disabled"}` per key; an admin can turn secret scanning off on a public repo | `null` |
+| `GET …/actions/permissions` | `200 {"enabled":true,"allowed_actions":…,"sha_pinning_required":…}` | `200 {"enabled":false,"sha_pinning_required":false}` (no `allowed_actions`) | `200`, same shape |
+| `GET …/actions/permissions/selected-actions` | `200 {"github_owned_allowed":…,"patterns_allowed":[…],"verified_allowed":…}` | `409` "GitHub Actions is disabled…" / "Only local actions…" when disabled or `local_only` | — |
+| `GET …/actions/permissions/workflow` | `200 {"default_workflow_permissions":…,"can_approve_pull_request_reviews":…}` | — | `200`, same shape |
+| `GET …/actions/permissions/fork-pr-contributor-approval` | `200 {"approval_policy":…}` | — | `422` "not allowed for private repositories" |
+| `GET …/rulesets` | `200 [ {id,name,target,source_type,enforcement,…} ]` | `200 []` | `403` "Upgrade to GitHub Pro…" |
+| `GET …/rulesets/{id}` | `enforcement: "active"` | `enforcement: "disabled"`, rules still listed (`evaluate` → `422` "not supported on this plan" outside Enterprise) | — |
+| `GET …/branches/{b}/protection` | `200` + body | `404` "Branch not protected" / "Branch not found" | `403` "Upgrade to GitHub Pro…" |
+
+Decisions that follow from the shapes:
+
+- **`paused: true` counts as off.** GitHub pauses Dependabot security
+  updates on inactive repos. While paused it opens no PRs, so `audit`
+  reports drift and `fix` re-PUTs `automated-security-fixes`. Not verified
+  live: GitHub decides when to pause, so whether the PUT un-pauses could not
+  be reproduced.
+- **Ruleset `enforcement` must be `active`** (`plugins/base.ruleset_enforced`).
+  `disabled` and `evaluate` keep their rules but enforce none, and a missing
+  field is not trusted (the spec marks it required). Both plugins read a
+  disabled ruleset as GitHub's defaults, so `fix` writes our body, which
+  carries `enforcement: active`, over the existing ruleset.
+- **Ruleset updates are `PUT`.** The REST description lists only
+  GET/PUT/DELETE on `rulesets/{id}`, and live `PATCH` answers **404**, so
+  the branch plugin's `PATCH` meant `fix` could never update an existing
+  branch ruleset. The tag plugin always `POST`ed, so a second `fix` on a
+  drifted tag ruleset got `422` "Name must be unique". Both now find the existing id
+  and `PUT`.
+- **Actions disabled is left alone.** With `enabled: false` the
+  permissions body has no `allowed_actions`, which used to default to
+  `"all"`. `fix` then planned `selected` and PUT `enabled: true` (the
+  endpoint requires the field), which switched Actions back on. Disabled is
+  stricter than any policy, so the policy keys are `SKIP`. Workflow
+  permissions and fork PR approval are still planned.
+- **Public secret scanning is read, not assumed.** `security_and_analysis`
+  is populated on public repos, so a `"disabled"` status is believed. Only
+  a missing key falls back to "on". The dependency graph has no read
+  endpoint, so it stays assumed on for public repos.
+- **Null fields read as GitHub's default.** The spec marks only `enabled`
+  required on `actions/permissions`, and nothing on `selected-actions`, so
+  `actions._field()` type-checks each value before using it.

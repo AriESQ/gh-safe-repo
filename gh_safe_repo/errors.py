@@ -25,3 +25,7 @@ class RepoExistsError(SafeRepoError):
         super().__init__(f"Repository {owner}/{repo} already exists")
         self.owner = owner
         self.repo = repo
+
+
+class CatalogError(ConfigError):
+    """The AI context file catalog (or a user-supplied extra) failed validation."""

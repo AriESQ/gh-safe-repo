@@ -9,6 +9,15 @@ since the initial release.
 
 ## [Unreleased]
 
+### Internal
+- A catalog of AI-tool context, instruction and config files ships as
+  package data (`gh_safe_repo/data/ai_assistant_files.json`, 118 entries from
+  about 40 tools), with a stdlib loader and strict validator in
+  `gh_safe_repo/assistant_files.py` (#124, step 1). Each entry records a
+  path, how it matches (exact / prefix / glob, at the repo root or any
+  depth), a category, the tools that read it and dated sources. The scanner
+  does not use it yet; its behaviour is unchanged.
+
 ## [0.11.0] - 2026-10-27
 
 ### Added

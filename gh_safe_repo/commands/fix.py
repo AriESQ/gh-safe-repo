@@ -3,6 +3,7 @@
 import sys
 from dataclasses import replace
 
+from .. import actions_usage
 from ..config_manager import DEPENDENT_SETTINGS, PREFERENCE, SECURITY, is_stricter
 from ..diff import ChangeType, Plan
 from ..errors import APIError, SafeRepoError
@@ -27,6 +28,7 @@ from ._common import (
     info,
     parse_repo_arg,
     print_plan,
+    print_plan_warnings,
     confirm,
     print_success_fix,
     print_verification,
@@ -230,6 +232,7 @@ def run(args, audit=False):
         ),
     ]
 
+    actions_plugin = plugins[1]
     full_plan = Plan()
     plugin_plans = []  # (plugin, its own plan) — verification re-audits per plugin
     for plugin in plugins:
@@ -241,6 +244,18 @@ def run(args, audit=False):
         except SafeRepoError as e:
             error(f"Planning failed: {e}")
             sys.exit(1)
+        if plugin is actions_plugin:
+            # #111: an Actions-policy change that blocks actions the repo's
+            # workflows use today. Warnings only (replace-and-warn): the rows
+            # are applied as planned. Read-only, like the rest of the audit,
+            # so it also runs under --dry-run and `audit`.
+            full_plan.warnings += actions_usage.plan_warnings(
+                plugin_plan, current_state or {}, owner,
+                source=actions_usage.ApiSource(
+                    client, owner, repo_name, audit_default_branch,
+                ),
+                client=client,
+            )
 
     # Under --json, stdout carries exactly one document. --dry-run prints the
     # plan right away (unchanged); a real run prints it once at the end, with
@@ -264,6 +279,11 @@ def run(args, audit=False):
         # Interactive --json: show the table on stderr so the prompt has context.
         with prose_to_stderr(json_mode):
             print_plan(full_plan)
+    elif full_plan.warnings:
+        # Unattended --json: the warnings are in the document; repeat them on
+        # stderr so a CI log shows what the run may break.
+        with prose_to_stderr(json_mode):
+            print_plan_warnings(full_plan)
 
     _info(_c(
         _BOLD + _DIM,

@@ -11,6 +11,7 @@ import subprocess
 import sys
 from typing import Optional
 
+from .. import actions_usage
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
 from ..github_client import LocalWiring
@@ -51,6 +52,7 @@ from ._common import (
     info,
     parse_repo_arg,
     print_plan,
+    print_plan_warnings,
     print_success,
     print_verification,
     prose_stream,
@@ -438,6 +440,27 @@ def run(args):
             ),
         ))
 
+    # #111: will the new repo's Actions policy block actions the pushed or
+    # copied workflows use? The baseline is GitHub's default (`all`), so
+    # every reference the safe defaults reject is reported. Warnings only.
+    # `push` reads the local default branch with git (no API calls, so it
+    # runs under --dry-run too); `copy` reads the source repo through the
+    # contents API, so --dry-run skips it and says so.
+    usage_source, skip_reason = None, None
+    if local_path:
+        usage_source = actions_usage.GitSource(local_path, local_default_branch)
+    elif args.from_repo and not args.dry_run:
+        usage_source = actions_usage.ApiSource(
+            client, from_owner, from_repo, source_default_branch,
+        )
+    elif args.from_repo:
+        skip_reason = "--dry-run makes no API calls; the source workflows were not read"
+    full_plan.warnings += actions_usage.plan_warnings(
+        plugin_plans[1][1], dict(actions_usage.GITHUB_DEFAULTS), owner,
+        source=usage_source, skip_reason=skip_reason,
+        client=None if args.dry_run else client,
+    )
+
     # Under --json, stdout carries exactly one document. --dry-run prints the
     # plan right away (unchanged); a real run prints it once at the end, with
     # the verification block (#77), same as `fix`.
@@ -449,6 +472,9 @@ def run(args):
         # Interactive --json: show the table on stderr so the prompt has context.
         with prose_to_stderr(json_mode):
             print_plan(full_plan)
+    elif full_plan.warnings:
+        with prose_to_stderr(json_mode):
+            print_plan_warnings(full_plan)
 
     counts = full_plan.count_by_type()
     actionable = sum(v for k, v in counts.items() if k != ChangeType.SKIP)

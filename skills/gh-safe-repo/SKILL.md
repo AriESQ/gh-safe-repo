@@ -101,7 +101,8 @@ stdout (all prose goes to stderr):
                {"type": "preserve", "category": "repo", "key": "has_wiki",
                 "old": false, "new": true, "reason": "changed from default",
                 "tier": "preference", "github_default": true, "weakened": false} ],
-  "summary": { "update": 1, "preserve": 1, "skip": 2 } }
+  "summary": { "update": 1, "preserve": 1, "skip": 2 },
+  "warnings": [] }
 ```
 
 `summary` only lists types that occur — use `.get("delete", 0)`. For `audit`,
@@ -111,6 +112,41 @@ not drift, and the exit code says the same. Every change carries `tier`
 holds, `null` when not a per-key setting) and `weakened` (`true` on an
 `update` that restores a security control someone relaxed below GitHub's
 default; worth pointing out to the user).
+
+`warnings` is always present (often `[]`). It lists what an Actions-policy
+change in the plan would break; it never changes what is applied or the
+exit code, so **read it and show it to the user before applying**, even
+though the run would succeed:
+
+```json
+"warnings": [
+  {"kind": "allowlist_pattern_removed", "message": "removes allowlisted action astral-sh/setup-uv",
+   "pattern": "astral-sh/setup-uv"},
+  {"kind": "actions_blocked", "message": "would block 1 action in 1 workflow",
+   "branch": "main", "source": "alice/demo", "workflows_scanned": 2,
+   "actions": [ {"uses": "actions/checkout@v4", "kind": "action",
+                 "workflow": ".github/workflows/ci.yml", "file": ".github/workflows/ci.yml",
+                 "line": 12, "reasons": ["not pinned to a full-length commit SHA"],
+                 "pin": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"} ]}
+]
+```
+
+- `allowlist_pattern_removed`: the new `patterns_allowed` drops `pattern`
+  (the allowlist is replaced, not merged).
+- `actions_blocked`: `uses:` references on the default branch's workflows
+  (`source`/`branch`) that run today and would be blocked after the change.
+  `reasons` says why; `pin`, when present, is the reference pinned to the
+  SHA its tag resolves to now. Applying anyway breaks those workflows
+  (including, possibly, the CI that runs this tool). Offer the user the
+  choices: pin the actions (edit the workflows with `pin`), add the action
+  to `patterns_allowed` in their config, or proceed knowingly.
+- `actions_unknown`: allowed only if the creator is verified (no API can
+  tell) or a `docker://` image. Mention them; do not treat as blocked.
+- `actions_scan_skipped`: the workflows were not checked (`reason`: `copy
+  --dry-run` makes no API calls, or the read failed). For `copy`, the real
+  run checks them before its prompt.
+
+`--yes` does not stop on warnings: the change is applied with them.
 
 `audit --json` and `--dry-run --json` print that document straight away. A
 real mutating run prints it **once, at the end**, after applying and reading

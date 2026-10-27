@@ -265,24 +265,29 @@ existing ruleset. It does not create a second one.
 `github_owned_allowed` or `sha_pinning_required`), the plan gets a
 `Warnings` block before the confirmation prompt:
 
-- `⚠ removes allowlisted action <pattern>` for each entry the new
+- `⚠ removes whitelisted action <pattern>` for each entry the new
   `patterns_allowed` drops.
 - `⚠ would block N actions in M workflows`: the `uses:` references in
   `.github/workflows/*.yml` / `*.yaml` on the default branch (read through the
   contents API, read-only; local composite actions are followed) that run
   today and would not under the new policy. Each one names the file and line
-  and why: not GitHub-owned or allowlisted, `allowed_actions = local_only`,
+  and why: not GitHub-owned or whitelisted, `allowed_actions = local_only`,
   or not pinned to a full-length commit SHA. For an unpinned reference the
   SHA its tag resolves to now is printed (`→ pin: owner/action@<sha>  # v4`)
   so pinning is copy-paste.
 - `? cannot confirm N actions ... will still run`: references allowed only
   if their creator is verified. GitHub has no API for verified-creator
-  status, so these are reported as unknown, not blocked. `docker://`
-  references are reported the same way under `selected` / `local_only`;
-  local `./` actions are always allowed and never reported.
+  status, so these are reported as unknown, not blocked. Local `./`
+  actions are always allowed and never reported.
+
+`docker://` references run only under `allowed_actions = all`; GitHub
+blocks them under `selected` (even with verified creators allowed) and
+`local_only`, so they are reported as blocked. Whitelist patterns are
+matched against the full `owner/repo@ref`: `astral-sh/setup-uv` with no
+`@` part matches no version at all, so write `astral-sh/setup-uv@*`.
 
 These are warnings only. The change is still applied as planned (the
-allowlist is replaced, not merged), including under `--yes`, and the exit
+whitelist is replaced, not merged), including under `--yes`, and the exit
 code is unchanged. To keep an action, add it to `patterns_allowed` in your
 config, pin it, or leave the section undeclared so a stricter or
 hand-tuned value is preserved. Only the default branch is scanned;
@@ -412,7 +417,7 @@ break (see [Actions in use](#what-fix-leaves-alone)):
 
 ```
 Warnings
-  ⚠ removes allowlisted action astral-sh/setup-uv
+  ⚠ removes whitelisted action astral-sh/setup-uv
   ⚠ would block 2 actions in 1 workflow (branch main):
       actions/checkout@v4  .github/workflows/ci.yml:12
         - not pinned to a full-length commit SHA
@@ -447,7 +452,7 @@ prompts and the banner go to stderr.
   ],
   "summary": { "update": 1, "preserve": 1, "skip": 1 },
   "warnings": [
-    { "kind": "allowlist_pattern_removed", "message": "removes allowlisted action astral-sh/setup-uv",
+    { "kind": "whitelist_pattern_removed", "message": "removes whitelisted action astral-sh/setup-uv",
       "pattern": "astral-sh/setup-uv" },
     { "kind": "actions_blocked", "message": "would block 1 action in 1 workflow",
       "branch": "main", "source": "alice/demo", "workflows_scanned": 2,
@@ -462,7 +467,7 @@ prompts and the banner go to stderr.
 ```
 
 `warnings` is always present (often `[]`) and never changes what is applied
-or the exit code. `kind` is one of `allowlist_pattern_removed` (`pattern`),
+or the exit code. `kind` is one of `whitelist_pattern_removed` (`pattern`),
 `actions_blocked` and `actions_unknown` (`branch`, `source`,
 `workflows_scanned`, `actions[]`: `uses`, `kind` = `action` /
 `reusable_workflow` / `docker`, `workflow`, `file` (differs from `workflow`

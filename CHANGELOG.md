@@ -14,24 +14,28 @@ since the initial release.
   When `fix`, `audit`, `push` or `copy` would change `allowed_actions`,
   `patterns_allowed`, `verified_allowed`, `github_owned_allowed` or
   `sha_pinning_required`, a `Warnings` block after the plan table (before
-  the confirmation prompt) lists each allowlist entry the new
-  `patterns_allowed` removes (`⚠ removes allowlisted action <pattern>`) and
+  the confirmation prompt) lists each whitelist entry the new
+  `patterns_allowed` removes (`⚠ removes whitelisted action <pattern>`) and
   every `uses:` reference in the default branch's workflows that runs today
   and would be blocked (`⚠ would block N actions in M workflows`), with the
   file, line, reason, and for an unpinned reference the SHA its tag resolves
   to now. Actions allowed only through verified-creator status (no API can
-  check it) and `docker://` references are reported as unknown, not
-  blocked. Workflows are read through the contents API (`fix`, `audit`,
+  check it) are reported as unknown, not blocked. `docker://` references
+  are reported as blocked under `selected`/`local_only`, where GitHub
+  refuses them. Matching follows GitHub's: a pattern is compared with the
+  full `owner/repo@ref`, so `owner/action` without `@*` matches nothing
+  (checked against live GitHub; see
+  `docs/2026-10-26_actions-whitelist-probe.md`). Workflows are read through the contents API (`fix`, `audit`,
   `copy`) or with `git` from the local default branch (`push`, also under
   `--dry-run`); `copy --dry-run` makes no API calls and reports
   `actions_scan_skipped` instead.
 - `--json` plan documents carry a top-level `warnings` list (always
   present, often empty) with the same information as structured records:
-  `allowlist_pattern_removed`, `actions_blocked`, `actions_unknown`,
+  `whitelist_pattern_removed`, `actions_blocked`, `actions_unknown`,
   `actions_scan_skipped`. Under `--json --yes` the warnings are also printed
   on stderr.
 
-Warnings never change what is applied or the exit code: the allowlist is
+Warnings never change what is applied or the exit code: the whitelist is
 still replaced rather than merged, and `--yes` runs apply with the warning.
 
 ### Fixed

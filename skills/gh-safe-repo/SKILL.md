@@ -120,7 +120,7 @@ though the run would succeed:
 
 ```json
 "warnings": [
-  {"kind": "allowlist_pattern_removed", "message": "removes allowlisted action astral-sh/setup-uv",
+  {"kind": "whitelist_pattern_removed", "message": "removes whitelisted action astral-sh/setup-uv",
    "pattern": "astral-sh/setup-uv"},
   {"kind": "actions_blocked", "message": "would block 1 action in 1 workflow",
    "branch": "main", "source": "alice/demo", "workflows_scanned": 2,
@@ -131,8 +131,8 @@ though the run would succeed:
 ]
 ```
 
-- `allowlist_pattern_removed`: the new `patterns_allowed` drops `pattern`
-  (the allowlist is replaced, not merged).
+- `whitelist_pattern_removed`: the new `patterns_allowed` drops `pattern`
+  (the whitelist is replaced, not merged).
 - `actions_blocked`: `uses:` references on the default branch's workflows
   (`source`/`branch`) that run today and would be blocked after the change.
   `reasons` says why; `pin`, when present, is the reference pinned to the
@@ -141,7 +141,11 @@ though the run would succeed:
   choices: pin the actions (edit the workflows with `pin`), add the action
   to `patterns_allowed` in their config, or proceed knowingly.
 - `actions_unknown`: allowed only if the creator is verified (no API can
-  tell) or a `docker://` image. Mention them; do not treat as blocked.
+  tell). Mention them; do not treat as blocked. (`docker://` images are
+  `actions_blocked`: GitHub runs them only under `allowed_actions = all`.)
+- An whitelist pattern must include an `@` part to match anything:
+  `owner/action@*`, not `owner/action`. When suggesting a
+  `patterns_allowed` entry, always write the `@*` form.
 - `actions_scan_skipped`: the workflows were not checked (`reason`: `copy
   --dry-run` makes no API calls, or the read failed). For `copy`, the real
   run checks them before its prompt.

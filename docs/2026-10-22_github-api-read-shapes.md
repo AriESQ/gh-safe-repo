@@ -14,16 +14,15 @@ the status code alone would mislead is pinned by a test in
 
 ## Method
 
-Three repositories, all owned by a free-plan user account:
+Three repositories, all owned by one user account:
 
 | Label | Repo | Used for |
 |---|---|---|
 | **on** | `AriESQ/gh-safe-repo` (public, hardened by this tool) | settings in their enabled state; GET only |
 | **free+private** | a private repo on the free plan (name withheld) | plan-unavailable responses; GET only |
-| **scratch** | `AriESQ/gsr-scratch-94` (public, created for this test only and deleted afterwards) | fresh-repo defaults, then each setting toggled off with a write and read back |
+| **scratch** | a throwaway public repo (`<owner>/<scratch>`), created for this test only and deleted afterwards | fresh-repo defaults, then each setting toggled off with a write and read back |
 
-All requests used `gh api -i` with the user's own OAuth token (scopes:
-`repo`, `read:org`, `gist`). The write sequence used on the scratch repo is
+All requests used `gh api -i` with the account owner's `gh` OAuth token. The write sequence used on the scratch repo is
 reproduced in [Appendix: probe script](#appendix-probe-script).
 
 ## Results by plugin
@@ -160,7 +159,7 @@ Run against the scratch repo with the user's credentials. The output was
 captured on 2026-10-22 and summarized above.
 
 ```bash
-R=repos/AriESQ/gsr-scratch-94
+R=repos/<owner>/<scratch>
 g()   { echo "== GET $1"; gh api -i "$R/$1" 2>&1 | grep -E '^HTTP|^\{|^\['; }
 put() { echo ">> $1 $2 $3"; echo "$3" | gh api -X "$1" "$R${2:+/$2}" --input - -i 2>&1 | grep -E '^HTTP|message'; }
 

@@ -16,15 +16,18 @@ workflows to run"):
 - `selected`: local actions (`./`, `$/`), actions owned by the repo owner,
   GitHub-owned actions (`actions/*`, `github/*`) when `github_owned_allowed`,
   Marketplace actions by verified creators when `verified_allowed`, and
-  anything matched by `patterns_allowed`. A `!pattern` blocks.
+  anything matched by `patterns_allowed`. A `!pattern` blacklists.
 - `local_only`: local actions and actions owned by the repo owner only.
 - `sha_pinning_required`: every action (GitHub-owned included) must be
   pinned to a full 40-hex commit SHA. Reusable workflows may still use tags.
 
 Verified-creator status has no REST endpoint, so an action that is only
 allowed if its creator is verified is reported as "unknown", never as
-blocked. `docker://` references are not covered by the documented allowlist
-semantics and are reported as "unknown" under `selected` / `local_only`.
+blocked. `docker://` references run only under `all`: GitHub blocks them
+under `selected` (even with verified creators allowed) and `local_only`.
+Whitelist patterns are matched against `owner/repo[/path]@ref`, so a
+pattern needs an `@` part (`astral-sh/setup-uv@*`) to match any ref.
+Verified live on 2026-10-26; see docs/2026-10-26_actions-whitelist-probe.md.
 
 Parsing is line-based (no YAML dependency): a `uses:` key, optionally after
 a list dash, with quotes and trailing comments stripped. Expressions
@@ -138,16 +141,17 @@ def _glob_re(pattern: str):
 
 
 def pattern_matches(pattern: str, ref: ActionRef) -> bool:
-    """Does one allowlist pattern (without a leading `!`) match `ref`?
+    """Does one whitelist pattern (without a leading `!`) match `ref`?
 
-    A pattern with `@` is matched against `name@ref`; one without `@`
-    (e.g. `astral-sh/setup-uv`) against the name alone, so any ref matches.
+    GitHub matches every pattern against the full `name@ref`, so a pattern
+    without `@` (e.g. `astral-sh/setup-uv`) matches no ref at all: GitHub
+    blocked `astral-sh/setup-uv@v5` under exactly that whitelist (verified
+    live). `gradle/*` does match `gradle/actions/setup-gradle@v4`.
     """
     pattern = pattern.strip()
     if not pattern:
         return False
-    target = f"{ref.name}@{ref.ref}" if "@" in pattern else ref.name
-    return bool(_glob_re(pattern).fullmatch(target))
+    return bool(_glob_re(pattern).fullmatch(f"{ref.name}@{ref.ref}"))
 
 
 def normalise_policy(state: dict) -> dict:
@@ -174,7 +178,7 @@ def evaluate(ref: ActionRef, policy: dict, repo_owner: str):
     if ref.kind == "docker":
         if allowed == "all":
             return ALLOWED, []
-        return UNKNOWN, ["docker:// image: not covered by the allowlist semantics"]
+        return BLOCKED, ["docker:// images run only when allowed_actions = all"]
 
     status, reasons = ALLOWED, []
     if allowed != "all":
@@ -184,7 +188,7 @@ def evaluate(ref: ActionRef, policy: dict, repo_owner: str):
         own = ref.owner.lower() == (repo_owner or "").lower()
         if any(pattern_matches(p, ref) for p in blocks):
             status = BLOCKED
-            reasons.append("blocked by a ! pattern in patterns_allowed")
+            reasons.append("blacklisted by a ! pattern in patterns_allowed")
         elif own:
             pass
         elif allowed == "local_only":
@@ -342,16 +346,16 @@ def _plural(n, word):
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def allowlist_warnings(plan) -> List[PlanWarning]:
-    """`⚠ removes allowlisted action X` for each pattern an UPDATE drops."""
+def whitelist_warnings(plan) -> List[PlanWarning]:
+    """`⚠ removes whitelisted action X` for each pattern an UPDATE drops."""
     out = []
     for c in plan.actionable_changes:
         if c.category == ChangeCategory.ACTIONS and c.key == "patterns_allowed":
             dropped = sorted(set(_parse_patterns(c.old)) - set(_parse_patterns(c.new)))
             for p in dropped:
                 out.append(PlanWarning(
-                    kind="allowlist_pattern_removed",
-                    message=f"removes allowlisted action {p}",
+                    kind="whitelist_pattern_removed",
+                    message=f"removes whitelisted action {p}",
                     details={"pattern": p},
                 ))
     return out
@@ -441,7 +445,7 @@ def plan_warnings(plan, baseline, repo_owner, source=None, *, client=None,
     current state for `fix`, GitHub's defaults for a new repo). `source` is an
     ApiSource / GitSource for the workflows, or None (`skip_reason` says why).
     """
-    warnings = allowlist_warnings(plan)
+    warnings = whitelist_warnings(plan)
     after = policy_after(baseline, plan)
     if after is None:
         return warnings

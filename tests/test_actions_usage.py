@@ -114,7 +114,10 @@ class TestClassify:
 
 class TestPatternMatches:
     @pytest.mark.parametrize("pattern,uses,expected", [
-        ("astral-sh/setup-uv", "astral-sh/setup-uv@v5", True),       # no @: any ref
+        # GitHub matches against name@ref: without `@` no ref matches (live).
+        ("astral-sh/setup-uv", "astral-sh/setup-uv@v5", False),
+        ("astral-sh/setup-uv@*", "astral-sh/setup-uv@v5", True),
+        ("gradle/*", "gradle/actions/setup-gradle@v4", True),
         ("astral-sh/setup-uv", "astral-sh/setup-uv-extra@v5", False),
         ("zizmorcore/zizmor-action@*", "zizmorcore/zizmor-action@v1", True),
         ("foo/bar@v1", "foo/bar@v2", False),
@@ -124,7 +127,7 @@ class TestPatternMatches:
         ("space-org*/*", "space-org-two/thing@main", True),
         ("space-org*/*", "other/thing@main", False),
         ("*/octocat**@*", "anyone/octocat-tools@v1", True),
-        ("Foo/Bar", "foo/bar@v1", True),                             # case-insensitive
+        ("Foo/Bar@*", "foo/bar@v1", True),                           # case-insensitive
         ("*", "anything/at-all@v9", True),
     ])
     def test_matrix(self, pattern, uses, expected):
@@ -152,7 +155,7 @@ class TestEvaluate:
         assert s == au.BLOCKED
         assert reasons == ["not GitHub-owned or in patterns_allowed"]
         assert self.status(
-            "astral-sh/setup-uv@v5", policy(patterns_allowed=["astral-sh/setup-uv"])
+            "astral-sh/setup-uv@v5", policy(patterns_allowed=["astral-sh/setup-uv@*"])
         )[0] == au.ALLOWED
 
     def test_verified_is_unknown_not_blocked(self):
@@ -178,9 +181,12 @@ class TestEvaluate:
         assert self.status("./.github/actions/x", pol) == (au.ALLOWED, [])
         assert self.status("nonsense", pol) == (au.ALLOWED, [])
 
-    def test_docker_unknown_unless_all(self):
+    def test_docker_blocked_unless_all(self):
+        # Live: blocked under selected (verified allowed too) and local_only.
         assert self.status("docker://alpine", ALL)[0] == au.ALLOWED
-        assert self.status("docker://alpine", policy())[0] == au.UNKNOWN
+        assert self.status("docker://alpine", policy())[0] == au.BLOCKED
+        assert self.status("docker://alpine", policy(verified_allowed=True))[0] == au.BLOCKED
+        assert self.status("docker://alpine", policy(allowed_actions="local_only"))[0] == au.BLOCKED
 
     def test_sha_pinning_applies_to_github_owned(self):
         pol = policy(sha_pinning_required=True)
@@ -226,27 +232,27 @@ class TestPolicyAfter:
 # ── warnings ────────────────────────────────────────────────────────────
 
 
-class TestAllowlistWarnings:
+class TestWhitelistWarnings:
     def test_each_dropped_pattern(self):
         p = plan_of(update(
             "patterns_allowed",
             ["astral-sh/setup-uv", "keep/me", "zizmorcore/zizmor-action@*"],
             ["keep/me"],
         ))
-        ws = au.allowlist_warnings(p)
+        ws = au.whitelist_warnings(p)
         assert [w.message for w in ws] == [
-            "removes allowlisted action astral-sh/setup-uv",
-            "removes allowlisted action zizmorcore/zizmor-action@*",
+            "removes whitelisted action astral-sh/setup-uv",
+            "removes whitelisted action zizmorcore/zizmor-action@*",
         ]
         assert ws[0].to_dict() == {
-            "kind": "allowlist_pattern_removed",
-            "message": "removes allowlisted action astral-sh/setup-uv",
+            "kind": "whitelist_pattern_removed",
+            "message": "removes whitelisted action astral-sh/setup-uv",
             "pattern": "astral-sh/setup-uv",
         }
 
     def test_preserved_row_is_not_a_removal(self):
         p = plan_of(update("patterns_allowed", ["x/y"], [], ChangeType.PRESERVE))
-        assert au.allowlist_warnings(p) == []
+        assert au.whitelist_warnings(p) == []
 
 
 def usages(*pairs):
@@ -286,12 +292,12 @@ class TestUsageWarnings:
 
     def test_already_blocked_is_not_reported(self):
         us = usages(("rando/thing@v1", "w.yml"))
-        before = policy()                      # already blocked: not allowlisted
+        before = policy()                      # already blocked: not whitelisted
         after = policy(sha_pinning_required=True)
         assert au.usage_warnings(us, 1, before, after, "alice") == []
 
     def test_unknown_reported_separately(self):
-        us = usages(("astral-sh/setup-uv@v5", "w.yml"), ("docker://alpine", "w.yml"))
+        us = usages(("astral-sh/setup-uv@v5", "w.yml"), ("hashicorp/setup-terraform@v3", "w.yml"))
         ws = au.usage_warnings(us, 1, ALL, policy(verified_allowed=True), "alice")
         assert [w.kind for w in ws] == ["actions_unknown"]
         assert ws[0].message == "cannot confirm 2 actions in 1 workflow will still run"
@@ -307,7 +313,7 @@ class TestUsageWarnings:
         acts = ws[0].to_dict()["actions"]
         assert acts[0]["pin"] == f"actions/checkout@{SHA2}"
         assert acts[1]["pin"] == f"actions/checkout@{SHA2}"
-        assert "pin" not in acts[2]                       # pinned, but not allowlisted
+        assert "pin" not in acts[2]                       # pinned, but not whitelisted
         client.get_json.assert_called_once_with("/repos/actions/checkout/commits/v4")
 
     def test_pin_lookup_failure_is_silent(self):
@@ -571,15 +577,15 @@ WF = {".github/workflows/ci.yml": "steps:\n  - uses: actions/checkout@v4\n  - us
 class TestFixIntegration:
     def test_audit_lists_blocked_actions_and_removed_patterns(self, capsys):
         client = fix_client(
-            {"allowed_actions": "selected", "patterns_allowed": ["astral-sh/setup-uv"]}, WF,
+            {"allowed_actions": "selected", "patterns_allowed": ["astral-sh/setup-uv@*"]}, WF,
         )
-        # Declared [actions]: the config wins, so the weaker allowlist is replaced.
+        # Declared [actions]: the config wins, so the weaker whitelist is replaced.
         config = make_config()
         config._declared_sections = frozenset({"actions"})
         code = run_fix(["audit", "alice/demo"], client, config)
         assert code == 3
         out = capsys.readouterr().out
-        assert "⚠ removes allowlisted action astral-sh/setup-uv" in out
+        assert "⚠ removes whitelisted action astral-sh/setup-uv@*" in out
         assert "⚠ would block 2 actions in 1 workflow (branch main):" in out
         assert f"→ pin: actions/checkout@{SHA2}" in out
         # Reads only.

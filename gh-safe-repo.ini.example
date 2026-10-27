@@ -37,7 +37,7 @@ allowed_actions = selected
 github_owned_allowed = true
 # Allow actions from Marketplace verified creators
 verified_allowed = true
-# Comma-separated allowlist of specific actions/workflows (supports wildcards).
+# Comma-separated whitelist of specific actions/workflows (supports wildcards).
 # Example: myorg/*, actions/setup-node@*
 patterns_allowed =
 

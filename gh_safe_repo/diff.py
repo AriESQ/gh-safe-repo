@@ -67,7 +67,7 @@ class Change:
 class PlanWarning:
     """Advisory note attached to a plan; never changes what is applied.
 
-    ``kind`` is a stable identifier (``allowlist_pattern_removed``,
+    ``kind`` is a stable identifier (``whitelist_pattern_removed``,
     ``actions_blocked``, ``actions_unknown``, ``actions_scan_skipped``);
     ``message`` is the human line; ``details`` holds the structured fields
     emitted alongside them in ``--json``.

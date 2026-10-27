@@ -716,7 +716,7 @@ is untouched: the scan is a consumer of its rows, not part of the diff.
 
 **Decisions on #111's open questions (all "warn, change nothing"):**
 (1) replace-and-warn, no union: `patterns_allowed` is still replaced by the
-config value, and each dropped entry is a `allowlist_pattern_removed`
+config value, and each dropped entry is a `whitelist_pattern_removed`
 warning. A union would silently make the config non-authoritative; the
 user can add the pattern to their config or leave `[actions]` undeclared so
 the merge policy decides. (2) Unattended runs (`--yes`, weekly CI `fix`)
@@ -737,21 +737,41 @@ rows). A reference already blocked today is not the change's fault and is
 not listed. `PRESERVE` / `SKIP` rows do not change the after-policy, so a
 preserved `local_only` triggers no scan.
 
-**Allowlist semantics as implemented** (GitHub docs, "Allowing select
+**Whitelist semantics as implemented** (GitHub docs, "Allowing select
 actions and reusable workflows to run"): under `selected`, local `./` / `$/`
 actions, actions owned by the repo owner, GitHub-owned actions (`actions/*`,
 `github/*`) when `github_owned_allowed`, and pattern matches run; a
-`!pattern` blocks. `local_only` allows only local and same-owner actions.
+`!pattern` (a blacklist entry) blocks. `local_only` allows only local and same-owner actions.
 SHA pinning applies to every action including GitHub-owned ones, but
-reusable workflows "can still be referenced by tag". Pattern matching is an
-approximation: `*` matches any run of characters including `/` (the docs'
-`octocat/*` is said to cover reusable workflows, which have slashes in
-their path), matching is case-insensitive, and a pattern without `@`
-(`astral-sh/setup-uv`, from the #62 field evidence where it worked) matches
-any ref. `docker://` references are not described by the allowlist docs and
-are reported as unknown under `selected` / `local_only`. The same-owner rule
-is from the UI label "Allow OWNER, and select non-OWNER, actions"; not
-verified live for user-owned repos.
+reusable workflows "can still be referenced by tag". All of this was
+checked against live GitHub on 2026-10-26 (9 workflows × 6 policies, each
+prediction compared with what GitHub ran; evidence in
+`docs/2026-10-26_actions-whitelist-probe.md`):
+
+- **A pattern is matched against the full `owner/repo[/path]@ref`.** The
+  first implementation matched an `@`-less pattern against the name
+  alone, on the strength of the #62 field note that `astral-sh/setup-uv`
+  "worked". Live, GitHub refused `astral-sh/setup-uv@v5` under exactly
+  that whitelist, so the entry in that field repo cannot have been doing
+  anything. `*` crosses `/` and `@` (`gradle/*` allowed
+  `gradle/actions/setup-gradle@v4`). GitHub lowercases names in its error
+  text; matching stays case-insensitive.
+- **A `!pattern` blacklist entry overrides GitHub-owned.** `!actions/checkout@*` blocked
+  checkout by tag and by SHA with `github_owned_allowed = true`.
+- **Same-owner actions run under `selected` and `local_only`** without a
+  pattern (an action in another repo of the same user account), and are
+  still subject to SHA pinning.
+- **Reusable workflows are exempt from SHA pinning** (an `@master`
+  reusable workflow ran with pinning on).
+- **`docker://` runs only under `all`.** It was blocked under `selected`
+  (verified creators allowed too) and `local_only`, so it is `blocked`,
+  not `unknown`.
+- **Verified creators:** `astral-sh`, `gradle` and `hashicorp` all ran with
+  only `verified_allowed = true`; they stay `unknown` because there is still
+  no API to check that status.
+- **Startup failures carry no reason in the REST API.** A blocked run ends
+  `conclusion: startup_failure` with no jobs, no check runs and no logs;
+  the "is not allowed" message is only on the run's web page.
 
 **Line-based `uses:` parsing, no YAML.** `^\s*(?:-\s+)?uses\s*:` with
 quotes and ` #` comments stripped; `${{ }}` expressions skipped. A flow

@@ -99,11 +99,13 @@ verified-creator status decides. `c08` is blocked in R3 and R4 by its
 | Verified creators can't be evaluated | `astral-sh`, `gradle`, `hashicorp` all ran under verified-only (R5) | still reported as unknown (no API) |
 
 **About the #62 field evidence:** a private repo had `patterns_allowed`
-containing `astral-sh/setup-uv` with no `@`, and that entry was taken as
-proof that a pattern without `@` works. Given this result, the entry
-cannot have allowed any `astral-sh/setup-uv@…` run. Those workflows were
-either already blocked, or allowed some other way (for example
-`verified_allowed`). It's worth checking that repo's recent runs.
+containing `astral-sh/setup-uv` with no `@`, and its setup-uv workflow
+did run, so the first version took that as proof that a pattern without
+`@` matches. Checked afterwards (2026-10-27, read-only), the field note
+was right that the workflow worked, but not because of that entry. The
+repo also has `verified_allowed = true`, and `astral-sh` is a verified
+creator (it ran in R5). The bare entry matched nothing; verified status
+let the action through.
 
 ## Not covered
 

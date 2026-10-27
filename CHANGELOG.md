@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-27
+
 ### Added
 - The plan warns before an Actions-policy change breaks workflows (#111).
   When `fix`, `audit`, `push` or `copy` would change `allowed_actions`,
@@ -25,8 +27,9 @@ since the initial release.
   refuses them. Matching follows GitHub's: a pattern is compared with the
   full `owner/repo@ref`, so `owner/action` without `@*` matches nothing
   (checked against live GitHub; see
-  `docs/2026-10-26_actions-whitelist-probe.md`). Workflows are read through the contents API (`fix`, `audit`,
-  `copy`) or with `git` from the local default branch (`push`, also under
+  `docs/2026-10-26_actions-whitelist-probe.md`). Workflows are read
+  through the contents API (`fix`, `audit`, `copy`) or with `git` from the
+  local default branch (`push`, also under
   `--dry-run`); `copy --dry-run` makes no API calls and reports
   `actions_scan_skipped` instead.
 - `--json` plan documents carry a top-level `warnings` list (always

@@ -1016,7 +1016,9 @@ CI runs the test suite on every push to `master` and every pull request, on
 Python 3.10 and 3.14, with read-only permissions and no token, so the
 authenticated and live tiers skip. It sets `trufflehog_mode = off` so scan
 tests use the regex engine. Every action is pinned to a commit SHA, as this
-repo's own Actions policy requires.
+repo's own Actions policy requires. A weekly `API drift` workflow checks the
+REST endpoints the tool calls against GitHub's latest published REST
+description (see [`tools/README.md`](tools/README.md#api_drift)).
 
 ```
 gh-safe-repo/
@@ -1026,7 +1028,7 @@ gh-safe-repo/
 │   ├── commands/             # new (create.py), push, copy, audit, fix, scan
 │   └── plugins/              # One plugin per settings category
 ├── skills/gh-safe-repo/      # Agent-facing SKILL.md
-├── tools/                    # trufflehog wrapper, history-scrubbing scripts
+├── tools/                    # trufflehog wrapper, history scrubbing, API drift tracker
 ├── gh-safe-repo.ini.example  # Annotated example config
 └── tests/                    # See tests/README.md
 ```

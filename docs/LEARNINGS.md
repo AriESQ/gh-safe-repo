@@ -752,8 +752,9 @@ prediction compared with what GitHub ran; evidence in
   first implementation matched an `@`-less pattern against the name
   alone, on the strength of the #62 field note that `astral-sh/setup-uv`
   "worked". Live, GitHub refused `astral-sh/setup-uv@v5` under exactly
-  that whitelist, so the entry in that field repo cannot have been doing
-  anything. `*` crosses `/` and `@` (`gradle/*` allowed
+  that whitelist. The field repo's workflow really did run, but through
+  `verified_allowed = true` (`astral-sh` is a verified creator); the bare
+  entry matched nothing. `*` crosses `/` and `@` (`gradle/*` allowed
   `gradle/actions/setup-gradle@v4`). GitHub lowercases names in its error
   text; matching stays case-insensitive.
 - **A `!pattern` blacklist entry overrides GitHub-owned.** `!actions/checkout@*` blocked

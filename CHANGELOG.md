@@ -24,6 +24,16 @@ since the initial release.
   against the latest `github/rest-api-description` and opens or updates
   one issue on drift.
 
+### Internal
+- A catalog of AI coding assistant files (instructions, settings, MCP
+  configs, history) ships as package data
+  (`gh_safe_repo/data/ai_assistant_files.json`, 118 entries from about 40
+  tools), with a stdlib loader and strict validator in
+  `gh_safe_repo/assistant_files.py` (#124, step 1). Each entry records a
+  path, how it matches (exact / prefix / glob, at the repo root or any
+  depth), a category, the tools that read it and dated sources. The scanner
+  does not use it yet; its behaviour is unchanged.
+
 ## [0.11.0] - 2026-10-27
 
 ### Added

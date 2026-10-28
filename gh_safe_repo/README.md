@@ -36,6 +36,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `diff.py` | `Change` and `Plan` dataclasses; `count_by_type()`. `PlanWarning` (`kind`, `message`, `details`; `to_dict()`) and `Plan.warnings` (carried by `merge()`), the advisory list `print_plan()` and `format_plan_json()` render. `ChangeType.PRESERVE` plus the merge fields on `Change` (`tier`, `github_default`, `weakened`); `actionable_changes` excludes both `SKIP` and `PRESERVE`, `preserved_changes` lists the latter |
 | `verify.py` | Post-apply verification (#77): `Check` / `Verification` result model (`ok`, `has_fatal`, `exit_code()`, `to_dict()` = the `--json` `verification` block), `verify_plugins()` (re-audits plugins after apply, `fix`), `Probe` + `verify()` (plugin audits and dedicated reads in one set of 1s/2s/4s retry rounds), and `create_probes()` / `verify_create()` (`create`: repo exists, visibility, README removed, `copy` description/topics, protection presence; repo-exists runs first and short-circuits), plus the `push`/`copy` probes passed as `extra_probes`: `pushed_ref_probes()` / `mirrored_ref_probes()` (fatal, refs via the API), `default_branch_probe()` and `local_wiring_probes()` (advisory, local git config, `retry=False`) |
 | `errors.py` | Custom exception hierarchy (`GhSafeRepoError`, etc.) |
+| `assistant_files.py` | AI coding assistant file catalog (#124): `load_catalog()` reads and validates the shipped `data/ai_assistant_files.json` (package data) and returns a frozen `Catalog` of `CatalogEntry`s; any problem raises `CatalogError` (a `ConfigError`) and rejects the whole file. `validate_entries()` is the reusable validator for any entry list (strict enums, unknown keys rejected at every level, whitelisted path charset, https-only URLs, ISO dates not in the future, control/escape characters rejected in text). `matches(rel_path, entry)` / `Catalog.matching()` are pure, case-insensitive exact / prefix / glob (`*` `?`, hand-matched per segment, never a regex) with `anchor` `root` or `any`. Not yet used by the scanner (step 2) |
 | `security_scanner.py` | Pre-flight scanner: truffleHog dispatch, regex fallback, `_unified_walk()` (tracked files only in git repos, NUL-byte binary sniff, TTY progress line). `scan()` records the engine that ran (`engine_used`, `fell_back`, `fallback_reason`); `engine_error()` turns a fallback under explicit `native`/`docker` into an error message |
 | `plugins/base.py` | Abstract `BasePlugin` — defines the `fetch_current_state(strict=False)` / `plan()` / `apply()` interface; class attrs `section` / `github_defaults`, `annotate(change)` (tags a per-key row with `tier` + `github_default`), `preserved_values(plan)` (the `{key: current}` a composite write must carry); module-level `ruleset_enforced(ruleset)` (only `enforcement: "active"` counts as protection, shared by the branch and tag plugins) |
 | `plugins/repository.py` | Repo creation (`POST /user/repos`) and basic repo settings (`PATCH`) |
@@ -153,6 +154,35 @@ attempt (the `copy` source refs).
 5. Update the appropriate plugin's `plan()` (wrap per-key rows in `self.annotate(...)`)
    and `apply()` methods.
 6. Add tests in `tests/test_plugins.py` — all `subprocess` calls must be mocked.
+
+## Maintaining the AI assistant file catalog
+
+`data/ai_assistant_files.json` records facts: which paths AI coding tools read
+or write, who documented that, and when. How gh-safe-repo reacts to each
+`category` is policy and belongs in the scanner, not in the catalog.
+
+There is no authoritative registry of these files. Review the catalog by hand
+each release, or at least quarterly, against:
+
+- [ruler](https://github.com/intellectronica/ruler), for path coverage
+- [rulesync](https://github.com/dyoshikawa/rulesync), the most current tool list
+- [Leawind/agent-gitignore](https://github.com/Leawind/agent-gitignore), for
+  personal-vs-shared verdicts (`personal-settings` vs. the rest)
+- the Claude Code [`.claude` directory doc](https://code.claude.com/docs/en/claude-directory)
+
+Rules for edits:
+
+- New tools and paths start as `community` (listed by one of the sources
+  above) or `inferred` (our own reading, no listing). Mark a source `official`
+  only after checking the vendor's own docs, and cite that doc's URL.
+- Update `checked` on each source you re-check; dates are per source.
+- Very generic names (`knowledge.md`, `CONVENTIONS.md`, `.rules`) still go
+  in, with `generic_name: true` and a note, so policy can treat them softly.
+- Set `may_hold_secrets: true` on settings files that can embed API keys or
+  MCP server env, even when their category is not `mcp-config`.
+- `tests/test_assistant_files.py` loads the shipped file, so a malformed edit
+  fails CI; it also checks that everything the scanner flagged before the
+  catalog existed is still covered.
 
 ## Key design rules
 

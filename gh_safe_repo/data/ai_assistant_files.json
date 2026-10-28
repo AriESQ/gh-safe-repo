@@ -1,0 +1,2853 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "path": "CLAUDE.md",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Claude Code also reads nested CLAUDE.md files in subdirectories; GitHub Copilot reads it at the repo root."
+    },
+    {
+      "path": "CLAUDE.local.md",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Personal, uncommitted project instructions."
+    },
+    {
+      "path": ".claude",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Holds settings, rules, skills, commands, agents and agent memory; specific files are listed separately."
+    },
+    {
+      "path": ".claude/settings.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/settings",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Shared project settings: permissions, hooks, env."
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/settings",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Written on 'Yes, don't ask again'; holds real commands and paths and can hold env values. Claude Code adds it to the global git excludes only on first write."
+    },
+    {
+      "path": ".mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        },
+        {
+          "name": "VS Code",
+          "org": "Microsoft"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/settings",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://code.visualstudio.com/docs/copilot/customization/mcp-servers",
+          "type": "official",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Project MCP servers. Docs recommend ${VAR} expansion instead of literal secrets."
+    },
+    {
+      "path": ".worktreeinclude",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Claude Code",
+          "org": "Anthropic"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.claude.com/docs/en/claude-directory",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Lists gitignored files to copy into new worktrees."
+    },
+    {
+      "path": "AGENTS.md",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Codex CLI",
+          "org": "OpenAI"
+        },
+        {
+          "name": "Jules",
+          "org": "Google"
+        },
+        {
+          "name": "Factory",
+          "org": null
+        },
+        {
+          "name": "Aider",
+          "org": null
+        },
+        {
+          "name": "goose",
+          "org": "Block"
+        },
+        {
+          "name": "OpenCode",
+          "org": null
+        },
+        {
+          "name": "Zed",
+          "org": "Zed Industries"
+        },
+        {
+          "name": "Warp",
+          "org": null
+        },
+        {
+          "name": "VS Code",
+          "org": "Microsoft"
+        },
+        {
+          "name": "Devin",
+          "org": "Cognition"
+        },
+        {
+          "name": "Junie",
+          "org": "JetBrains"
+        },
+        {
+          "name": "Amp",
+          "org": "Sourcegraph"
+        },
+        {
+          "name": "Cursor",
+          "org": "Anysphere"
+        },
+        {
+          "name": "Roo Code",
+          "org": null
+        },
+        {
+          "name": "Gemini CLI",
+          "org": "Google"
+        },
+        {
+          "name": "Kilo",
+          "org": null
+        },
+        {
+          "name": "Copilot coding agent",
+          "org": "GitHub"
+        },
+        {
+          "name": "Windsurf",
+          "org": "Cognition"
+        },
+        {
+          "name": "Augment",
+          "org": null
+        }
+      ],
+      "spec": {
+        "name": "AGENTS.md",
+        "org": "Agentic AI Foundation",
+        "url": "https://agents.md"
+      },
+      "appears_in": [
+        {
+          "url": "https://agents.md",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://cursor.com/docs/context/rules",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Open spec stewarded by the Agentic AI Foundation (Linux Foundation). Nested files apply to their subtree."
+    },
+    {
+      "path": "AGENTS.override.md",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Codex CLI",
+          "org": "OpenAI"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Codex reads it before AGENTS.md in each directory; Leawind classifies it as personal."
+    },
+    {
+      "path": "AGENTS.local.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Windsurf",
+          "org": "Cognition"
+        },
+        {
+          "name": "Devin",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".cursorrules",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cursor",
+          "org": "Anysphere"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Legacy single-file rules; superseded by .cursor/rules/."
+    },
+    {
+      "path": ".cursor",
+      "match": "prefix",
+      "kind": "dir",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cursor",
+          "org": "Anysphere"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://cursor.com/docs/context/rules",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Rules, skills, agents and MCP config."
+    },
+    {
+      "path": ".cursor/rules/*.mdc",
+      "match": "glob",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cursor",
+          "org": "Anysphere"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://cursor.com/docs/context/rules",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Rules may also live in subfolders of .cursor/rules/ (covered by the .cursor prefix entry)."
+    },
+    {
+      "path": ".cursor/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Cursor",
+          "org": "Anysphere"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://cursor.com/docs/context/mcp",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Can hold plaintext tokens in env/headers; docs recommend ${env:NAME}."
+    },
+    {
+      "path": ".cursorignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Cursor",
+          "org": "Anysphere"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://cursor.com/docs/context/ignore-files",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".github/copilot-instructions.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "copilot-instructions.md",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Bare filename at any depth; kept for parity with the scanner's original list."
+    },
+    {
+      "path": ".github/instructions",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Path-specific instructions; subdirectories are allowed."
+    },
+    {
+      "path": ".github/instructions/*.instructions.md",
+      "match": "glob",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".github/prompts/*.prompt.md",
+      "match": "glob",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "inferred",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Reusable prompt files; location inferred, not confirmed against vendor docs."
+    },
+    {
+      "path": ".vscode/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "VS Code",
+          "org": "Microsoft"
+        },
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://code.visualstudio.com/docs/copilot/customization/mcp-servers",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".windsurfrules",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Windsurf",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Legacy single-file rules."
+    },
+    {
+      "path": ".windsurf",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Windsurf",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Rules and skills."
+    },
+    {
+      "path": ".windsurf/mcp_config.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Windsurf",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".devin",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Devin",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Rules, skills, config.json."
+    },
+    {
+      "path": ".devin/mcp_config.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Devin",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".devin/mcp_config.local.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Devin",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Personal (Leawind: ignore)."
+    },
+    {
+      "path": ".devin/config.local.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Devin",
+          "org": "Cognition"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".clinerules",
+      "match": "prefix",
+      "kind": [
+        "file",
+        "dir"
+      ],
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cline",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "A file or a directory of rules."
+    },
+    {
+      "path": ".cline",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cline",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "memory-bank",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cline",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "generic_name": true,
+      "notes": "Cline Memory Bank convention; generic directory name."
+    },
+    {
+      "path": ".clineignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Cline",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".roo",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Roo Code",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".roomodes",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Roo Code",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".roorules",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Roo Code",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".rooignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Roo Code",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".roo/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Roo Code",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".aider*",
+      "match": "glob",
+      "kind": [
+        "file",
+        "dir"
+      ],
+      "category": "history",
+      "tools": [
+        {
+          "name": "Aider",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Chat and input history and tag caches (.aider.chat.history.md, .aider.input.history, .aider.tags.cache.*); also matches .aider.conf.yml and .aiderignore, which have their own entries."
+    },
+    {
+      "path": ".aider.conf.yml",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Aider",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May hold API keys."
+    },
+    {
+      "path": ".aiderignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Aider",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "CONVENTIONS.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Aider",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "inferred",
+          "checked": "2026-10-27"
+        }
+      ],
+      "generic_name": true,
+      "notes": "Aider convention, loaded with --read; generic filename used by many unrelated projects."
+    },
+    {
+      "path": "GEMINI.md",
+      "match": "exact",
+      "kind": "file",
+      "anchor": "any",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Gemini CLI",
+          "org": "Google"
+        },
+        {
+          "name": "GitHub Copilot",
+          "org": "GitHub"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://geminicli.com/docs/cli/gemini-md/",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Gemini CLI also searches ancestors of accessed paths; Copilot reads it at the repo root."
+    },
+    {
+      "path": ".gemini",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Gemini CLI",
+          "org": "Google"
+        },
+        {
+          "name": "Gemini Code Assist",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".gemini/settings.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Gemini CLI",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://geminicli.com/docs/reference/configuration/",
+          "type": "official",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "Project settings including mcpServers with env; docs recommend $VAR references."
+    },
+    {
+      "path": ".geminiignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Gemini CLI",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".gemini/config.yaml",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Gemini Code Assist",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".gemini/styleguide.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Gemini Code Assist",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".aiexclude",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Gemini Code Assist",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".codex",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Codex CLI",
+          "org": "OpenAI"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".codex/config.toml",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Codex CLI",
+          "org": "OpenAI"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "Can define MCP servers with env (Leawind: case by case)."
+    },
+    {
+      "path": ".agents/skills",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Codex CLI",
+          "org": "OpenAI"
+        },
+        {
+          "name": "Amp",
+          "org": "Sourcegraph"
+        },
+        {
+          "name": "goose",
+          "org": "Block"
+        },
+        {
+          "name": "Zed",
+          "org": "Zed Industries"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".agents",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Antigravity",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".agent",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Antigravity",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Legacy location."
+    },
+    {
+      "path": ".continue",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Continue",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".continuerules",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Continue",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".continueignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Continue",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".rules",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Zed",
+          "org": "Zed Industries"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "generic_name": true,
+      "notes": "Generic filename."
+    },
+    {
+      "path": ".zed/settings.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Zed",
+          "org": "Zed Industries"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May hold MCP context servers."
+    },
+    {
+      "path": ".junie",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Junie",
+          "org": "JetBrains"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".junie/mcp/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Junie",
+          "org": "JetBrains"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".aiassistant",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "JetBrains AI Assistant",
+          "org": "JetBrains"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".aiignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "JetBrains AI Assistant",
+          "org": "JetBrains"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".noai",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "JetBrains AI Assistant",
+          "org": "JetBrains"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Marker file that disables AI Assistant for the project."
+    },
+    {
+      "path": ".amazonq",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Amazon Q",
+          "org": "AWS"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".amazonq/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Amazon Q",
+          "org": "AWS"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".amazonq/cli-agents/*.json",
+      "match": "glob",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Amazon Q",
+          "org": "AWS"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "Agent definitions can embed MCP servers with env."
+    },
+    {
+      "path": ".kiro",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Kiro",
+          "org": "AWS"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/dyoshikawa/rulesync",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Steering, specs, hooks."
+    },
+    {
+      "path": ".kiro/settings/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Kiro",
+          "org": "AWS"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".kiroignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Kiro",
+          "org": "AWS"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".augment",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Augment",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".augment/settings.local.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Augment",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".augment-guidelines",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Augment",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".augmentignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Augment",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".tabnine",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Tabnine",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".tabnine/agent/settings.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Tabnine",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Leawind: case by case."
+    },
+    {
+      "path": ".amp",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Amp",
+          "org": "Sourcegraph"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "AGENT.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Amp",
+          "org": "Sourcegraph"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://gist.github.com/0xdevalias/f40bc5a6f84c4c5ad862e314894b2fa6",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Older Amp filename; Amp now reads AGENTS.md."
+    },
+    {
+      "path": ".goosehints",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "goose",
+          "org": "Block"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".goose",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "goose",
+          "org": "Block"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Leawind: ignore."
+    },
+    {
+      "path": "CRUSH.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Crush",
+          "org": "Charm"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".crush",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "history",
+      "tools": [
+        {
+          "name": "Crush",
+          "org": "Charm"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Local state; Leawind: ignore."
+    },
+    {
+      "path": ".crush.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Crush",
+          "org": "Charm"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May define MCP servers and provider keys."
+    },
+    {
+      "path": ".crushrc",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Crush",
+          "org": "Charm"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "WARP.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Warp",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".warp",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Warp",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".kilo",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Kilo",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".kilocode",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Kilo",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".kilocode/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Kilo",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "kilo.jsonc",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Kilo",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".kilocodeignore",
+      "match": "exact",
+      "kind": "file",
+      "category": "ignore-file",
+      "tools": [
+        {
+          "name": "Kilo",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "opencode.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "OpenCode",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May define MCP servers and provider keys."
+    },
+    {
+      "path": "opencode.jsonc",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "OpenCode",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May define MCP servers and provider keys."
+    },
+    {
+      "path": ".opencode",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "OpenCode",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "QWEN.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Qwen Code",
+          "org": "Alibaba"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".qwen",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Qwen Code",
+          "org": "Alibaba"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".qwen/settings.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Qwen Code",
+          "org": "Alibaba"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May define MCP servers with env."
+    },
+    {
+      "path": ".trae",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Trae",
+          "org": "ByteDance"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".qoder",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Qoder",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".qoder/settings.local.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Qoder",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "CODEBUDDY.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "CodeBuddy",
+          "org": "Tencent"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "CODEBUDDY.local.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "CodeBuddy",
+          "org": "Tencent"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".codebuddy",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "CodeBuddy",
+          "org": "Tencent"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".codebuddy/settings.local.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "CodeBuddy",
+          "org": "Tencent"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "IFLOW.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "iFlow",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".iflow/settings.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "iFlow",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "Can hold apiKey."
+    },
+    {
+      "path": ".factory/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Factory",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".vibe/config.toml",
+      "match": "exact",
+      "kind": "file",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Mistral Vibe",
+          "org": "Mistral AI"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "may_hold_secrets": true,
+      "notes": "May define MCP servers and provider keys."
+    },
+    {
+      "path": ".openhands",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "OpenHands",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".idx/airules.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Firebase Studio",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".idx/mcp.json",
+      "match": "exact",
+      "kind": "file",
+      "category": "mcp-config",
+      "tools": [
+        {
+          "name": "Firebase Studio",
+          "org": "Google"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        },
+        {
+          "url": "https://github.com/intellectronica/ruler",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".comate",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Comate",
+          "org": "Baidu"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": "replit.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Replit",
+          "org": "Replit"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "generic_name": true,
+      "notes": "Generic filename; Leawind: case by case."
+    },
+    {
+      "path": "knowledge.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Codebuff",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "generic_name": true,
+      "notes": "Generic filename used by many unrelated projects."
+    },
+    {
+      "path": ".serena",
+      "match": "prefix",
+      "kind": "dir",
+      "category": "tool-settings",
+      "tools": [
+        {
+          "name": "Serena",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".serena/project.local.yml",
+      "match": "exact",
+      "kind": "file",
+      "category": "personal-settings",
+      "tools": [
+        {
+          "name": "Serena",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".sourcegraph/instructions.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Cody",
+          "org": "Sourcegraph"
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ],
+      "notes": "Legacy."
+    },
+    {
+      "path": "HERMES.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Hermes",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    },
+    {
+      "path": ".hermes.md",
+      "match": "exact",
+      "kind": "file",
+      "category": "instructions",
+      "tools": [
+        {
+          "name": "Hermes",
+          "org": null
+        }
+      ],
+      "appears_in": [
+        {
+          "url": "https://github.com/Leawind/agent-gitignore",
+          "type": "community",
+          "checked": "2026-10-27"
+        }
+      ]
+    }
+  ]
+}

@@ -790,3 +790,65 @@ of their audit: they already GET every setting. Tests for `GitSource` patch
 `GitSource._git` in command-level tests rather than `subprocess.run`, which
 is the shared module attribute the scanner's discovery also calls (the #109
 lesson, in another shape).
+
+## REST Description vs. Behaviour Tracker (#27)
+
+Issue #27 asked for a workflow that discovers GitHub's settings surface and
+generates a features file and ini defaults. That was reframed: the useful
+signal is where the published REST description (OpenAPI, from
+`github/rest-api-description`) and GitHub's real behaviour disagree for the
+endpoints we call. Codegen and ini sync were dropped. The tracker is
+`tools/api_drift/` (catalog + stdlib script + weekly workflow); usage is in
+`tools/README.md`.
+
+**Check the `2022-11-28` file, not the undated one.** `gh api` sends no
+`X-GitHub-Api-Version`, so GitHub answers as its default, `2022-11-28`. The
+undated `api.github.com.json` tracks the newest version, and so does
+`docs/api.github.com.json` (the February copy used for endpoint research).
+Diffing the catalog against the February copy shows `PATCH /repos` gaining
+`has_pull_requests` and `pull_request_creation_policy` and
+`GET commits/{ref}` gaining `429` since then: the detector works, and the
+research copy in `docs/` is stale.
+
+**The newer dated version (`2026-03-10`) drops fields we receive.** It
+removes `has_downloads` and `use_squash_pr_title_as_default` from the repo
+responses and adds `451` to `POST /user/repos`. Nothing in `gh_safe_repo`
+reads either field, so a version bump would not break us today. The weekly
+workflow prints this diff for information.
+
+**Gaps found while building the catalog (spec as of
+`rest-api-description@a5c38c1`, 2026-10-27), all from the #94 live
+evidence:**
+
+- `GET private-vulnerability-reporting` on a free-plan private repo answers
+  `404`; the spec lists only `200` and `422`.
+- `GET automated-security-fixes` is documented as `404` "if Dependabot is
+  not enabled", but off and free+private both answer `200
+  {"enabled":false}`; the `404` was never seen.
+- `GET actions/permissions/selected-actions` answers `409` when Actions is
+  disabled or `local_only`; the spec lists only `200`.
+- `GET actions/permissions/fork-pr-contributor-approval` answers `422` on a
+  private repo; the spec lists `200` and `404`.
+- `GET rulesets` and `GET branches/{branch}/protection` answer `403`
+  "Upgrade to GitHub Pro" on free+private; neither GET lists `403` (the
+  classic protection PUT and DELETE do).
+- `PATCH rulesets/{id}` is not in the spec at all, and GitHub answers `404`,
+  not `405`, so it looks like "ruleset missing".
+- The `patterns_allowed` description says the setting "only applies to
+  public repositories". Not verified: the whitelist probe (#111) ran on
+  public repos only, and the #62 private field repo got its action through
+  `verified_allowed`, so it says nothing either way.
+
+Several items people call "inconsistencies" are spec-consistent: the
+toggle GETs' `204` vs `200` split is documented exactly; `enabled` is
+documented as required on `PUT actions/permissions` (the undocumented part
+is the `422` when it is missing, and the side effect of re-enabling
+Actions); duplicate ruleset names fall under the generic `422`. The catalog
+records them with `kind` so the report does not overstate the spec's
+errors.
+
+**A live GET probe of AriESQ/gh-safe-repo (2026-10-27) matched the spec on
+every tracked GET:** documented status, no undocumented top-level fields,
+no missing required fields. The gaps above only show in the off and
+plan-unavailable states, which a GET probe of a hardened public repo
+cannot reach; that is why mutation probes stay manual.

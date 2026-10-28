@@ -1,0 +1,125 @@
+name: API drift
+
+# Weekly diff of tools/api_drift/catalog.json against the latest GitHub REST
+# description (github/rest-api-description). Fails, and opens or updates one
+# tracking issue, when the spec changed for an endpoint gh-safe-repo calls,
+# when a cataloged quirk's spec condition no longer holds, or when the code
+# calls an endpoint the catalog does not track. See tools/README.md.
+
+on:
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: REST description vs. catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      SPEC_REPO: github/rest-api-description
+      # The version gh-safe-repo talks to: gh sends no X-GitHub-Api-Version,
+      # so GitHub answers with its default, 2022-11-28.
+      SPEC_FILE: descriptions/api.github.com/api.github.com.2022-11-28.json
+      # Newer dated version, diffed for information only.
+      NEXT_SPEC_FILE: descriptions/api.github.com/api.github.com.2026-03-10.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Fetch the REST description
+        id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/$SPEC_REPO/commits/main" --jq .sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/spec"
+          base="https://raw.githubusercontent.com/$SPEC_REPO/$sha"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/spec/current.json" "$base/$SPEC_FILE"
+          if curl -fsSL --retry 3 -o "$RUNNER_TEMP/spec/next.json" "$base/$NEXT_SPEC_FILE"; then
+            echo "next=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not fetch $NEXT_SPEC_FILE"
+          fi
+
+      - name: Diff catalog against the spec
+        id: check
+        env:
+          SPEC_SHA: ${{ steps.fetch.outputs.sha }}
+        run: |
+          set +e
+          python tools/api_drift/api_drift.py check --spec "$RUNNER_TEMP/spec/current.json" \
+            > "$RUNNER_TEMP/report.txt"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/report.txt"
+          {
+            echo "### API drift (\`$SPEC_REPO@$SPEC_SHA\`)"
+            echo '```'
+            cat "$RUNNER_TEMP/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # 2 = bad input (unreadable spec or catalog): fail now, no issue.
+          [ "$rc" -le 1 ]
+
+      - name: Preview the next API version (informational)
+        if: steps.fetch.outputs.next == '1'
+        continue-on-error: true
+        run: |
+          {
+            echo "### Preview: \`$NEXT_SPEC_FILE\` (does not fail the run)"
+            echo '```'
+            python tools/api_drift/api_drift.py check --no-source \
+              --spec "$RUNNER_TEMP/spec/next.json" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the drift issue
+        if: steps.check.outputs.rc == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SPEC_SHA: ${{ steps.fetch.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="API drift: REST description changed for endpoints gh-safe-repo uses"
+          {
+            echo "The weekly API drift check found something to review."
+            echo
+            echo "Spec: \`$SPEC_REPO@$SPEC_SHA\` (\`$SPEC_FILE\`). Run: $RUN_URL"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/report.txt"
+            echo '```'
+            echo
+            echo "After reviewing: update the quirk entries in \`tools/api_drift/catalog.json\`, then accept the spec with"
+            echo "\`uv run tools/api_drift/api_drift.py snapshot --spec <file> --source-ref $SPEC_REPO@$SPEC_SHA\`."
+          } > "$RUNNER_TEMP/body.md"
+          existing=$(gh issue list --state open --search "in:title \"$title\"" \
+            --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Fail on drift
+        if: steps.check.outputs.rc == '1'
+        run: exit 1

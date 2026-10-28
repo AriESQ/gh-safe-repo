@@ -9,10 +9,26 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- Developer tooling (no change to the CLI): `tools/api_drift/` tracks where
+  GitHub's published REST description and GitHub's real behaviour disagree,
+  for the endpoints gh-safe-repo calls (#27). `catalog.json` lists the
+  tracked endpoints, a snapshot of what the spec says about each, what was
+  observed live, and 18 known quirks with evidence and the workaround in
+  the code. `api_drift.py check` diffs the catalog against a spec file and
+  reports spec changes, quirks whose spec condition no longer holds (the
+  workaround may be removable), observed behaviour the spec does not
+  document, and endpoints the code calls that the catalog does not track;
+  `snapshot` accepts the spec's current state; `probe OWNER/REPO` is a
+  live, GET-only comparison. A weekly `API drift` workflow runs `check`
+  against the latest `github/rest-api-description` and opens or updates
+  one issue on drift.
+
 ### Internal
-- A catalog of AI-tool context, instruction and config files ships as
-  package data (`gh_safe_repo/data/ai_assistant_files.json`, 118 entries from
-  about 40 tools), with a stdlib loader and strict validator in
+- A catalog of AI coding assistant files (instructions, settings, MCP
+  configs, history) ships as package data
+  (`gh_safe_repo/data/ai_assistant_files.json`, 118 entries from about 40
+  tools), with a stdlib loader and strict validator in
   `gh_safe_repo/assistant_files.py` (#124, step 1). Each entry records a
   path, how it matches (exact / prefix / glob, at the repo root or any
   depth), a category, the tools that read it and dated sources. The scanner

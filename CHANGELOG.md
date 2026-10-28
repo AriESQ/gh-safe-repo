@@ -9,6 +9,21 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- Developer tooling (no change to the CLI): `tools/api_drift/` tracks where
+  GitHub's published REST description and GitHub's real behaviour disagree,
+  for the endpoints gh-safe-repo calls (#27). `catalog.json` lists the
+  tracked endpoints, a snapshot of what the spec says about each, what was
+  observed live, and 18 known quirks with evidence and the workaround in
+  the code. `api_drift.py check` diffs the catalog against a spec file and
+  reports spec changes, quirks whose spec condition no longer holds (the
+  workaround may be removable), observed behaviour the spec does not
+  document, and endpoints the code calls that the catalog does not track;
+  `snapshot` accepts the spec's current state; `probe OWNER/REPO` is a
+  live, GET-only comparison. A weekly `API drift` workflow runs `check`
+  against the latest `github/rest-api-description` and opens or updates
+  one issue on drift.
+
 ## [0.11.0] - 2026-10-27
 
 ### Added

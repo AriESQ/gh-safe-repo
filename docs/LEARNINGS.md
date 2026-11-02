@@ -907,3 +907,13 @@ plan, not the repo owner's. The clean plan signal is the repo's own answer:
 repository."), never the "Upgrade to GitHub Pro" 403. On that last 403, `gh`
 adds a hint asking for the `admin:repo_hook` scope; it is wrong, and the
 same token lists alerts once they are on.
+
+**Org security configurations can silently override `fix` (docs only, not
+probed).** Under an *enforced* configuration, REST writes "appear to succeed,
+but no enablement statuses will change"
+(`reference/security-at-scale/configuration-enforcement.md`). Under an
+*unenforced* one, a repo admin's change moves the repo to status `removed`,
+out of the org's managed set (`configuration-statuses.md`).
+`GET /repos/{o}/{r}/code-security-configuration` reports the status, but
+needs an org admin or security manager. See section 7 of
+`docs/2026-11-01_security-settings-availability.md`.

@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-01
+
 ### Added
 - Developer tooling (no change to the CLI): `tools/api_drift/` tracks where
   GitHub's published REST description and GitHub's real behaviour disagree,

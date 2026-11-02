@@ -182,8 +182,8 @@
       "used_by": ["gh_safe_repo/plugins/security.py"],
       "observed": {
         "status_codes": ["204"],
-        "date": "2026-10-22",
-        "evidence": "docs/2026-10-22_github-api-read-shapes.md"
+        "date": "2026-11-01",
+        "evidence": "docs/2026-10-22_github-api-read-shapes.md; docs/2026-11-01_security-settings-availability.md"
       },
       "spec": {
         "status_codes": ["204"],
@@ -254,6 +254,11 @@
       "method": "PUT",
       "path": "/repos/{owner}/{repo}/private-vulnerability-reporting",
       "used_by": ["gh_safe_repo/plugins/security.py"],
+      "observed": {
+        "status_codes": ["404"],
+        "date": "2026-11-01",
+        "evidence": "docs/2026-11-01_security-settings-availability.md"
+      },
       "spec": {
         "status_codes": ["204", "422"],
         "response_fields": [],
@@ -651,6 +656,22 @@
       }
     },
     {
+      "id": "pvr-put-private-404",
+      "kind": "spec_gap",
+      "method": "PUT",
+      "path": "/repos/{owner}/{repo}/private-vulnerability-reporting",
+      "summary": "Enabling PVR on a private repo answers 404; the spec lists 204 and 422 only",
+      "spec_says": "204 on success, 422 otherwise.",
+      "observed": "404 {\"message\":\"Not Found\"} on a free-plan private repo, the same as the GET (pvr-free-private-404). PVR is public-only on every plan.",
+      "workaround": "Never sent for private repos: PVR is SKIPped on every private repo (plugins/security.py)",
+      "evidence": ["docs/2026-11-01_security-settings-availability.md", "PR #113"],
+      "observed_on": "2026-11-01",
+      "check": {
+        "type": "status_undocumented",
+        "status": "404"
+      }
+    },
+    {
       "id": "selected-actions-get-409",
       "kind": "spec_gap",
       "method": "GET",
@@ -789,9 +810,9 @@
       "path": "/repos/{owner}/{repo}",
       "summary": "security_and_analysis.secret_scanning_push_protection alone is accepted (200) and ignored",
       "spec_says": "secret_scanning_push_protection is an independent `{status}` object; no dependency on secret_scanning is stated.",
-      "observed": "Without `secret_scanning` in the same body the PATCH returns 200 and push protection does not change, so `fix` re-planned it every run.",
+      "observed": "Without `secret_scanning` in the same body the PATCH returns 200 and push protection does not change, so `fix` re-planned it every run. 2026-11-01: on a free-plan private repo, push protection alone also answered 200 and changed nothing; with secret_scanning the PATCH answers 422 \"Secret scanning is not available for this repository.\"",
       "workaround": "Add secret_scanning: enabled whenever push protection is sent (plugins/security.py)",
-      "evidence": ["commit 5476d07", "docs/LEARNINGS.md (Post-Apply Verification)"],
+      "evidence": ["commit 5476d07", "docs/LEARNINGS.md (Post-Apply Verification)", "docs/2026-11-01_security-settings-availability.md"],
       "observed_on": "2026-03-28",
       "check": {
         "type": "text_lacks",
@@ -806,17 +827,33 @@
       "kind": "undocumented_semantics",
       "method": "PATCH",
       "path": "/repos/{owner}/{repo}",
-      "summary": "An undocumented security_and_analysis key (dependency_graph_autosubmit_action) answers 200 and does nothing",
+      "summary": "Undocumented security_and_analysis keys (dependency_graph_autosubmit_action, dependency_graph) answer 200 and do nothing",
       "spec_says": "Not a property of security_and_analysis.",
-      "observed": "The PATCH succeeded but the setting did not change; there is no per-repo REST control for automatic dependency submission.",
+      "observed": "The PATCH succeeded but the setting did not change; there is no per-repo REST control for automatic dependency submission. 2026-11-01: `dependency_graph: {status: enabled}` on a free-plan private repo also answered 200 and changed nothing (SBOM stayed 404, no graph run). The graph is enabled by PUT vulnerability-alerts instead.",
       "workaround": "Not sent; post-apply verification catches accepted-but-ignored writes (verify.py)",
-      "evidence": ["docs/LEARNINGS.md (Security Plugin Expansion)"],
-      "observed_on": "2026-03-14",
+      "evidence": ["docs/LEARNINGS.md (Security Plugin Expansion)", "docs/2026-11-01_security-settings-availability.md"],
+      "observed_on": "2026-11-01",
       "check": {
         "type": "field_absent",
         "field": "dependency_graph_autosubmit_action",
         "where": "request",
         "descend": ["security_and_analysis"]
+      }
+    },
+    {
+      "id": "user-plan-null-without-user-scope",
+      "kind": "undocumented_semantics",
+      "method": "GET",
+      "path": "/user",
+      "summary": "`plan` is null for a token with the default gh scopes (gist, read:org, repo)",
+      "spec_says": "`plan` is an optional property of the authenticated user; the scope it needs is not stated.",
+      "observed": "{\"plan\": null} for two Free accounts whose tokens have gist, read:org and repo. get_plan_name() falls back to \"free\", so is_paid_plan is False for every standard gh login.",
+      "workaround": "None yet: plan-name gating is to be replaced by repo-level signals (403 \"Upgrade to GitHub Pro\" on rulesets, 422 \"not available\" on security_and_analysis)",
+      "evidence": ["docs/2026-11-01_security-settings-availability.md"],
+      "observed_on": "2026-11-01",
+      "check": {
+        "type": "field_optional",
+        "field": "plan"
       }
     }
   ]

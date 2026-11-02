@@ -44,6 +44,10 @@ been available, so every "paid" cell below is from the docs only.
 | Branch protection / rulesets (reference gate) | ✅ | ❌ **L** (403, 2026-11-01) | ✅ *d* | ✅ *d* |
 | Code scanning (not managed; reference) | ✅ *d* | ❌ *d* | ❌ *d* | with GitHub Code Security *d* |
 
+The org column assumes no organization security configuration manages the
+repo. Section 7 covers orgs on Free, and how org configurations and policies
+can override every cell above.
+
 **What `plugins/security.py` does today (v0.11.1), compared with the matrix:**
 
 | Setting | Private + Free (`is_paid_plan` False) | Private + paid (`is_paid_plan` True) |
@@ -319,5 +323,109 @@ on. Don't follow the hint.
   and `push-protection-needs-secret-scanning` extended with the private Free
   results. The alerts `PUT`/`DELETE` side effect on the graph is documented
   in the spec, so it needs no quirk.
-- [ ] Delete scratch repos `AriESQ/gh-safe-repo-probe-2026-11-01` and
-  `AriESQ/gh-safe-repo-probe2-2026-11-01` once the checks are done.
+- [x] Scratch repos `AriESQ/gh-safe-repo-probe-2026-11-01` and
+  `AriESQ/gh-safe-repo-probe2-2026-11-01` deleted (2026-11-01). #131's live
+  check will need a new scratch private repo.
+- [ ] Every organization row in section 7. No org account has been probed.
+
+---
+
+## 7. Organization-owned repositories
+
+**Nothing in this section has been checked live.** It is from the docs and
+the spec only. Treat it as the hypothesis for the first org probe, which is
+scoped in #9 (its 2026-10-27 comment lists the user-account assumptions in
+the code: plan from `GET /user`, creation via `POST /user/repos`, the owner
+check, and org policies over Actions, rulesets, member privileges and SAML).
+
+### 7.1 Availability by org plan
+
+| Setting | Org on Free, public repo | Org on Free, private repo | Org on Team / Enterprise, private repo | Different from user-owned? |
+|---|---|---|---|---|
+| Dependabot alerts, security updates, dependency graph | ✅ | ⚙️ | ⚙️ | No: every plan, both visibilities |
+| Branch and tag protection | ✅ | ❌ | ✅ | Same shape as user Free vs Pro (`protected-branches.md`: private needs Pro, Team or Enterprise). But see 7.3: the plugin reads the user's plan, not the org's |
+| Secret scanning, push protection | ✅ | ❌ | **only with GitHub Secret Protection** | Yes: this is the only route to it on a private repo. Pro users never get it (`secret-scanning.md`, `secret-protection.md`) |
+| Private vulnerability reporting | ✅ | ❌ | ❌ | No: public only |
+| Code scanning (not managed) | ✅ | ❌ | only with GitHub Code Security | Same idea as secret scanning (`code-scanning.md`) |
+
+Secret Protection and Code Security are add-ons bought separately from the
+plan. A Team org may have neither. No REST field tells a repo admin whether
+the add-on is present. The repo's own answer to a write (`422 "Secret
+scanning is not available for this repository."`, seen on private Free) is
+the expected signal; it has not been seen on an org repo.
+
+### 7.2 Organization security configurations
+
+An org (or enterprise) can attach a **security configuration** to repos. It
+sets the enablement of Dependabot, secret scanning, code scanning and so on
+from above.
+
+- **spec:** `GET /repos/{o}/{r}/code-security-configuration` returns the
+  attached configuration and a `status`: `attached`, `attaching`,
+  `detached`, `removed`, `enforced`, `failed`, `updating`,
+  `removed_by_enterprise`, `enterprise_enforced`. It requires an **org
+  administrator or security manager**, so a repo admin running `fix` may not
+  be able to read it.
+- **docs, enforcement**
+  (`reference/security-at-scale/configuration-enforcement.md`): "If a user
+  in your organization or enterprise attempts to change the enablement
+  status of a feature in an enforced configuration using the REST API, **the
+  API call will appear to succeed, but no enablement statuses will
+  change.**" This is the same accepted-and-ignored pattern as
+  `unknown-security-and-analysis-key-ignored`, here documented. `fix` would
+  report success at apply time. Post-apply verification (`verify.py`) should
+  then show a mismatch and exit 3, with no hint that an org configuration is
+  the cause.
+- **docs, unenforced** (`reference/security-at-scale/configuration-statuses.md`):
+  when "a repository admin changed a security setting on an unenforced
+  configuration", the status becomes **`removed`**: "the repository no
+  longer inherits all settings" and stops counting toward the org's coverage
+  metrics. So a successful `fix` on such a repo can quietly take it out of
+  the org's managed set. That is a side effect the org owner may not want,
+  and `fix` gives no warning today.
+- An enterprise can enforce for both repo and org owners, so even an org
+  owner's writes are ignored (`enterprise_enforced`).
+
+### 7.3 Other org differences
+
+- **Plan detection reads the wrong account.** `is_paid_plan` comes from
+  `GET /user`, the authenticated user's plan (section 4). On an org repo the
+  org's plan is what matters. A Free user administering a Team org's
+  private repo is wrongly skipped for branch and tag protection; a Pro user
+  on a Free org's private repo is wrongly planned (GitHub's 403 then
+  refuses it). Tracked in #132.
+- **Who may write.** The spec's `security_and_analysis` description allows
+  "admin permissions for the repository or … owner or security manager for
+  the organization". `fix` requires `permissions.admin`
+  (`commands/fix.py`), so a security manager who is not a repo admin is
+  refused even though GitHub would accept the security writes. Minor; noted
+  only.
+- **Org-level policies cap repo settings.** Seen already for Actions: an
+  org's allowed-actions policy limits what the repo-level setting can be.
+  Immutable releases report `enforced_by_owner` when the org forces them on
+  (#127).
+- **Private dependencies.** "Organization owners can grant Dependabot access
+  to private repositories containing dependencies for a project within the
+  same organization" (`data/reusables/dependabot/private-dependencies-note.md`).
+  User accounts cannot; they need a `registries` entry in `dependabot.yml`.
+- **Dependabot ignores Actions disablement**, at repo *and* org level
+  (`concepts/supply-chain-security/dependabot-on-actions.md`). An org that
+  disables Actions still gets Dependabot runs once alerts or updates are on.
+
+### 7.4 What a first org probe should check
+
+The security-specific additions to #9's test matrix. Needs a scratch org:
+a Free org works for the "Free" column, and Team for the add-on cases.
+
+- [ ] Private repo, org on Free: the Dependabot `PUT`s (expect 204, as for
+  users); the secret scanning `PATCH` (expect the same 422);
+  `GET rulesets` (expect the 403 "Upgrade" message).
+- [ ] `GET code-security-configuration` as repo admin vs org owner: is it
+  readable by the account `fix` runs as?
+- [ ] An **enforced** configuration that turns Dependabot alerts off: does
+  `PUT vulnerability-alerts` answer 204 and change nothing? What does
+  `verify.py` report?
+- [ ] An **unenforced** configuration: after `fix` changes a setting, does
+  the repo's configuration status become `removed`?
+- [ ] Team org without Secret Protection: the secret scanning `PATCH` status
+  and message.

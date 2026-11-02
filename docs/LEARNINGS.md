@@ -852,3 +852,58 @@ every tracked GET:** documented status, no undocumented top-level fields,
 no missing required fields. The gaps above only show in the off and
 plan-unavailable states, which a GET probe of a hardened public repo
 cannot reach; that is why mutation probes stay manual.
+
+## Security Settings on Private Free Repos (2026-11-01)
+
+Two live probes on scratch private repos on GitHub Free, checked against
+GitHub's docs (`data/reusables/gated-features/`) and the REST description.
+The full matrix, with every dated observation, is in
+`docs/2026-11-01_security-settings-availability.md`.
+
+**Dependabot alerts and security updates work on private Free.** `PUT
+vulnerability-alerts` and `PUT automated-security-fixes` both answer 204 and
+read back as on; real alerts arrived within about 75 s. The docs never gated
+them ("available for organization-owned and user-owned repositories"; "All
+repositories on GitHub"). `SecurityPlugin.plan()` SKIPs both on free+private
+with "Requires a public repo or paid GitHub plan", a premise carried over
+from Phase 4 (2026-02-22) that the 2026-03-02 research note already
+contradicted.
+
+**The dependency graph is switched by Dependabot alerts, nothing else.**
+`security_and_analysis` has no `dependency_graph` property in the spec, and
+sending one answers 200 and changes nothing (drift
+`unknown-security-and-analysis-key-ignored`). `PUT vulnerability-alerts`
+"enables dependency alerts and the dependency graph" and `DELETE` disables
+both (spec; confirmed live). `GET dependency-graph/sbom` is a usable read:
+200 on, 404 off.
+
+**The Dependabot dependency is one-way.** `DELETE vulnerability-alerts` also
+turns security updates off (and the graph). `DELETE automated-security-fixes`
+leaves alerts and the graph on. Apply alerts before security updates.
+
+**Secret scanning refuses explicitly; push protection does not.** On private
+Free, `PATCH security_and_analysis.secret_scanning` answers `422 "Secret
+scanning is not available for this repository."`. Push protection sent alone
+answers 200 and is ignored, as it is everywhere
+(`push-protection-needs-secret-scanning`). Pro does not unlock secret
+scanning for user-owned repos: the docs give user-owned repos secret scanning
+only on GHEC with Enterprise Managed Users.
+
+**Private vulnerability reporting: `PUT` answers 404 on private repos**, like
+the `GET` (`pvr-put-private-404`, `pvr-free-private-404`); the spec lists
+422.
+
+**`GET /user` returns `plan: null` with the default `gh` scopes** (`gist`,
+`read:org`, `repo`), so `get_plan_name()` falls back to `"free"` and
+`is_paid_plan` is False for every standard login
+(`user-plan-null-without-user-scope`). It is also the authenticated user's
+plan, not the repo owner's. The clean plan signal is the repo's own answer:
+`403 "Upgrade to GitHub Pro or make this repository public…"` from
+`GET rulesets` (`rulesets-free-private-403`).
+
+**Off is not gated.** On private Free the Dependabot endpoints answer
+"disabled" (404 "Vulnerability alerts are disabled.", 200
+`{"enabled":false}`, 403 "Dependabot alerts are disabled for this
+repository."), never the "Upgrade to GitHub Pro" 403. On that last 403, `gh`
+adds a hint asking for the `admin:repo_hook` scope; it is wrong, and the
+same token lists alerts once they are on.

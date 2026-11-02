@@ -55,6 +55,10 @@ read back as `200 {"enabled":true,"paused":false}`.
 
 Dependency graph: no read endpoint exists, so it is still assumed on for public repos.
 
+> **Corrected 2026-11-01:** `GET /repos/{o}/{r}/dependency-graph/sbom` works
+> as a read: 200 when the graph is on, 404 when it is off (live, private
+> Free). See [`2026-11-01_security-settings-availability.md`](2026-11-01_security-settings-availability.md) §2.3.
+
 ### `plugins/actions.py`
 
 | Read | State | Response |

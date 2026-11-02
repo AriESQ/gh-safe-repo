@@ -3,6 +3,19 @@
 **Date**: 2026-03-02
 **Scope**: Settings visible in the repository Security → Advanced Security tab (as of 2026)
 
+> **Corrected 2026-11-01.** Several statements below were contradicted by
+> GitHub's docs and by live API checks. The original text is kept; each wrong
+> passage has a "Corrected" note next to it. For current availability, API
+> behaviour and live results, see
+> [`2026-11-01_security-settings-availability.md`](2026-11-01_security-settings-availability.md).
+> In short:
+> - Private vulnerability reporting is **public repos only**, on every plan (§1).
+> - The dependency graph **cannot** be enabled via `PATCH security_and_analysis`.
+>   `PUT vulnerability-alerts` enables it (§2).
+> - Dependabot alerts and security updates **are** free on private repos, but
+>   secret scanning and push protection are not, on Free or on Pro for
+>   user-owned repos (Context, §8, §9).
+
 ---
 
 ## Context: The April 2025 Restructuring
@@ -17,6 +30,12 @@ On **April 1, 2025**, GitHub unbundled GitHub Advanced Security (GHAS) into two 
 Prior to this date, these were bundled in a single GHAS license ($49/month). The separation affects how we should think about what to automate — a repo owner might have one product but not the other.
 
 **For personal/free accounts the practical picture is unchanged**: all Advanced Security features remain free for public repositories. Private repository access to these features still requires a paid subscription.
+
+> **Corrected 2026-11-01:** This is true for secret scanning, push protection
+> and code scanning only. Dependabot alerts, Dependabot security updates and
+> the dependency graph are available on private repos on every plan. And for
+> secret scanning, "a paid subscription" means Secret Protection on Team or
+> Enterprise: GitHub Pro does not unlock it for user-owned repos.
 
 ---
 
@@ -34,6 +53,12 @@ Prior to this date, these were bundled in a single GHAS license ($49/month). The
 | Enterprise | ✅ | ✅ |
 
 **Available to all plans and both visibilities.** This is one of the few Advanced Security features that does not gate on plan level.
+
+> **Corrected 2026-11-01:** Wrong. GitHub's docs gate it as "available for
+> public repositories" (`data/reusables/gated-features/private-vulnerability-reporting.md`),
+> on every plan. On private repos, `GET` and `PUT` both answer 404, not the
+> spec's 422 (live, 2026-10-14 and 2026-11-01). The plugin has skipped it on
+> every private repo since PR #113.
 
 **API:**
 ```
@@ -58,6 +83,14 @@ GET  /repos/{owner}/{repo}/private-vulnerability-reporting    # check status
 | Enterprise | ✅ | ✅ |
 
 Public repositories always have the dependency graph enabled and it cannot be disabled. Private repositories can toggle it.
+
+> **Corrected 2026-11-01:** The `PATCH` below does not work. `security_and_analysis`
+> has no `dependency_graph` property in the REST description, and live the
+> `PATCH` answers `200` and changes nothing (SBOM stayed 404, no graph run).
+> The only per-repo write is a side effect: `PUT /repos/{o}/{r}/vulnerability-alerts`
+> "enables dependency alerts and the dependency graph", and `DELETE` disables
+> both (spec and live). `GET /repos/{o}/{r}/dependency-graph/sbom` works as a
+> read: 200 when the graph is on, 404 when it is off.
 
 **API**: The dependency graph itself has no dedicated enable/disable endpoint. It is controlled via the `security_and_analysis` field in the repository PATCH endpoint:
 ```
@@ -285,6 +318,13 @@ Body: {"security_and_analysis": {"secret_scanning": {"status": "enabled"}}}
 
 **Already in gh-safe-repo**: `SecurityPlugin` handles this correctly — it emits a SKIP with reason "Automatically enabled for public repositories by GitHub" rather than making an API call for public repos. For private repos on paid plans, it calls the PATCH endpoint. This logic remains correct.
 
+> **Corrected 2026-11-01:** Not for user-owned repos. The table above lists
+> Pro as ❌ for private repos, but the plugin planned the `PATCH` for any
+> paid plan. GitHub's docs give user-owned repos secret scanning only on
+> GHEC with Enterprise Managed Users. On private Free the `PATCH` answers
+> `422 "Secret scanning is not available for this repository."` (live,
+> 2026-11-01).
+
 ---
 
 ### 9. Push Protection
@@ -311,6 +351,12 @@ Body: {"security_and_analysis": {"secret_scanning_push_protection": {"status": "
 ---
 
 ## Summary Matrix: What gh-safe-repo Should Do
+
+> **Corrected 2026-11-01:** The PVR row is wrong (public only; see §1). The
+> dependency graph row says "Implemented", but the plugin SKIPs it on every
+> private repo. It is enabled through Dependabot alerts (§2). "Paid Private"
+> for secret scanning and push protection means Secret Protection on Team or
+> Enterprise, not GitHub Pro.
 
 | Setting | Free Public | Free Private | Paid Private | Current Status | Recommendation |
 |---------|:-----------:|:------------:|:------------:|----------------|---------------|

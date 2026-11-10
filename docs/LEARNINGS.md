@@ -152,9 +152,15 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 ## `scrub-ai-context.sh`
 
-**Uses `git filter-branch`, not `git filter-repo`.** `filter-branch` is a git built-in; `filter-repo` requires a separate install.
+**Now uses `git filter-repo` (via `git-filter-file.sh`); originally used `git filter-branch`.** `filter-branch` was first chosen because it ships with git (zero dependencies). It was replaced (#52) because git's own documentation warns against it (many pitfalls, very slow) and recommends git-filter-repo. The dependency cost is small: the script uses an installed `git filter-repo` if present, otherwise `uvx git-filter-repo`, which needs no install beyond uv. It never falls back to `filter-branch`.
 
-**Multiple targets are removed in one `filter-branch` pass.** The index-filter is a single `git rm --cached --ignore-unmatch -r <path1> <path2> ...` string.
+**git-filter-repo needs `--force` outside a fresh clone.** It refuses to run unless the repo looks freshly cloned (one reflog entry, no stashes, packed). These tools run on the user's working repo and do their own checks (worktree guard, clean tree, remote sync, confirmation), so `--force` is passed deliberately.
+
+**git-filter-repo removes the `origin` remote.** After a non-`--partial` rewrite it deletes `origin` (and its tracking refs) so rewritten history is not pushed by accident. Because the whole point here is to force-push back to the same remote, `git-filter-file.sh` saves `remote.*` and `branch.*.{remote,merge,pushremote}` config first, restores what was removed, then fetches so `--force-with-lease` has real tracking refs. This also keeps `scrub-ai-context.sh --push` and its later per-target passes working.
+
+**`--force-with-lease --tags` rejects rewritten tags (`stale info`).** There are no remote-tracking refs for tags, so the lease check fails. This happened with `filter-branch` too; it is not specific to git-filter-repo.
+
+**Each target is a separate rewrite pass.** `scrub-ai-context.sh` calls `git-filter-file.sh` once per target (the earlier version built a single `git rm --cached --ignore-unmatch -r <path1> <path2> ...` index-filter for one `filter-branch` pass).
 
 **`AT_HEAD` parallel array distinguishes present vs. history-only targets.** Targets absent from the working tree are filtered but not re-added.
 

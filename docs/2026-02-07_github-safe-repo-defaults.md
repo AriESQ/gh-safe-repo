@@ -315,7 +315,7 @@ This is the most complex and dangerous area for personal repos.
 #### Best Practices
 - Never commit secrets, even to private repos
 - Use GitHub Secrets for CI/CD workflows
-- Rewrite history if secrets are committed (use `git filter-branch`)
+- Rewrite history if secrets are committed (use `git filter-repo`, e.g. via `tools/git-filter-file.sh`; originally this said `git filter-branch`, which git's own docs now advise against — see #52)
 - Rotate any exposed credentials immediately
 
 ### 6. Code Scanning & Security Features

@@ -9,6 +9,19 @@ since the initial release.
 
 ## [Unreleased]
 
+### Changed
+- Developer tooling (no change to the CLI): `tools/git-filter-file.sh`
+  (and so `tools/scrub-ai-context.sh`) now rewrites history with
+  git-filter-repo instead of `git filter-branch`, which git's own
+  documentation advises against (#52). It uses `git filter-repo` when
+  installed, otherwise `uvx git-filter-repo` (no install needed with uv),
+  and otherwise exits with install instructions; there is no fallback to
+  `filter-branch`. Arguments, flags, prompts and safety checks are
+  unchanged. git-filter-repo deletes the `origin` remote after rewriting,
+  so the script now saves and restores the remote and branch-upstream
+  configuration, and the post-scrub steps say to check `git remote -v`
+  before force-pushing.
+
 ## [0.11.1] - 2026-11-01
 
 ### Added

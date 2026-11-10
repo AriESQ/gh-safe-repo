@@ -90,6 +90,14 @@ A general history-scrubbing tool: removes a file from all git history and the
 working tree. With `--keep`, re-adds the current on-disk content as a fresh
 commit instead of deleting it.
 
+The rewrite is done by [git-filter-repo](https://github.com/newren/git-filter-repo)
+(the replacement git's own docs recommend over `git filter-branch`). The script
+uses `git filter-repo` if it is installed, otherwise `uvx git-filter-repo` if
+[uv](https://docs.astral.sh/uv/) is available (no install needed), and
+otherwise exits with install instructions. git-filter-repo removes the
+`origin` remote after rewriting; the script restores it so you can force-push
+to the same place.
+
 ```bash
 # Remove a file from all history and disk (repo-relative path)
 git-filter-file.sh . secrets/api_key.txt

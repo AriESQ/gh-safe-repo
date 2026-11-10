@@ -26,6 +26,17 @@ the container so JSON output paths are identical to a native run.
 | `TRUFFLEHOG_IMAGE` | `ghcr.io/trufflesecurity/trufflehog:latest` | Image to use |
 | `CONTAINER_RUNTIME` | auto-detected | Override to `podman` or `docker` |
 
+## gen-completions.sh
+
+Regenerates the shell completion scripts in `completions/` from the CLI's own
+parser (`gh-safe-repo --completion SHELL`). Run it after adding or changing a
+command or option and commit the result; `tests/test_completion.py` fails
+while the files are out of date.
+
+```bash
+tools/gen-completions.sh
+```
+
 ## Containerfile
 
 Builds a local truffleHog image. Use this only if you want to pin a specific

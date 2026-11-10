@@ -9,6 +9,24 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- Shell completion for bash, zsh and fish (#60). A hidden top-level flag,
+  `gh-safe-repo --completion {bash,zsh,fish}` (or `--completion=bash`),
+  prints a script to stdout and exits 0. It completes the commands, each
+  command's options, files after `--config`, directories for `push` and
+  `scan`, and option values that have a fixed set of choices. The script is
+  generated from the CLI's own argparse parser, so it lists exactly the
+  options the installed version accepts. The flag appears in no `--help`
+  output and is not itself completed. Load it with
+  `source <(gh-safe-repo --completion bash)` (or `zsh`) or
+  `gh-safe-repo --completion fish | source`, or copy the pre-generated
+  files in `completions/` (`gh-safe-repo.bash`, `_gh-safe-repo`,
+  `gh-safe-repo.fish`) into the shell's completion directory. Packagers can
+  install those files or use Homebrew's `generate_completions_from_executable`
+  with `shell_parameter_format: "--completion="`. `tools/gen-completions.sh`
+  regenerates the files, and a test fails when they are out of date. No new
+  dependencies.
+
 ### Changed
 - Developer tooling (no change to the CLI): `tools/git-filter-file.sh`
   (and so `tools/scrub-ai-context.sh`) now rewrites history with

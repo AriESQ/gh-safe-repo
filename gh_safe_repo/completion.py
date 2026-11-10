@@ -1,0 +1,486 @@
+"""Shell completion scripts generated from the live argparse parser (#60).
+
+`describe()` walks the parser `cli.build_parser()` returns and records the
+commands, their options and positionals, and what each value completes to.
+`generate()` renders that description as a bash, zsh or fish script; the
+hidden `--completion SHELL` flag in `cli.py` prints it, and
+`tools/gen-completions.sh` writes the checked-in copies in `completions/`.
+Options with `help=argparse.SUPPRESS` are left out. Nothing
+is hand-maintained: a flag added to a command shows up in every script the
+next time it is generated.
+
+What a value completes to (`kind`):
+  ""       nothing (e.g. OWNER/REPO)
+  "file"   file names (an option whose metavar is PATH, e.g. --config)
+  "dir"    directories (a positional named path, e.g. `push PATH`, `scan [path]`)
+  "choice" the action's `choices`
+"""
+
+import argparse
+import re
+from dataclasses import dataclass
+
+SHELLS = ("bash", "zsh", "fish")
+
+
+@dataclass(frozen=True)
+class Option:
+    flags: tuple          # ("-y", "--yes")
+    help: str
+    takes_value: bool
+    kind: str = ""
+    choices: tuple = ()
+
+
+@dataclass(frozen=True)
+class Positional:
+    name: str             # metavar, e.g. "OWNER/REPO"
+    optional: bool
+    repeat: bool
+    kind: str = ""
+    choices: tuple = ()
+
+
+@dataclass(frozen=True)
+class Command:
+    name: str
+    help: str
+    options: tuple
+    positionals: tuple
+
+
+@dataclass(frozen=True)
+class Spec:
+    prog: str
+    options: tuple        # top-level options, valid before the command
+    commands: tuple
+
+
+def _help(action):
+    text = action.help or ""
+    if text == argparse.SUPPRESS:
+        return ""
+    text = " ".join(text.replace("%%", "%").split())
+    # One sentence is enough for a completion menu.
+    first = re.split(r"(?<=[a-z0-9)])\. ", text, maxsplit=1)[0]
+    return first.rstrip(".")
+
+
+def _kind(action, positional):
+    if action.choices:
+        return "choice", tuple(str(c) for c in action.choices)
+    if action.metavar == "PATH" or action.dest == "path":
+        return ("dir" if positional else "file"), ()
+    return "", ()
+
+
+def _describe_actions(parser):
+    options, positionals, subparsers = [], [], None
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            subparsers = action
+        elif action.help == argparse.SUPPRESS:
+            continue  # hidden options (e.g. --completion) stay hidden
+        elif action.option_strings:
+            kind, choices = _kind(action, positional=False)
+            options.append(Option(
+                flags=tuple(action.option_strings),
+                help=_help(action),
+                takes_value=action.nargs != 0,
+                kind=kind,
+                choices=choices,
+            ))
+        else:
+            kind, choices = _kind(action, positional=True)
+            positionals.append(Positional(
+                name=action.metavar or action.dest,
+                optional=action.nargs in ("?", "*"),
+                repeat=action.nargs in ("*", "+"),
+                kind=kind,
+                choices=choices,
+            ))
+    return tuple(options), tuple(positionals), subparsers
+
+
+def describe(parser):
+    """Return the `Spec` of a parser with one level of subcommands."""
+    options, _, subparsers = _describe_actions(parser)
+    commands = []
+    if subparsers is not None:
+        helps = {a.dest: a.help or "" for a in subparsers._choices_actions}
+        for name, sub in subparsers.choices.items():
+            sub_options, sub_positionals, _ = _describe_actions(sub)
+            commands.append(Command(name, helps.get(name, ""), sub_options, sub_positionals))
+    return Spec(parser.prog, options, tuple(commands))
+
+
+def generate(parser, shell):
+    """Return the completion script for `shell` (one of SHELLS)."""
+    spec = describe(parser)
+    if shell == "bash":
+        return bash_script(spec)
+    if shell == "zsh":
+        return zsh_script(spec)
+    if shell == "fish":
+        return fish_script(spec)
+    raise ValueError(f"unsupported shell: {shell}")
+
+
+def _func(prog):
+    return "_" + re.sub(r"\W", "_", prog)
+
+
+def _sq(text):
+    """Single-quote for bash and zsh."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _flags(options):
+    return [f for o in options for f in o.flags]
+
+
+def _value_options(options):
+    return [o for o in options if o.takes_value]
+
+
+# --- bash -------------------------------------------------------------------
+
+def _bash_kind(kind, choices):
+    """Encode a value kind for the generated `_values` helper."""
+    if kind == "choice":
+        return "w:" + " ".join(choices)
+    return kind
+
+
+def bash_script(spec):
+    fn = _func(spec.prog)
+    commands = " ".join(c.name for c in spec.commands)
+    global_value_flags = _flags(_value_options(spec.options))
+
+    lines = [
+        f"# bash completion for {spec.prog}",
+        f"# Generated by `{spec.prog} --completion bash`; do not edit.",
+        f"#   load it:  source <({spec.prog} --completion bash)   (e.g. in ~/.bashrc)",
+        f"#   or copy this file to ~/.local/share/bash-completion/completions/{spec.prog}",
+        "",
+        f"{fn}_values() {{",
+        "    # $1: what to complete (file, dir, w:<words>, or empty); $2: the current word",
+        '    case "$1" in',
+        "        file|dir)",
+        "            compopt -o filenames 2>/dev/null",
+        "            local IFS=$'\\n'",
+        '            if [[ "$1" == dir ]]; then',
+        '                COMPREPLY=( $(compgen -d -- "$2") )',
+        "            else",
+        '                COMPREPLY=( $(compgen -f -- "$2") )',
+        "            fi",
+        "            ;;",
+        '        w:*) COMPREPLY=( $(compgen -W "${1#w:}" -- "$2") ) ;;',
+        "        *) COMPREPLY=() ;;",
+        "    esac",
+        "}",
+        "",
+        f"{fn}() {{",
+        "    local cur prev cmd='' cmd_at=0 opts='' valopts='' rest='' i w n npos=0 kind",
+        "    local -a pos=()",
+        "    COMPREPLY=()",
+        '    cur="${COMP_WORDS[COMP_CWORD]}"',
+        "    n=$((COMP_CWORD - 1))",
+        '    # `--opt=value`: COMP_WORDBREAKS splits it into `--opt`, `=`, `value`.',
+        '    if [[ "$cur" == "=" ]]; then cur=""; prev="${COMP_WORDS[n]}"',
+        "    else",
+        '        prev="${COMP_WORDS[n]-}"',
+        '        [[ "$prev" == "=" ]] && prev="${COMP_WORDS[n-1]-}"',
+        "    fi",
+        "",
+        "    # The command is the first word that is neither an option nor an option's value.",
+        "    for (( i=1; i < COMP_CWORD; i++ )); do",
+        '        w="${COMP_WORDS[i]}"',
+        '        case "$w" in',
+    ]
+    if global_value_flags:
+        lines += [
+            f"            {'|'.join(global_value_flags)})",
+            '                [[ "${COMP_WORDS[i+1]-}" == "=" ]] && (( i++ ))',
+            "                (( i++ )) ;;",
+        ]
+    lines += [
+        "            -*|=) ;;",
+        '            *) cmd="$w"; cmd_at=$i; break ;;',
+        "        esac",
+        "    done",
+        "",
+        '    case "$cmd" in',
+    ]
+
+    def block(label, options, positionals):
+        out = [f"        {label})"]
+        out.append(f"            opts={_sq(' '.join(_flags(options)))}")
+        vflags = _flags(_value_options(options))
+        if vflags:
+            out.append(f"            valopts={_sq(' ' + ' '.join(vflags) + ' ')}")
+        fixed = [p for p in positionals if not p.repeat]
+        if fixed:
+            kinds = " ".join(_sq(_bash_kind(p.kind, p.choices)) for p in fixed)
+            out.append(f"            pos=( {kinds} )")
+        for p in positionals:
+            if p.repeat:
+                out.append(f"            rest={_sq(_bash_kind(p.kind, p.choices))}")
+        # Values of options: `case "$prev"` on the options that take one.
+        cases = [o for o in _value_options(options)]
+        if cases:
+            out.append('            case "$prev" in')
+            for o in cases:
+                out.append(f"                {'|'.join(o.flags)})")
+                out.append(f'                    {_func(spec.prog)}_values '
+                           f'{_sq(_bash_kind(o.kind, o.choices))} "$cur"; return 0 ;;')
+            out.append("            esac")
+        out.append("            ;;")
+        return out
+
+    lines += block('""', spec.options, ())
+    for c in spec.commands:
+        lines += block(c.name, c.options, c.positionals)
+    lines += [
+        "        *) return 0 ;;",
+        "    esac",
+        "",
+        '    if [[ "$cur" == -* ]]; then',
+        '        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )',
+        "        return 0",
+        "    fi",
+        '    if [[ -z "$cmd" ]]; then',
+        f"        COMPREPLY=( $(compgen -W {_sq(commands)} -- \"$cur\") )",
+        "        return 0",
+        "    fi",
+        "",
+        "    # Which positional is being typed: count the plain words after the command.",
+        "    for (( i=cmd_at+1; i < COMP_CWORD; i++ )); do",
+        '        w="${COMP_WORDS[i]}"',
+        '        if [[ "$valopts" == *" $w "* ]]; then',
+        '            [[ "${COMP_WORDS[i+1]-}" == "=" ]] && (( i++ ))',
+        "            (( i++ ))",
+        '        elif [[ "$w" != -* && "$w" != "=" ]]; then',
+        "            (( npos++ ))",
+        "        fi",
+        "    done",
+        "    if (( npos < ${#pos[@]} )); then",
+        '        kind="${pos[npos]}"',
+        "    else",
+        '        kind="$rest"',
+        "    fi",
+        '    if [[ -n "$kind" ]]; then',
+        f'        {fn}_values "$kind" "$cur"',
+        "    else",
+        '        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )',
+        "    fi",
+        "    return 0",
+        "}",
+        "",
+        f"complete -F {fn} {spec.prog}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# --- zsh --------------------------------------------------------------------
+
+def _zsh_desc(text):
+    """Escape text for the [...] or :message: part of an _arguments spec."""
+    return re.sub(r"([\\\[\]:])", r"\\\1", text)
+
+
+def _zsh_action(kind, choices):
+    if kind == "file":
+        return "_files"
+    if kind == "dir":
+        return "_files -/"
+    if kind == "choice":
+        return "(" + " ".join(choices) + ")"
+    return " "
+
+
+def _zsh_option(o):
+    desc = f"[{_zsh_desc(o.help)}]"
+    value = ""
+    if o.takes_value:
+        name = "path" if o.kind == "file" else o.flags[-1].lstrip("-")
+        value = f":{_zsh_desc(name)}:{_zsh_action(o.kind, o.choices)}"
+    if len(o.flags) == 1:
+        return _sq(o.flags[0] + desc + value)
+    excl = "(" + " ".join(o.flags) + ")"
+    return _sq(excl) + "{" + ",".join(o.flags) + "}" + _sq(desc + value)
+
+
+def _zsh_positional(p):
+    prefix = "*" if p.repeat else ""
+    colons = "::" if p.optional and not p.repeat else ":"
+    return _sq(f"{prefix}{colons}{_zsh_desc(p.name.lower())}:{_zsh_action(p.kind, p.choices)}")
+
+
+def zsh_script(spec):
+    fn = _func(spec.prog)
+    lines = [
+        f"#compdef {spec.prog}",
+        f"# zsh completion for {spec.prog}",
+        f"# Generated by `{spec.prog} --completion zsh`; do not edit.",
+        f"#   load it:  source <({spec.prog} --completion zsh)   (e.g. in ~/.zshrc, after compinit)",
+        f"#   or save it as _{spec.prog} in a directory on $fpath",
+        "",
+        f"{fn}_commands() {{",
+        "    local -a commands",
+        "    commands=(",
+    ]
+    for c in spec.commands:
+        lines.append(f"        {_sq(c.name + ':' + c.help)}")
+    lines += [
+        "    )",
+        f"    _describe -t commands {_sq(spec.prog + ' command')} commands",
+        "}",
+        "",
+        f"{fn}() {{",
+        '    local curcontext="$curcontext" state line ret=1',
+        "    typeset -A opt_args",
+        "    _arguments -C \\",
+    ]
+    for o in spec.options:
+        lines.append(f"        {_zsh_option(o)} \\")
+    lines += [
+        f"        ':command:{fn}_commands' \\",
+        "        '*:: :->args' && ret=0",
+        "",
+        '    [[ "$state" == args ]] || return ret',
+        f"    curcontext=\"${{curcontext%:*:*}}:{spec.prog}-$words[1]:\"",
+        "    case $words[1] in",
+    ]
+    for c in spec.commands:
+        lines.append(f"        ({c.name})")
+        lines.append("            _arguments \\")
+        specs = [_zsh_option(o) for o in c.options] + [_zsh_positional(p) for p in c.positionals]
+        for i, s in enumerate(specs):
+            tail = " \\" if i < len(specs) - 1 else " && ret=0"
+            lines.append(f"                {s}{tail}")
+        lines.append("            ;;")
+    lines += [
+        "    esac",
+        "    return ret",
+        "}",
+        "",
+        "# Autoloaded from $fpath, the file body is the function; sourced, register it.",
+        f'if [[ "$funcstack[1]" == "{fn}" ]]; then',
+        f'    {fn} "$@"',
+        "else",
+        f"    compdef {fn} {spec.prog}",
+        "fi",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# --- fish -------------------------------------------------------------------
+
+def _fq(text):
+    """Single-quote for fish (backslash escapes only \\ and ')."""
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _fish_flags(flags):
+    out = []
+    for f in flags:
+        if f.startswith("--"):
+            out.append(f"-l {f[2:]}")
+        elif len(f) == 2:
+            out.append(f"-s {f[1]}")
+        else:
+            out.append(f"-o {f[1:]}")
+    return " ".join(out)
+
+
+def _fish_value(kind, choices):
+    if kind == "file":
+        return "-r -F"
+    if kind == "dir":
+        return "-x -a '(__fish_complete_directories)'"
+    if kind == "choice":
+        return "-x -a " + _fq(" ".join(choices))
+    return "-x"
+
+
+def _fish_positional(p):
+    if p.kind == "file":
+        return "-F"
+    if p.kind == "dir":
+        return "-a '(__fish_complete_directories)'"
+    return "-a " + _fq(" ".join(p.choices))
+
+
+def fish_script(spec):
+    fn = "_" + _func(spec.prog)
+    prog = spec.prog
+    global_value_flags = _flags(_value_options(spec.options))
+    lines = [
+        f"# fish completion for {prog}",
+        f"# Generated by `{prog} --completion fish`; do not edit.",
+        f"#   load it:  {prog} --completion fish | source",
+        f"#   or copy this file to ~/.config/fish/completions/{prog}.fish",
+        "",
+        "# The command: the first word that is neither an option nor an option's value.",
+        f"function {fn}_cmd",
+        "    set -l tokens (commandline -opc)",
+        "    set -e tokens[1]",
+        "    set -l skip 0",
+        "    for t in $tokens",
+        "        if test $skip -eq 1",
+        "            set skip 0",
+    ]
+    if global_value_flags:
+        lines += [
+            f"        else if contains -- $t {' '.join(global_value_flags)}",
+            "            set skip 1",
+        ]
+    lines += [
+        "        else if string match -q -- '-*' $t",
+        "            continue",
+        "        else",
+        "            echo $t",
+        "            return 0",
+        "        end",
+        "    end",
+        "    return 1",
+        "end",
+        "",
+        f"function {fn}_using",
+        f"    set -l cmd ({fn}_cmd)",
+        '    test "$cmd" = "$argv[1]"',
+        "end",
+        "",
+        f"complete -c {prog} -e",
+        f"complete -c {prog} -f",
+        "",
+    ]
+
+    def opt_lines(cond, options):
+        out = []
+        for o in options:
+            parts = [f"complete -c {prog} -n {_fq(cond)}", _fish_flags(o.flags)]
+            if o.takes_value:
+                parts.append(_fish_value(o.kind, o.choices))
+            if o.help:
+                parts.append(f"-d {_fq(o.help)}")
+            out.append(" ".join(parts))
+        return out
+
+    none = f'{fn}_using ""'
+    lines.append("# Commands, and the options that go before them")
+    for c in spec.commands:
+        lines.append(f"complete -c {prog} -n {_fq(none)} -a {c.name} -d {_fq(c.help)}")
+    lines += opt_lines(none, spec.options)
+    for c in spec.commands:
+        cond = f"{fn}_using {c.name}"
+        lines += ["", f"# {c.name}"]
+        lines += opt_lines(cond, c.options)
+        for p in c.positionals:
+            if p.kind:
+                lines.append(f"complete -c {prog} -n {_fq(cond)} {_fish_positional(p)}")
+    lines.append("")
+    return "\n".join(lines)

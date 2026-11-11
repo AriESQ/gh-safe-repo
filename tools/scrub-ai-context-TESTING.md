@@ -253,7 +253,9 @@ $SCRIPT --push CLAUDE.md   # confirm
 
 **Expected:**
 - Scrub runs as normal via git-filter-file
-- After all targets, automatically runs `git push --force-with-lease --all` and `--tags`
+- After all targets, automatically runs `git push --force-with-lease --all`,
+  then the tag push the last pass wrote to `.git/filter-file-push-tags.sh`, if
+  any tag changed (none in this setup, so no tag push runs)
 - `✓ Force-push complete.` printed
 - "Done" section does NOT include the manual push instruction
 
@@ -263,6 +265,37 @@ $SCRIPT --push CLAUDE.md   # confirm
 git log --oneline
 git log --oneline origin/master 2>/dev/null || git log --oneline origin/main
 ```
+
+### 11b. --push with several targets and tags (#135)
+
+Each target is a separate git-filter-file pass. The first pass records the
+remote's tags and the local tags; the later passes reuse that snapshot (via
+`GIT_FILTER_FILE_TAG_SNAPSHOT`, a temp file this script sets), so the last
+pass's tag push leases against the remote as it was before any rewrite.
+
+```bash
+bare="/tmp/test-sac-tags-bare-$$.git"; dir="/tmp/test-sac-tags-$$"
+git init --bare "$bare"
+git init "$dir" && cd "$dir"
+echo n > readme.txt && git add . && git commit -m init && git tag base
+echo c > CLAUDE.md && git add . && git commit -m claude && git tag only-claude
+echo a > AGENTS.md && git add . && git commit -m agents && git tag -a both -m both
+echo c2 >> CLAUDE.md && echo m >> readme.txt && git add . && git commit -m more
+# A branchless commit holding only CLAUDE.md: pass 1 prunes it and deletes the tag
+tree=$(printf '100644 blob %s\tCLAUDE.md\n' "$(echo x | git hash-object -w --stdin)" | git mktree)
+git tag gone-claude "$(git commit-tree -m orphan "$tree")"
+git remote add origin "$bare" && git push -u origin HEAD --tags
+echo y | $SCRIPT --push CLAUDE.md AGENTS.md
+```
+
+**Expected:**
+- `Recording tags on 'origin' ...` appears once (pass 1 only)
+- After the passes: `Pushing rewritten tags (explicit lease per tag)...`, with
+  `both` and `only-claude` force-updated, `gone-claude` deleted, `base` not
+  pushed; no `rejected` / `stale info`; `✓ Force-push complete.`
+- `git -C "$bare" log --tags --oneline -- CLAUDE.md AGENTS.md` is empty, and
+  `git -C "$bare" cat-file -t refs/tags/both` prints `tag`
+- If any target fails, `--push` is skipped with a warning
 
 ---
 

@@ -90,8 +90,10 @@ once upfront.
 > to every remote, and alert collaborators to re-clone:
 > ```bash
 > git push --force-with-lease --all
-> git push --force-with-lease --tags
+> bash .git/filter-file-push-tags.sh   # written by the last pass, if any tag changed
 > ```
+> The last pass also prints that tag push. `--push` runs both, and is skipped
+> if any target failed.
 
 See `scrub-ai-context-TESTING.md` for a manual test suite using throwaway repos.
 
@@ -108,6 +110,41 @@ uses `git filter-repo` if it is installed, otherwise `uvx git-filter-repo` if
 otherwise exits with install instructions. git-filter-repo removes the
 `origin` remote after rewriting; the script restores it so you can force-push
 to the same place.
+
+**Pushing rewritten tags.** `git push --force-with-lease --tags` does not
+work after a rewrite: git keeps no remote-tracking refs for tags, so the
+lease has nothing to compare against and every rewritten tag is rejected as
+`stale info` (#135). Instead, right after its up-front fetch the script
+records the tags on the remote that `git push` would use (`git ls-remote
+--tags`), and when the rewrite finishes it prints, after the branch push
+(`git push --force-with-lease <remote> --all`), one tag push with an
+explicit lease per tag:
+
+```bash
+cd /abs/path/to/repo && git push \
+    --force-with-lease=refs/tags/v1:<sha on the remote before the rewrite> \
+    --force-with-lease=refs/tags/new-tag: \
+    --force-with-lease=refs/tags/gone:<sha> \
+    origin \
+    refs/tags/v1 \
+    refs/tags/new-tag \
+    :refs/tags/gone
+```
+
+- A tag someone moved on the remote since the snapshot is rejected
+  (`stale info`), not overwritten; the others still go through.
+- Tags the rewrite did not change are not pushed. A local tag not yet on the
+  remote is pushed with an empty lease (it must not exist there). A tag the
+  rewrite deleted (all its commits were pruned) is deleted on the remote.
+  Tags that exist only on the remote are left alone and listed.
+- The command is also saved as `.git/filter-file-push-tags.sh`; above 10
+  tags, the script prints `bash <that file>` instead of the command.
+- With no tags, no tag step is printed. `--dry-run` lists the leases it
+  would use. If you decline the fetch, the remote's tags cannot be recorded;
+  the script says so and suggests `git push --force <remote> --tags` after
+  checking `git ls-remote --tags`.
+- Both fetches use `--no-tags`, so remote tags are not auto-followed into the
+  repo (that could bring back a tag the rewrite deleted).
 
 **Pinned version (uvx path).** The `uvx` fallback runs a fixed release,
 `git-filter-repo==2.47.0`, set by `GIT_FILTER_REPO_PIN` near the top of the

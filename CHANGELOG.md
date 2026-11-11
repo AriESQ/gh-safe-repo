@@ -49,6 +49,26 @@ since the initial release.
   `git filter-repo` is used as before, with no added check. The pin is
   bumped by hand; `tools/README.md` describes how.
 
+### Fixed
+- Developer tooling (no change to the CLI): after a history rewrite,
+  `tools/git-filter-file.sh` told you to run
+  `git push --force-with-lease --tags`, which is rejected with
+  `stale info` for every rewritten tag because git keeps no
+  remote-tracking refs for tags, so the remote's old tags still reached the
+  removed file (#135). The script now records the remote's tags
+  (`git ls-remote --tags`) before rewriting and prints one tag push with an
+  explicit lease per changed tag
+  (`--force-with-lease=refs/tags/<tag>:<old sha>`), also saved as
+  `.git/filter-file-push-tags.sh`. A tag someone moved on the remote in the
+  meantime is still rejected rather than overwritten. New local tags are
+  pushed with an empty lease (must not exist yet), tags the rewrite deleted
+  are deleted on the remote, and tags only on the remote are left alone and
+  listed. No tags means no tag step. The branch push now names the remote
+  (`git push --force-with-lease <remote> --all`), and the script's fetches
+  use `--no-tags`. `tools/scrub-ai-context.sh --push` runs the same leased
+  tag push after all its passes (one snapshot shared by every pass), and
+  skips pushing if any target failed.
+
 ## [0.11.1] - 2026-11-01
 
 ### Added

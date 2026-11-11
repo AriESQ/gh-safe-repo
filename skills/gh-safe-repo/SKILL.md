@@ -23,6 +23,11 @@ Options are uniform by class. `new`, `push` and `copy` take
 `--config PATH`, `--no-config`, `--debug`. There is no `--local`, no
 `--from`, and `--config` always needs a value.
 
+`gh-safe-repo -v` (or `--version`) prints `gh-safe-repo <version>` and exits
+`0`; use it to check which version, and so which contract, you are running.
+It is top-level only (`gh-safe-repo audit x/y -v` is a usage error, exit 2)
+and never means verbose; that is `--debug`.
+
 Where a command takes two positionals the **source comes first** and the new
 repo second (`push . alice/app`, `copy upstream/lib alice/lib`).
 

@@ -13,6 +13,7 @@ Usage:
 import argparse
 import sys
 
+from . import __version__
 from .commands import audit, copy, create, fix, push, scan
 from .commands._common import add_common_args
 from .completion import SHELLS, generate
@@ -63,7 +64,7 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="gh-safe-repo",
         description=f"""\
-Manage safe defaults for GitHub repositories.
+gh-safe-repo {__version__} — Manage safe defaults for GitHub repositories.
 
 {h}new repo{r} (all take --public, --dry-run, --yes, --json):
   new    <owner/repo>                   Create an empty repo with safe defaults
@@ -88,6 +89,12 @@ Manage safe defaults for GitHub repositories.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="gh-safe-repo [--config PATH | --no-config] [--debug] <command> [options]",
+    )
+    parser.add_argument(
+        "-v", "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show the version and exit",
     )
     # Global: also added to every subparser, so they work on either side of
     # the command (`--debug create ...` as well as `create ... --debug`).

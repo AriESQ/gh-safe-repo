@@ -366,6 +366,7 @@ Local only. Nothing is sent to GitHub. See [Pre-flight scanner](#pre-flight-scan
 
 ```
 gh-safe-repo [--config PATH | --no-config] [--debug] <command> ...
+gh-safe-repo -v | --version
 
 new    <owner/repo>                   [--public] [--dry-run] [--yes] [--json]
 push   <path> <owner/repo>            [--public] [--dry-run] [--yes] [--json]
@@ -396,6 +397,7 @@ if given twice, the later one wins.
 | `--config PATH` | Config file to use (default: `./gh-safe-repo.ini`, then XDG; see [Configuration](#configuration)) |
 | `--no-config` | Ignore config files and use built-in defaults only. Cannot be combined with `--config` |
 | `--debug` | Print every API call and response. For `audit` and `fix`, also the resolved repo identity (id, full name, owner type) |
+| `-v`, `--version` | Print `gh-safe-repo <version>` and exit 0. Top-level only: it goes before any command and needs none. `-h` also shows the version on its first line |
 
 **`new <owner/repo>`, `push <path> <owner/repo>`, `copy <src-owner/repo> <owner/repo>`**
 

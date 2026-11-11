@@ -9,6 +9,14 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- `-v` / `--version` print `gh-safe-repo <version>` and exit 0 (#148). The
+  flag is top-level only and needs no command. The version is read from the
+  installed package's metadata, so `pyproject.toml` stays the single source.
+  The first line of `-h` now shows it too
+  (`gh-safe-repo 0.12.0 — Manage safe defaults for GitHub repositories.`),
+  and the shell completion scripts in `completions/` offer the new flags.
+
 ## [0.12.0] - 2026-11-11
 
 ### Added

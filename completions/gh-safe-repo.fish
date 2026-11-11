@@ -39,6 +39,7 @@ complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -a audit -d 'Report settin
 complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -a fix -d 'Audit an existing repo and apply safe defaults'
 complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -a scan -d 'Scan a local directory for secrets (no GitHub interaction)'
 complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -s h -l help -d 'show this help message and exit'
+complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -s v -l version -d 'Show the version and exit'
 complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -l debug -d 'Show every API call made'
 complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -l config -r -F -d 'Config file to use (default: discovered from XDG dirs or the current directory)'
 complete -c gh-safe-repo -n '__gh_safe_repo_using ""' -l no-config -d 'Ignore config files; use built-in defaults only'

@@ -303,13 +303,18 @@ def _zsh_action(kind, choices):
 def _zsh_option(o):
     desc = f"[{_zsh_desc(o.help)}]"
     value = ""
+    flags = list(o.flags)
     if o.takes_value:
         name = "path" if o.kind == "file" else o.flags[-1].lstrip("-")
         value = f":{_zsh_desc(name)}:{_zsh_action(o.kind, o.choices)}"
-    if len(o.flags) == 1:
-        return _sq(o.flags[0] + desc + value)
+        # `--opt=` lets the value follow `=` in the same word as well as come
+        # as the next word, as argparse accepts (--config=x.ini, --config x.ini).
+        # Short flags keep the plain form: argparse has no `-c=x`.
+        flags = [f + "=" if f.startswith("--") else f for f in flags]
+    if len(flags) == 1:
+        return _sq(flags[0] + desc + value)
     excl = "(" + " ".join(o.flags) + ")"
-    return _sq(excl) + "{" + ",".join(o.flags) + "}" + _sq(desc + value)
+    return _sq(excl) + "{" + ",".join(flags) + "}" + _sq(desc + value)
 
 
 def _zsh_positional(p):

@@ -455,12 +455,29 @@ class TestZshCompletion:
         assert zsh_complete("gh-safe-repo --config ", tmp_path, cwd=work) == ["alt.ini", "sub"]
         assert zsh_complete("gh-safe-repo fix --config a", tmp_path, cwd=work) == ["alt.ini"]
 
+    def test_config_equals_completes_files(self, tmp_path):
+        # argparse accepts --config=x.ini; complete the value after `=`, at
+        # the top level and per command, and still reach the command after it.
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "alt.ini").write_text("")
+        (work / "sub").mkdir()
+        assert zsh_complete("gh-safe-repo --config=", tmp_path, cwd=work) == ["alt.ini", "sub"]
+        assert zsh_complete("gh-safe-repo fix --config=a", tmp_path, cwd=work) == ["alt.ini"]
+        assert zsh_complete("gh-safe-repo --config=x.ini n", tmp_path) == ["new"]
+
+    def test_choices_after_equals(self, tmp_path):
+        script = generate(_choices_parser(), "zsh")
+        assert zsh_complete("gh-safe-repo scan --format=t", tmp_path, script=script) == [
+            "table"]
+
     def test_path_positionals_complete_directories(self, tmp_path):
         work = tmp_path / "work"
         work.mkdir()
         (work / "file.txt").write_text("")
         (work / "proj").mkdir()
         assert zsh_complete("gh-safe-repo push ", tmp_path, cwd=work) == ["proj"]
+        assert zsh_complete("gh-safe-repo push --config=x.ini ", tmp_path, cwd=work) == ["proj"]
         assert zsh_complete("gh-safe-repo scan --json ", tmp_path, cwd=work) == ["proj"]
         # Options a command shares with the top level (--debug, --config)
         # belong to the command, and its positionals still complete.

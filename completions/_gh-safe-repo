@@ -23,7 +23,7 @@ _gh_safe_repo() {
     _arguments -C -A '-*' \
         '(-h --help)'{-h,--help}'[show this help message and exit]' \
         '--debug[Show every API call made]' \
-        '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+        '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
         '--no-config[Ignore config files; use built-in defaults only]' \
         ':command:_gh_safe_repo_commands' \
         '*:: :->args' && ret=0
@@ -38,7 +38,7 @@ _gh_safe_repo() {
                 '--dry-run[Print the plan and make no API calls]' \
                 '(--yes -y)'{--yes,-y}'[Skip the confirmation prompt (required when stdin is not a terminal)]' \
                 '--debug[Show every API call made]' \
-                '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+                '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
                 '--no-config[Ignore config files; use built-in defaults only]' \
                 '--json[Emit the plan as JSON instead of the ANSI table]' \
                 ':owner/repo: ' && ret=0
@@ -50,7 +50,7 @@ _gh_safe_repo() {
                 '--dry-run[Print the plan and make no API calls]' \
                 '(--yes -y)'{--yes,-y}'[Skip the confirmation prompt (required when stdin is not a terminal)]' \
                 '--debug[Show every API call made]' \
-                '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+                '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
                 '--no-config[Ignore config files; use built-in defaults only]' \
                 '--json[Emit the plan as JSON instead of the ANSI table]' \
                 ':path:_files -/' \
@@ -63,7 +63,7 @@ _gh_safe_repo() {
                 '--dry-run[Print the plan and make no API calls]' \
                 '(--yes -y)'{--yes,-y}'[Skip the confirmation prompt (required when stdin is not a terminal)]' \
                 '--debug[Show every API call made]' \
-                '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+                '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
                 '--no-config[Ignore config files; use built-in defaults only]' \
                 '--json[Emit the plan as JSON instead of the ANSI table]' \
                 ':src-owner/repo: ' \
@@ -74,7 +74,7 @@ _gh_safe_repo() {
                 '(-h --help)'{-h,--help}'[show this help message and exit]' \
                 '--all[Treat every differing setting as a change to make, including ones a person deliberately changed from GitHub'\''s default (no PRESERVE rows)]' \
                 '--debug[Show every API call made]' \
-                '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+                '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
                 '--no-config[Ignore config files; use built-in defaults only]' \
                 '--json[Emit the plan as JSON instead of the ANSI table]' \
                 ':owner/repo: ' && ret=0
@@ -87,7 +87,7 @@ _gh_safe_repo() {
                 '--all[Treat every differing setting as a change to make, including ones a person deliberately changed from GitHub'\''s default (no PRESERVE rows)]' \
                 '--migrate-branch-protection[Migrate an existing classic branch protection to a ruleset]' \
                 '--debug[Show every API call made]' \
-                '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+                '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
                 '--no-config[Ignore config files; use built-in defaults only]' \
                 '--json[Emit the plan as JSON instead of the ANSI table]' \
                 ':owner/repo: ' && ret=0
@@ -96,7 +96,7 @@ _gh_safe_repo() {
             _arguments \
                 '(-h --help)'{-h,--help}'[show this help message and exit]' \
                 '--debug[Show every API call made]' \
-                '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
+                '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
                 '--no-config[Ignore config files; use built-in defaults only]' \
                 '--json[Emit findings as JSON instead of the ANSI report]' \
                 '::path:_files -/' && ret=0

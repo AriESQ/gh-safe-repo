@@ -2640,12 +2640,13 @@ class TestVersion:
         assert capsys.readouterr().out == f"gh-safe-repo {__version__}\n"
 
     def test_matches_pyproject(self):
-        import tomllib
+        # No tomllib: it is 3.11+, and CI still runs 3.10.
+        import re
         from pathlib import Path
         from gh_safe_repo import __version__
         pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
-        with pyproject.open("rb") as f:
-            assert __version__ == tomllib.load(f)["project"]["version"]
+        m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
+        assert m and __version__ == m.group(1)
 
     def test_shown_in_help(self):
         from gh_safe_repo import __version__

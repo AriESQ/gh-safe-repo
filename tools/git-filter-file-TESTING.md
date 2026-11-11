@@ -8,8 +8,10 @@ SCRIPT=/path/to/git-filter-file.sh   # set this to your actual path
 
 **Prerequisite:** git-filter-repo must be resolvable — either `git filter-repo`
 is installed, or `uvx` (from uv) is on `PATH`, in which case the script runs
-`uvx git-filter-repo` (first use downloads it, so needs network). Check with
-`git filter-repo --version` or `uvx git-filter-repo --version`.
+`uvx git-filter-repo==2.47.0` (the pinned release; first use downloads it,
+so needs network). Check with `git filter-repo --version` or
+`uvx git-filter-repo==2.47.0 --version`. The uvx path also needs
+git >= 2.22.0 (see 18d).
 
 ---
 
@@ -198,7 +200,7 @@ $SCRIPT --dry-run . secret.txt
 
 **Expected:**
 - Prints banner with repo, file name and commit count
-- Shows the git-filter-repo command that would run: `git filter-repo --force --invert-paths --path 'secret.txt'` (or `uvx git-filter-repo ...` when only uv is available), followed by a note that it also expires reflogs and repacks
+- Shows the git-filter-repo command that would run: `git filter-repo --force --invert-paths --path 'secret.txt'` (or `uvx git-filter-repo==2.47.0 ...` when only uv is available), followed by a note that it also expires reflogs and repacks
 - Prints `-- dry run: no changes made --`
 - Exits 0
 - `git log --oneline` unchanged — no commits added or removed
@@ -232,7 +234,7 @@ $SCRIPT . secret.txt   # confirm at the prompt
 2. Banner shows `Operation: Remove from all history and working tree`
 3. No warnings (clean tree, no remotes)
 4. Prompts `Proceed? [y/N]` — enter `y`
-5. Prints rewriting message and `Using: git filter-repo` (or `uvx git-filter-repo`), then git-filter-repo's own progress output, then `✓ History rewritten`
+5. Prints rewriting message and `Using: git filter-repo` (or `uvx git-filter-repo==2.47.0`), then git-filter-repo's own progress output, then `✓ History rewritten`
 6. Prints `✓ Objects purged` (git-filter-repo expires reflogs and repacks itself)
 7. Prints `✓ Deleted 'secret.txt' from working tree and all history.`
 8. Prints "Done. Required next steps" — no remotes section
@@ -458,6 +460,63 @@ PATH="/tmp/nofr-$$:/usr/bin:/bin" $SCRIPT --dry-run . secret.txt
 **Expected:**
 - Real run: `Error: git-filter-repo not found.` plus install instructions (uv, or git-filter-repo via brew/apt/pipx), exit 1, history untouched. There is no fallback to `git filter-branch`.
 - Dry run: warning that a real run would fail, the plan is still printed, exit 0.
+
+### 18d. git too old for the pinned git-filter-repo (uvx path)
+
+The uvx fallback runs the pinned release (`GIT_FILTER_REPO_PIN`, 2.47.0),
+which needs git >= 2.22.0 (`GIT_FILTER_REPO_MIN_GIT`). Simulate an old git
+with a wrapper that reports an old version but passes every other command
+to the real git. This test needs `git filter-repo` NOT to be installed (the
+check only applies to the uvx path).
+
+```bash
+dir=$(make_repo | tail -1 | awk '{print $3}')
+cd "$dir"
+REALGIT="$(command -v git)"
+mkdir -p /tmp/oldgit-$$
+cat > /tmp/oldgit-$$/git <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "--version" ]]; then echo "git version 2.20.1"; exit 0; fi
+exec "$REALGIT" "\$@"
+EOF
+chmod +x /tmp/oldgit-$$/git
+PATH="/tmp/oldgit-$$:$PATH" $SCRIPT --yes . secret.txt
+PATH="/tmp/oldgit-$$:$PATH" $SCRIPT --dry-run . secret.txt
+```
+
+**Expected:**
+- Real run: `Error: git 2.20.1 is too old for git-filter-repo 2.47.0 (needs git >= 2.22.0).`
+  followed by the options (upgrade git, install a matching git-filter-repo,
+  or set `GIT_FILTER_REPO_VERSION`), exit 1, before the fetch prompt.
+  `git log --oneline` is unchanged.
+- Dry run: `Warning: a real run would fail:` with the same text, the plan
+  is still printed (with `uvx git-filter-repo==2.47.0`), exit 0.
+- With `git filter-repo` installed (`Using: git filter-repo`), no version
+  check is made by this script; the installed tool does its own.
+
+### 18e. GIT_FILTER_REPO_VERSION override
+
+```bash
+dir=$(make_repo | tail -1 | awk '{print $3}')
+cd "$dir"
+GIT_FILTER_REPO_VERSION=2.45.0 $SCRIPT --dry-run . secret.txt
+GIT_FILTER_REPO_VERSION=2.45.0 $SCRIPT --yes . secret.txt
+git log --all --oneline -- secret.txt   # no output
+
+dir=$(make_repo | tail -1 | awk '{print $3}')
+cd "$dir"
+GIT_FILTER_REPO_VERSION=latest $SCRIPT --yes . secret.txt
+GIT_FILTER_REPO_VERSION=latest $SCRIPT --dry-run . secret.txt
+```
+
+**Expected:**
+- `2.45.0`: dry run prints `uvx git-filter-repo==2.45.0 --force ...`; the
+  real run prints `Using: uvx git-filter-repo==2.45.0` and removes the file
+  from history. The script's git-version check is skipped for an override
+  (even with the old-git wrapper from 18d on `PATH`).
+- `latest` (not a version number): real run prints
+  `Error: GIT_FILTER_REPO_VERSION='latest' is not a version number ...`,
+  exit 1, history untouched; dry run shows it as a warning, exit 0.
 
 ---
 

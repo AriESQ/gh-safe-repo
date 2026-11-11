@@ -39,6 +39,15 @@ since the initial release.
   so the script now saves and restores the remote and branch-upstream
   configuration, and the post-scrub steps say to check `git remote -v`
   before force-pushing.
+- Developer tooling (no change to the CLI): the `uvx` fallback in
+  `tools/git-filter-file.sh` now runs a pinned release,
+  `git-filter-repo==2.47.0`, instead of whatever is latest on PyPI (#136).
+  Before rewriting, the script checks that git is at least 2.22.0 (that
+  release's documented minimum) and exits with instructions if it is
+  older; `--dry-run` shows this as a warning. `GIT_FILTER_REPO_VERSION`
+  overrides the pin, and must be a plain version number. An installed
+  `git filter-repo` is used as before, with no added check. The pin is
+  bumped by hand; `tools/README.md` describes how.
 
 ## [0.11.1] - 2026-11-01
 

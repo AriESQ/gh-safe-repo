@@ -60,7 +60,24 @@ class TestRemoteUrl:
         assert t.preflight_url() == f"git@github.com:{PREFLIGHT_REPO}.git"
 
 
+# Variables env() sets or leaves alone depending on protocol. Agent
+# containers and CI runners often export some of them (e.g.
+# GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never), so tests that assert on
+# their presence or absence must not inherit the caller's values (#137).
+TRANSPORT_ENV_VARS = (
+    "GIT_TERMINAL_PROMPT",
+    "GCM_INTERACTIVE",
+    "GCM_GUI_PROMPT",
+    "GIT_SSH_COMMAND",
+)
+
+
 class TestEnv:
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch):
+        for var in TRANSPORT_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
     def test_ssh_propagates_ssh_command(self):
         t = make_transport(
             protocol="ssh",
@@ -88,6 +105,36 @@ class TestEnv:
         env = t.env()
         assert "GIT_TERMINAL_PROMPT" not in env
         assert "GCM_INTERACTIVE" not in env
+
+    def test_ssh_passes_preset_vars_through_unchanged(self, monkeypatch):
+        """env() only adds overrides; for SSH it must not alter or drop the
+        caller's own prompt or ssh settings."""
+        preset = {
+            "GIT_TERMINAL_PROMPT": "1",
+            "GCM_INTERACTIVE": "never",
+            "GCM_GUI_PROMPT": "true",
+            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+        }
+        for var, value in preset.items():
+            monkeypatch.setenv(var, value)
+        env = make_transport(protocol="ssh", ssh_command=None).env()
+        for var, value in preset.items():
+            assert env[var] == value
+
+    def test_ssh_command_overrides_preset_git_ssh_command(self, monkeypatch):
+        monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+        env = make_transport(protocol="ssh", ssh_command="ssh -i /key").env()
+        assert env["GIT_SSH_COMMAND"] == "ssh -i /key"
+
+    def test_https_overrides_preset_prompt_vars(self, monkeypatch):
+        """HTTPS must fail fast even if the caller enabled prompts."""
+        monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+        monkeypatch.setenv("GCM_INTERACTIVE", "always")
+        monkeypatch.setenv("GCM_GUI_PROMPT", "true")
+        env = make_transport(protocol="https").env()
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        assert env["GCM_INTERACTIVE"] == "false"
+        assert env["GCM_GUI_PROMPT"] == "false"
 
     def test_inherits_parent_env(self):
         with patch.dict(os.environ, {"PATH": "/sentinel"}):

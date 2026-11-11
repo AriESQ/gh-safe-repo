@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-11
+
 ### Added
 - Shell completion for bash, zsh and fish (#60). A hidden top-level flag,
   `gh-safe-repo --completion {bash,zsh,fish}` (or `--completion=bash`),
@@ -25,7 +27,10 @@ since the initial release.
   install those files or use Homebrew's `generate_completions_from_executable`
   with `shell_parameter_format: "--completion="`. `tools/gen-completions.sh`
   regenerates the files, and a test fails when they are out of date. No new
-  dependencies.
+  dependencies. Long options that take a value complete in both the
+  `--config x.ini` and `--config=x.ini` forms in every shell (#141). The
+  bash, zsh and fish scripts are each tested by driving the real shell, and
+  CI installs zsh and fish so those tests run instead of skipping (#141).
 
 ### Changed
 - Developer tooling (no change to the CLI): `tools/git-filter-file.sh`
@@ -68,6 +73,30 @@ since the initial release.
   use `--no-tags`. `tools/scrub-ai-context.sh --push` runs the same leased
   tag push after all its passes (one snapshot shared by every pass), and
   skips pushing if any target failed.
+
+### Documentation
+- New reference `docs/2026-11-01_security-settings-availability.md` maps
+  each security setting (Dependabot alerts and security updates, the
+  dependency graph, secret scanning, push protection, private vulnerability
+  reporting) to its plan availability, its REST endpoints and dated live
+  results from scratch repos on GitHub Free (#130). Findings it records:
+  Dependabot alerts and security updates work on private Free repos, though
+  the security plugin still skips them there; the dependency graph has no
+  write endpoint of its own; secret scanning on private Free answers `422`
+  and Pro does not unlock it for user-owned repos; a PVR `PUT` on a private
+  repo answers `404`, not the documented `422`; `GET /user` returns
+  `plan: null` with the default `gh` scopes. Section 7 covers
+  organization-owned repos from GitHub's docs (#133): under an enforced
+  organization security configuration, REST writes appear to succeed but
+  change nothing. Docs only; no behaviour change. The findings feed #131
+  (per-setting gating) and #132 (plan detection).
+
+### Internal
+- CI installs zsh and fish, and the completion tests for a shell fail
+  rather than skip when `CI` is set and that shell is missing (#141).
+- `GitTransport.env()` tests no longer depend on the caller's environment.
+  Two of them failed on runners that export `GIT_TERMINAL_PROMPT` or
+  `GCM_INTERACTIVE` (#137).
 
 ## [0.11.1] - 2026-11-01
 

@@ -13,9 +13,24 @@
 # The rewrite is done by git-filter-repo (https://github.com/newren/git-filter-repo),
 # the tool the git documentation recommends in place of `git filter-branch`.
 # It is used as `git filter-repo` when installed, otherwise run on demand via
-# `uvx git-filter-repo` (no local install needed). See issue #52.
+# `uvx git-filter-repo==<pinned version>` (no local install needed). See
+# issues #52 and #136.
 
 set -euo pipefail
+
+# ── git-filter-repo pin (uvx fallback) ──────────────────────────────────────
+# The `uvx` fallback runs this exact git-filter-repo release from PyPI, so a
+# new upstream release cannot change what the script runs (#136). Dependabot
+# cannot see a pin inside a shell script: bump it by hand (see "Bumping the
+# git-filter-repo pin" in tools/README.md), updating GIT_FILTER_REPO_MIN_GIT
+# to match. GIT_FILTER_REPO_VERSION in the environment overrides the pin.
+GIT_FILTER_REPO_PIN="2.47.0"
+# Minimum git for the pinned release, from the "Prerequisites" section of
+# https://github.com/newren/git-filter-repo/blob/v2.47.0/README.md
+# ("git >= 2.22.0 at a minimum"). git-filter-repo itself exits with
+# "need git >= 2.22.0" when git-diff-tree lacks --combined-all-paths.
+GIT_FILTER_REPO_MIN_GIT="2.22.0"
+GIT_FILTER_REPO_VERSION="${GIT_FILTER_REPO_VERSION:-$GIT_FILTER_REPO_PIN}"
 
 # ── ANSI colours ────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -56,19 +71,73 @@ _timed_fetch() {
 
 # _resolve_filter_repo — set FILTER_REPO_CMD to the command array that runs
 # git-filter-repo. Prefers an installed `git filter-repo`; falls back to
-# `uvx git-filter-repo` when uv is available. Returns 1 if neither works.
+# `uvx git-filter-repo==$GIT_FILTER_REPO_VERSION` when uv is available, and
+# sets FILTER_REPO_VIA_UVX. Returns 1 if neither works.
 # There is deliberately no fallback to `git filter-branch`.
 FILTER_REPO_CMD=()
+FILTER_REPO_VIA_UVX=false
 _resolve_filter_repo() {
     if git filter-repo --version &>/dev/null; then
         FILTER_REPO_CMD=(git filter-repo)
         return 0
     fi
     if command -v uvx &>/dev/null; then
-        FILTER_REPO_CMD=(uvx git-filter-repo)
+        FILTER_REPO_CMD=(uvx "git-filter-repo==$GIT_FILTER_REPO_VERSION")
+        FILTER_REPO_VIA_UVX=true
         return 0
     fi
     return 1
+}
+
+# _version_ge A B — true if dotted version A >= B (numeric, per component;
+# missing components count as 0).
+_version_ge() {
+    local -a a b
+    local i x y
+    IFS=. read -r -a a <<< "$1"
+    IFS=. read -r -a b <<< "$2"
+    for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
+        x="${a[i]:-0}" y="${b[i]:-0}"
+        if ((10#$x > 10#$y)); then return 0; fi
+        if ((10#$x < 10#$y)); then return 1; fi
+    done
+    return 0
+}
+
+# _check_filter_repo_version — validate the uvx version and check that git
+# is new enough for the pinned release. On a problem, prints it to stdout
+# (first line is the summary) and returns 1.
+# Only applies to the uvx path: an installed `git filter-repo` was packaged
+# for the user's system, its release is unknown (--version prints a commit
+# hash, not a release number), and it runs its own git-version checks.
+_check_filter_repo_version() {
+    [[ "$FILTER_REPO_VIA_UVX" = true ]] || return 0
+    if [[ ! "$GIT_FILTER_REPO_VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        echo "GIT_FILTER_REPO_VERSION='$GIT_FILTER_REPO_VERSION' is not a version number (expected e.g. $GIT_FILTER_REPO_PIN)."
+        return 1
+    fi
+    # The minimum git is recorded only for the pinned release. With an
+    # override, git-filter-repo's own checks still run before it rewrites.
+    [[ "$GIT_FILTER_REPO_VERSION" = "$GIT_FILTER_REPO_PIN" ]] || return 0
+    local raw ver
+    raw="$(git --version 2>/dev/null || true)"
+    if [[ "$raw" =~ ([0-9]+\.[0-9]+(\.[0-9]+)?) ]]; then
+        ver="${BASH_REMATCH[1]}"
+    else
+        echo "Could not determine the git version ('git --version' printed: '$raw')."
+        return 1
+    fi
+    if ! _version_ge "$ver" "$GIT_FILTER_REPO_MIN_GIT"; then
+        cat <<EOF
+git $ver is too old for git-filter-repo $GIT_FILTER_REPO_PIN (needs git >= $GIT_FILTER_REPO_MIN_GIT).
+Either:
+  - upgrade git (https://git-scm.com/downloads), or
+  - install a git-filter-repo that matches your git (e.g. your distro's
+    git-filter-repo package), which the script then uses instead of uvx, or
+  - run an older release via uvx: GIT_FILTER_REPO_VERSION=<version>
+EOF
+        return 1
+    fi
 }
 
 _filter_repo_install_help() {
@@ -126,7 +195,9 @@ Examples:
 
 Requirements:
   git-filter-repo, used as 'git filter-repo' if installed, otherwise run via
-  'uvx git-filter-repo' (needs uv: https://docs.astral.sh/uv/).
+  'uvx git-filter-repo==$GIT_FILTER_REPO_PIN' (needs uv: https://docs.astral.sh/uv/,
+  and git >= $GIT_FILTER_REPO_MIN_GIT). Set GIT_FILTER_REPO_VERSION to run a
+  different release via uvx.
 
   git-filter-repo removes the 'origin' remote after rewriting; this script
   restores the remote configuration it removed, so the force-push below
@@ -135,7 +206,7 @@ Requirements:
 Exit codes:
   0  Success
   1  Runtime failure (file not found, dirty tree, nothing to do,
-     git-filter-repo unavailable)
+     git-filter-repo unavailable, git too old for the pinned release)
   2  Usage error (bad arguments, not a git repo)
 
 After running, you MUST:
@@ -291,6 +362,21 @@ if ! _resolve_filter_repo; then
     FILTER_REPO_CMD=(git filter-repo)
 fi
 
+# Pinned-version / git-version check (uvx path only). A dry run only warns.
+FILTER_REPO_VERSION_PROBLEM=""
+if [[ "$FILTER_REPO_OK" = true ]] && \
+   ! FILTER_REPO_VERSION_PROBLEM="$(_check_filter_repo_version)"; then
+    if [[ "$DRY_RUN" = false ]]; then
+        err "${FILTER_REPO_VERSION_PROBLEM%%$'\n'*}"
+        if [[ "$FILTER_REPO_VERSION_PROBLEM" == *$'\n'* ]]; then
+            echo "${FILTER_REPO_VERSION_PROBLEM#*$'\n'}" >&2
+        fi
+        exit 1
+    fi
+else
+    FILTER_REPO_VERSION_PROBLEM=""
+fi
+
 # ── Collect remote info ───────────────────────────────────────────────────────
 REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 
@@ -405,6 +491,13 @@ if [[ "$DRY_RUN" = true ]]; then
     if [[ "$FILTER_REPO_OK" = false ]]; then
         warn "git-filter-repo not found — a real run would fail. Install it first:"
         _filter_repo_install_help 2>&1 | sed '1,2d'
+        echo ""
+    fi
+    if [[ -n "$FILTER_REPO_VERSION_PROBLEM" ]]; then
+        warn "a real run would fail:"
+        while IFS= read -r _line; do
+            echo "  $_line"
+        done <<< "$FILTER_REPO_VERSION_PROBLEM"
         echo ""
     fi
     echo "Would run:"

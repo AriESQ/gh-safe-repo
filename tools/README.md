@@ -109,6 +109,36 @@ otherwise exits with install instructions. git-filter-repo removes the
 `origin` remote after rewriting; the script restores it so you can force-push
 to the same place.
 
+**Pinned version (uvx path).** The `uvx` fallback runs a fixed release,
+`git-filter-repo==2.47.0`, set by `GIT_FILTER_REPO_PIN` near the top of the
+script, so a new upstream release cannot change what the script runs.
+Before anything is rewritten, the script checks `git --version` against that
+release's minimum git (`GIT_FILTER_REPO_MIN_GIT`, 2.22.0, from the upstream
+README's Prerequisites) and exits with instructions if git is older. With
+`--dry-run` the problem is a warning and the plan is still printed.
+
+- `GIT_FILTER_REPO_VERSION=<version>` runs a different release via uvx (for
+  example an older one for an older git). It must be a plain version number.
+  The script's git-version check is skipped for an override, because the
+  minimum is only recorded for the pinned release; git-filter-repo's own
+  git-version checks still run before it rewrites anything.
+- An installed `git filter-repo` is used as is, with no version check: its
+  release is unknown (`--version` prints a commit hash), it was packaged for
+  your system, and it runs its own git-version checks.
+
+**Bumping the git-filter-repo pin.** Dependabot cannot update a version
+pinned inside a shell script, so check for a new release by hand before a
+release of gh-safe-repo (see [PyPI](https://pypi.org/project/git-filter-repo/)
+or `pip index versions git-filter-repo`). To bump:
+
+1. Set `GIT_FILTER_REPO_PIN` to the new version.
+2. Read the Prerequisites section of the upstream README at that tag
+   (`https://github.com/newren/git-filter-repo/blob/v<version>/README.md`)
+   and update `GIT_FILTER_REPO_MIN_GIT` and the source comment above it.
+3. Update the version in this section, then run the happy path (11), the
+   too-old-git case (18d) and the override (18e) in
+   `git-filter-file-TESTING.md`.
+
 ```bash
 # Remove a file from all history and disk (repo-relative path)
 git-filter-file.sh . secrets/api_key.txt

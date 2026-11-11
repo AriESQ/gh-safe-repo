@@ -20,7 +20,7 @@ your machine.
 ## Contents
 
 - [What you get](#what-you-get)
-- [Install](#install)
+- [Install](#install) — and [shell completion](#shell-completion)
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [CLI reference](#cli-reference)
@@ -86,6 +86,50 @@ To run without installing:
 uv sync
 ./gh-safe-repo new <owner/repo>
 ```
+
+### Shell completion
+
+Completion for bash, zsh and fish covers the commands, each command's
+options, files after `--config` and directories for `push` and `scan`. The
+scripts are generated from the CLI's own argument parser, so they list
+exactly the options your installed version accepts. Either load them from
+the installed command, which keeps them current across upgrades:
+
+```bash
+# bash: add to ~/.bashrc
+source <(gh-safe-repo --completion bash)
+
+# zsh: add to ~/.zshrc, after compinit
+source <(gh-safe-repo --completion zsh)
+
+# fish: add to ~/.config/fish/config.fish
+gh-safe-repo --completion fish | source
+```
+
+or copy the pre-generated files in [`completions/`](completions/) into each
+shell's standard directory (copy them again after upgrading):
+
+```bash
+# bash (needs the bash-completion package)
+cp completions/gh-safe-repo.bash ~/.local/share/bash-completion/completions/gh-safe-repo
+
+# zsh: any directory on $fpath, ahead of compinit
+cp completions/_gh-safe-repo ~/.zsh/completions/_gh-safe-repo
+
+# fish
+cp completions/gh-safe-repo.fish ~/.config/fish/completions/gh-safe-repo.fish
+```
+
+Completion is registered for the `gh-safe-repo` command on `PATH` (as
+installed by `uv tool install`), not for `./gh-safe-repo`. `--completion`
+is deliberately left out of `--help` and out of the completion itself.
+
+For packagers: install the three files from `completions/` (in Homebrew,
+`bash_completion.install "completions/gh-safe-repo.bash" => "gh-safe-repo"`,
+`zsh_completion.install "completions/_gh-safe-repo"`,
+`fish_completion.install "completions/gh-safe-repo.fish"`), or generate them
+at build time with `generate_completions_from_executable(bin/"gh-safe-repo",
+shell_parameter_format: "--completion=")`.
 
 ## Quick start
 
@@ -393,6 +437,12 @@ are not drift: a repo with only `PRESERVE` rows prints the table and exits `0`.
 | `--json` | Emit findings as JSON on stdout |
 
 `path` defaults to the current directory.
+
+**Shell completion**
+
+`gh-safe-repo --completion {bash,zsh,fish}` (also `--completion=bash`)
+prints a completion script to stdout and exits `0`; no command is needed.
+It is hidden from `--help`. See [Shell completion](#shell-completion).
 
 ## Output
 
@@ -1025,10 +1075,12 @@ gh-safe-repo/
 ├── gh-safe-repo              # Thin launcher
 ├── gh_safe_repo/             # Package (see gh_safe_repo/README.md)
 │   ├── cli.py                # Subcommand dispatch
+│   ├── completion.py         # Shell completion scripts, from the parser
 │   ├── commands/             # new (create.py), push, copy, audit, fix, scan
 │   └── plugins/              # One plugin per settings category
+├── completions/              # Generated bash, zsh, fish completion (tools/gen-completions.sh)
 ├── skills/gh-safe-repo/      # Agent-facing SKILL.md
-├── tools/                    # trufflehog wrapper, history scrubbing, API drift tracker
+├── tools/                    # trufflehog wrapper, history scrubbing, API drift tracker, completion regeneration
 ├── gh-safe-repo.ini.example  # Annotated example config
 └── tests/                    # See tests/README.md
 ```

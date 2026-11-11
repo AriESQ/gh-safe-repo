@@ -15,6 +15,7 @@ import sys
 
 from .commands import audit, copy, create, fix, push, scan
 from .commands._common import add_common_args
+from .completion import SHELLS, generate
 
 
 def _heading_style():
@@ -42,6 +43,18 @@ def _options_last(parser):
         if g.title == "options":
             groups.append(groups.pop(i))
             break
+
+
+class _CompletionAction(argparse.Action):
+    """`--completion SHELL`: print the completion script and exit 0 (#60).
+
+    Runs while parsing, like --version, so no command is needed. Hidden
+    from --help and from the generated scripts themselves.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        sys.stdout.write(generate(parser, values))
+        parser.exit(0)
 
 
 def build_parser():
@@ -79,6 +92,12 @@ Manage safe defaults for GitHub repositories.
     # Global: also added to every subparser, so they work on either side of
     # the command (`--debug create ...` as well as `create ... --debug`).
     add_common_args(parser, json_flag=False, global_defaults=True)
+    parser.add_argument(
+        "--completion",
+        action=_CompletionAction,
+        choices=SHELLS,
+        help=argparse.SUPPRESS,
+    )
 
     subparsers = parser.add_subparsers(dest="command", title="commands", metavar="")
 

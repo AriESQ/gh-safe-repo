@@ -9,6 +9,11 @@
 # By default the file is removed from history and the working tree. With --keep,
 # the current on-disk content is re-added as a single fresh commit (useful when
 # the file still exists and only the history needs scrubbing).
+#
+# The rewrite is done by git-filter-repo (https://github.com/newren/git-filter-repo),
+# the tool the git documentation recommends in place of `git filter-branch`.
+# It is used as `git filter-repo` when installed, otherwise run on demand via
+# `uvx git-filter-repo` (no local install needed). See issue #52.
 
 set -euo pipefail
 
@@ -49,6 +54,38 @@ _timed_fetch() {
     wait "$pid" 2>/dev/null
 }
 
+# _resolve_filter_repo — set FILTER_REPO_CMD to the command array that runs
+# git-filter-repo. Prefers an installed `git filter-repo`; falls back to
+# `uvx git-filter-repo` when uv is available. Returns 1 if neither works.
+# There is deliberately no fallback to `git filter-branch`.
+FILTER_REPO_CMD=()
+_resolve_filter_repo() {
+    if git filter-repo --version &>/dev/null; then
+        FILTER_REPO_CMD=(git filter-repo)
+        return 0
+    fi
+    if command -v uvx &>/dev/null; then
+        FILTER_REPO_CMD=(uvx git-filter-repo)
+        return 0
+    fi
+    return 1
+}
+
+_filter_repo_install_help() {
+    cat >&2 <<EOF
+git-filter-repo is required but was not found.
+
+Install one of:
+  - uv (recommended; runs git-filter-repo on demand, no install needed):
+      https://docs.astral.sh/uv/getting-started/installation/
+  - git-filter-repo itself, e.g.:
+      brew install git-filter-repo        # macOS
+      apt install git-filter-repo         # Debian/Ubuntu
+      pipx install git-filter-repo        # any platform
+    See https://github.com/newren/git-filter-repo/blob/main/INSTALL.md
+EOF
+}
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
     cat <<EOF
@@ -87,9 +124,18 @@ Examples:
   git-filter-file . api_key.txt                  # find anywhere in history
   git-filter-file --keep . config.json            # scrub history, keep file
 
+Requirements:
+  git-filter-repo, used as 'git filter-repo' if installed, otherwise run via
+  'uvx git-filter-repo' (needs uv: https://docs.astral.sh/uv/).
+
+  git-filter-repo removes the 'origin' remote after rewriting; this script
+  restores the remote configuration it removed, so the force-push below
+  goes to the same place as before.
+
 Exit codes:
   0  Success
-  1  Runtime failure (file not found, dirty tree, nothing to do)
+  1  Runtime failure (file not found, dirty tree, nothing to do,
+     git-filter-repo unavailable)
   2  Usage error (bad arguments, not a git repo)
 
 After running, you MUST:
@@ -138,7 +184,7 @@ REPO_ROOT="$(git -C "$REPO_ARG" rev-parse --show-toplevel 2>/dev/null)" || {
 }
 
 # ── Worktree guard ────────────────────────────────────────────────────────────
-# filter-branch rewrites the shared object store — running inside a worktree
+# filter-repo rewrites the shared object store — running inside a worktree
 # would rewrite the main repo's history from an unexpected working directory.
 if [[ "$(git -C "$REPO_ROOT" rev-parse --git-dir)" != "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)" ]]; then
     err "Running inside a git worktree is not supported."
@@ -216,12 +262,14 @@ if [[ "$HISTORY_COUNT" -eq 0 ]]; then
 fi
 
 # ── Require clean working tree ────────────────────────────────────────────────
-# git filter-branch refuses to run with uncommitted changes anywhere in the repo.
-# Error early with a clear message rather than letting filter-branch fail cryptically.
+# git-filter-repo resets the working tree to the rewritten HEAD when it
+# finishes, which would discard uncommitted changes. We pass --force to
+# filter-repo (see below), which also skips its own clean-tree check, so this
+# check is what protects uncommitted work.
 if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || \
    ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
     err "Working tree has uncommitted changes."
-    echo "git filter-branch requires a clean working tree." >&2
+    echo "Rewriting history requires a clean working tree." >&2
     echo "Commit or stash your changes first, then re-run." >&2
     echo "" >&2
     echo "To stash:   git stash" >&2
@@ -229,11 +277,25 @@ if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || \
     exit 1
 fi
 
+# ── Locate git-filter-repo ────────────────────────────────────────────────────
+# Checked before the network fetch and confirmation prompt so a missing tool
+# fails fast. A dry run only warns, so the plan can still be previewed.
+FILTER_REPO_OK=true
+if ! _resolve_filter_repo; then
+    FILTER_REPO_OK=false
+    if [[ "$DRY_RUN" = false ]]; then
+        err "git-filter-repo not found."
+        _filter_repo_install_help
+        exit 1
+    fi
+    FILTER_REPO_CMD=(git filter-repo)
+fi
+
 # ── Collect remote info ───────────────────────────────────────────────────────
 REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 
 # ── Fetch from remote and check sync status ─────────────────────────────────
-# After filter-branch rewrites history, local and remote will diverge. If the
+# After the history rewrite, local and remote will diverge. If the
 # branch was already behind or diverged before the rewrite, the resulting state
 # is very hard to reason about. Fetch first, then check.
 UNPUSHED=0
@@ -340,13 +402,17 @@ fi
 if [[ "$DRY_RUN" = true ]]; then
     echo -e "${DIM}-- dry run: no changes made --${RESET}"
     echo ""
+    if [[ "$FILTER_REPO_OK" = false ]]; then
+        warn "git-filter-repo not found — a real run would fail. Install it first:"
+        _filter_repo_install_help 2>&1 | sed '1,2d'
+        echo ""
+    fi
     echo "Would run:"
-    echo "  git filter-branch --force --index-filter \\"
-    echo "    \"git rm --cached --ignore-unmatch '$RELATIVE_PATH'\" \\"
-    echo "    --prune-empty --tag-name-filter cat -- --all"
-    echo "  git reflog expire --expire=now --all"
-    echo "  git gc --prune=now --quiet"
+    echo "  ${FILTER_REPO_CMD[*]} --force --invert-paths --path '$RELATIVE_PATH'"
+    echo "    (rewrites all branches and tags, prunes commits left empty,"
+    echo "     then expires reflogs and repacks to purge the old objects)"
     if [[ -n "$REMOTES" ]]; then
+        echo "  restore remote config removed by git-filter-repo: $(echo "$REMOTES" | tr '\n' ' ')"
         echo "  git fetch  (refresh remote tracking refs for --force-with-lease)"
     fi
     if [[ "$KEEP" = true ]]; then
@@ -396,46 +462,84 @@ if [[ "$KEEP" = true ]]; then
     trap 'rm -f "$TMPFILE"' EXIT
 fi
 
-# ── Run git filter-branch ─────────────────────────────────────────────────────
+# ── Save remote configuration ────────────────────────────────────────────────
+# git-filter-repo deletes the 'origin' remote after rewriting (a guard against
+# pushing rewritten history to the wrong place by accident). This script's
+# purpose is to force-push the scrubbed history back to the same remote, so
+# record every remote.* and branch upstream setting now and restore whatever
+# filter-repo removed afterwards. Each entry is stored as "key<newline>value".
+SAVED_REMOTE_CONFIG=()
+if [[ -n "$REMOTES" ]]; then
+    while IFS= read -r -d '' _entry; do
+        SAVED_REMOTE_CONFIG+=("$_entry")
+    done < <(git -C "$REPO_ROOT" config --local --null --get-regexp \
+        '^(remote\..*|branch\..*\.(remote|merge|pushremote))$' 2>/dev/null || true)
+fi
+
+# _restore_remote_config — re-add any saved remote/upstream config entries
+# that are now missing. Entries that still exist are left untouched.
+_restore_remote_config() {
+    local entry key value
+    for entry in "${SAVED_REMOTE_CONFIG[@]}"; do
+        key="${entry%%$'\n'*}"
+        value="${entry#*$'\n'}"
+        if ! git -C "$REPO_ROOT" config --local --get-all "$key" 2>/dev/null \
+                | grep -qxF -- "$value"; then
+            git -C "$REPO_ROOT" config --local --add "$key" "$value" || return 1
+        fi
+    done
+}
+
+# ── Run git-filter-repo ───────────────────────────────────────────────────────
 echo ""
 echo "Rewriting history to remove '$RELATIVE_PATH' from $HISTORY_COUNT commit(s)..."
+echo -e "${DIM}Using: ${FILTER_REPO_CMD[*]}${RESET}"
 echo ""
 
-# FILTER_BRANCH_SQUELCH_WARNING suppresses the deprecation notice on git >= 2.24
-if ! FILTER_BRANCH_SQUELCH_WARNING=1 git -C "$REPO_ROOT" filter-branch \
+# --force: filter-repo refuses to run on anything but a fresh clone (it checks
+# for a single reflog entry, no stashes, a packed repo, etc.). This script is
+# meant to run on the user's working repo, and it performs its own safety
+# checks above (worktree guard, clean tree, remote sync, confirmation prompt),
+# so we bypass filter-repo's fresh-clone check deliberately.
+# --invert-paths --path: drop exactly this path (a file, or a directory and
+# everything under it; matched literally, not as a glob) from every commit on
+# every branch and tag. Commits that become empty are pruned; filter-repo then
+# expires reflogs and repacks so the old objects are purged from the local
+# object store.
+if ! (cd "$REPO_ROOT" && "${FILTER_REPO_CMD[@]}" \
         --force \
-        --index-filter "git rm --cached --ignore-unmatch '$RELATIVE_PATH'" \
-        --prune-empty \
-        --tag-name-filter cat \
-        -- --all; then
-    err "git filter-branch failed. Your repository may be in an inconsistent state."
+        --invert-paths \
+        --path "$RELATIVE_PATH"); then
+    err "git-filter-repo failed. Your repository may be in an inconsistent state."
     if [[ -n "$BACKUP_PATH" ]]; then
         echo "Backup is at: $BACKUP_PATH"
+    fi
+    if [[ ${#SAVED_REMOTE_CONFIG[@]} -gt 0 ]]; then
+        _restore_remote_config || true
     fi
     echo "To recover, check: git reflog"
     exit 1
 fi
 
 ok "History rewritten — '$RELATIVE_PATH' removed from all commits."
-
-# ── Purge saved refs and loose objects ───────────────────────────────────────
-# filter-branch saves originals under refs/original/; delete them so gc can
-# actually remove the objects from disk.
-echo "Expiring reflog and running gc to purge objects..."
-while IFS= read -r ref; do
-    git -C "$REPO_ROOT" update-ref -d "$ref"
-done < <(git -C "$REPO_ROOT" for-each-ref --format="%(refname)" refs/original/)
-git -C "$REPO_ROOT" reflog expire --expire=now --all
-git -C "$REPO_ROOT" gc --prune=now --quiet
-
 ok "Objects purged from local repository."
 
+# ── Restore remotes removed by git-filter-repo ───────────────────────────────
+if [[ ${#SAVED_REMOTE_CONFIG[@]} -gt 0 ]]; then
+    if _restore_remote_config; then
+        ok "Restored remote configuration removed by git-filter-repo."
+    else
+        warn "Could not fully restore remote configuration. Check 'git remote -v'."
+        echo "  Re-add a missing remote with: git remote add <name> <url>"
+    fi
+fi
+
 # ── Refresh remote tracking refs ────────────────────────────────────────────
-# filter-branch rewrites refs/remotes/origin/* locally, leaving them pointing
-# at rewritten (non-existent-on-remote) commits. This makes --force-with-lease
-# fail because the "expected" value no longer matches the actual remote ref.
-# A fetch updates tracking refs to the real remote state so force-with-lease
-# works correctly in the post-push step.
+# git-filter-repo deletes the 'origin' remote together with its tracking refs
+# (and rewrites tracking refs of any other remote, leaving them pointing at
+# commits that do not exist on that remote). Without accurate tracking refs,
+# --force-with-lease refuses to push. A fetch recreates/updates them from the
+# real remote state so force-with-lease works correctly in the post-push step.
 if [[ -n "$REMOTES" ]]; then
     echo -n "Refreshing remote tracking refs (touch your key, 10s timeout)... "
     if _timed_fetch "$REPO_ROOT" 10; then
@@ -448,7 +552,7 @@ fi
 
 if [[ "$KEEP" = true ]]; then
     # ── Re-add current content ───────────────────────────────────────────────
-    # Ensure parent directory exists (filter-branch may have removed it)
+    # Ensure parent directory exists (the rewrite may have removed it)
     mkdir -p "$(dirname "$ABS_PATH")"
     cp "$TMPFILE" "$ABS_PATH"
 
@@ -483,7 +587,10 @@ echo ""
 
 if [[ -n "$REMOTES" ]]; then
     STEP=$((STEP + 1))
-    echo "  $STEP. Force-push ALL branches and tags to every remote:"
+    echo "  $STEP. Force-push ALL branches and tags to every remote."
+    echo "     git-filter-repo removed 'origin'; this script restored it. Confirm the"
+    echo "     remote URLs are where you intend to push first:"
+    echo "       cd $REPO_ROOT && git remote -v"
     echo "       cd $REPO_ROOT && git push --force-with-lease --all"
     echo "       cd $REPO_ROOT && git push --force-with-lease --tags"
     echo ""

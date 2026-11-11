@@ -104,7 +104,7 @@ $SCRIPT --dry-run CLAUDE.md
 
 **Expected:**
 - Banner shows `scrub-ai-context (dry run)` and lists `CLAUDE.md`
-- Passes `--dry-run` through to `git-filter-file` which shows filter-branch commands
+- Passes `--dry-run` through to `git-filter-file` which shows the git-filter-repo command
 - Exits 0
 - No changes made — `git log --oneline` unchanged, `CLAUDE.md` intact
 

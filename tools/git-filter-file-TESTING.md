@@ -6,6 +6,11 @@ All tests run against throwaway repos in `/tmp`. Never run against a real repo.
 SCRIPT=/path/to/git-filter-file.sh   # set this to your actual path
 ```
 
+**Prerequisite:** git-filter-repo must be resolvable — either `git filter-repo`
+is installed, or `uvx` (from uv) is on `PATH`, in which case the script runs
+`uvx git-filter-repo` (first use downloads it, so needs network). Check with
+`git filter-repo --version` or `uvx git-filter-repo --version`.
+
 ---
 
 ## Setup helpers
@@ -168,7 +173,7 @@ git add readme.txt
 $SCRIPT . secret.txt
 ```
 
-**Expected (stderr, exit 1):** `Error: Working tree has uncommitted changes.` with stash instructions. Script does NOT reach filter-branch.
+**Expected (stderr, exit 1):** `Error: Working tree has uncommitted changes.` with stash instructions. Script does NOT reach git-filter-repo.
 
 ---
 
@@ -193,8 +198,7 @@ $SCRIPT --dry-run . secret.txt
 
 **Expected:**
 - Prints banner with repo, file name and commit count
-- Shows the `git filter-branch` command that would run
-- Shows the cleanup commands: `git reflog expire --expire=now --all` and `git gc --prune=now --quiet` (not a summary like "(expire reflog + gc)")
+- Shows the git-filter-repo command that would run: `git filter-repo --force --invert-paths --path 'secret.txt'` (or `uvx git-filter-repo ...` when only uv is available), followed by a note that it also expires reflogs and repacks
 - Prints `-- dry run: no changes made --`
 - Exits 0
 - `git log --oneline` unchanged — no commits added or removed
@@ -228,8 +232,8 @@ $SCRIPT . secret.txt   # confirm at the prompt
 2. Banner shows `Operation: Remove from all history and working tree`
 3. No warnings (clean tree, no remotes)
 4. Prompts `Proceed? [y/N]` — enter `y`
-5. Prints rewriting message, then `✓ History rewritten`
-6. Prints gc message, then `✓ Objects purged`
+5. Prints rewriting message and `Using: git filter-repo` (or `uvx git-filter-repo`), then git-filter-repo's own progress output, then `✓ History rewritten`
+6. Prints `✓ Objects purged` (git-filter-repo expires reflogs and repacks itself)
 7. Prints `✓ Deleted 'secret.txt' from working tree and all history.`
 8. Prints "Done. Required next steps" — no remotes section
 
@@ -262,8 +266,8 @@ $SCRIPT --keep . secret.txt   # confirm at the prompt
 1. Banner shows `Operation: Remove from all history; re-add current content as one commit`
 2. Prompts `Proceed? [y/N]` — enter `y`
 3. Prints `Backup saved: .git/filter-file-backups/<timestamp>_secret.txt`
-4. Prints rewriting message, then `✓ History rewritten`
-5. Prints gc message, then `✓ Objects purged`
+4. Prints rewriting message and git-filter-repo's progress output, then `✓ History rewritten`
+5. Prints `✓ Objects purged`
 6. Prints `✓ Re-committed 'secret.txt' as a fresh single commit`
 7. Prints "Done. Required next steps"
 
@@ -282,7 +286,7 @@ git log --oneline -- secret.txt | grep "history scrub"
 # secret.txt content is gone from all prior history
 git log --all --oneline -- secret.txt   # still just 1 line
 
-# refs/original/ is fully cleaned up
+# No backup refs left behind (git-filter-repo does not create refs/original/)
 git for-each-ref refs/original/   # no output
 
 # readme.txt history is intact
@@ -377,7 +381,7 @@ $SCRIPT --dry-run "$dir" secret.txt
 
 ---
 
-## 17. --prune-empty: commit that only added the target file is dropped
+## 17. Empty-commit pruning: commit that only added the target file is dropped
 
 ```bash
 dir="/tmp/test-prune-$$"
@@ -407,7 +411,53 @@ git remote add origin https://github.com/example/fake.git
 $SCRIPT --dry-run . secret.txt
 ```
 
-**Expected:** Dry run output includes force-push instructions. (Use `--dry-run` to avoid needing a real remote.)
+**Expected:** Dry run output includes force-push instructions and the line
+`restore remote config removed by git-filter-repo: origin`. (Use `--dry-run`
+to avoid needing a real remote; answer `n` at the fetch prompt.)
+
+### 18b. Remote is restored after a real run
+
+git-filter-repo deletes the `origin` remote (and its tracking refs) after
+rewriting. The script saves the remote and branch-upstream config beforehand
+and restores it, then fetches so `--force-with-lease` has accurate tracking refs.
+
+```bash
+up="/tmp/test-restore-up-$$.git"; dir="/tmp/test-restore-$$"
+git init --bare "$up"
+git init "$dir" && cd "$dir"
+echo "normal" > readme.txt && git add . && git commit -m "init"
+echo "secret" > secret.txt && git add . && git commit -m "add secret"
+git remote add origin "$up" && git push -u origin HEAD
+$SCRIPT --yes . secret.txt
+```
+
+**Expected:**
+- git-filter-repo prints `NOTICE: Removing 'origin' remote`, then the script prints `✓ Restored remote configuration removed by git-filter-repo.` and refreshes tracking refs
+- `git remote get-url origin` prints `$up`; `git rev-parse --abbrev-ref @{u}` still prints `origin/<branch>`
+- Post-scrub step 2 tells you to check `git remote -v` before force-pushing
+- `git push --force-with-lease --all` succeeds and `git -C "$up" log --all --oneline -- secret.txt` is then empty
+
+Known limitation (predates the switch to git-filter-repo): `git push
+--force-with-lease --tags` is rejected with `stale info` for tags that were
+rewritten, because there are no remote-tracking refs for tags. Push those
+tags with `git push --force origin <tag>` after checking them.
+
+### 18c. git-filter-repo not available
+
+```bash
+dir=$(make_repo | tail -1 | awk '{print $3}')
+cd "$dir"
+# A PATH with git but without git-filter-repo or uvx:
+mkdir -p /tmp/nofr-$$ && ln -sf "$(command -v git)" /tmp/nofr-$$/git
+PATH="/tmp/nofr-$$:/usr/bin:/bin" $SCRIPT --yes . secret.txt
+PATH="/tmp/nofr-$$:/usr/bin:/bin" $SCRIPT --dry-run . secret.txt
+```
+
+(If `/usr/bin` contains `git-filter-repo` or `uvx`, adjust the PATH so it does not.)
+
+**Expected:**
+- Real run: `Error: git-filter-repo not found.` plus install instructions (uv, or git-filter-repo via brew/apt/pipx), exit 1, history untouched. There is no fallback to `git filter-branch`.
+- Dry run: warning that a real run would fail, the plan is still printed, exit 0.
 
 ---
 

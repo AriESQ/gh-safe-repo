@@ -56,6 +56,12 @@ jobs:
             > "$RUNNER_TEMP/xdg/gh-safe-repo/gh-safe-repo.ini"
           echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
 
+      # The shell completion tests drive real zsh and fish, which the runner
+      # lacks. With CI set, tests/test_completion.py fails rather than skips
+      # when either is missing (#141).
+      - name: Install zsh and fish for the completion tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh fish
+
       # No GH_TOKEN is exposed, so the tier-2/3 e2e tests (gh auth, live API)
       # skip themselves.
       - name: Run tests

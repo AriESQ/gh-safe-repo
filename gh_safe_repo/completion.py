@@ -341,7 +341,10 @@ def zsh_script(spec):
         f"{fn}() {{",
         '    local curcontext="$curcontext" state line ret=1',
         "    typeset -A opt_args",
-        "    _arguments -C \\",
+        # -A '-*': options after the command belong to it. Without it the
+        # top level also claims the shared ones (--debug, --config), and the
+        # command's positionals then complete nothing.
+        "    _arguments -C -A '-*' \\",
     ]
     for o in spec.options:
         lines.append(f"        {_zsh_option(o)} \\")
@@ -366,8 +369,9 @@ def zsh_script(spec):
         "    return ret",
         "}",
         "",
-        "# Autoloaded from $fpath, the file body is the function; sourced, register it.",
-        f'if [[ "$funcstack[1]" == "{fn}" ]]; then',
+        "# Autoloaded from $fpath, the file body is the function, named after the",
+        f"# file (_{spec.prog}): complete now. Sourced, register the function.",
+        f'if [[ "$funcstack[1]" == "_{spec.prog}" ]]; then',
         f'    {fn} "$@"',
         "else",
         f"    compdef {fn} {spec.prog}",

@@ -20,7 +20,7 @@ _gh_safe_repo_commands() {
 _gh_safe_repo() {
     local curcontext="$curcontext" state line ret=1
     typeset -A opt_args
-    _arguments -C \
+    _arguments -C -A '-*' \
         '(-h --help)'{-h,--help}'[show this help message and exit]' \
         '--debug[Show every API call made]' \
         '--config[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
@@ -105,8 +105,9 @@ _gh_safe_repo() {
     return ret
 }
 
-# Autoloaded from $fpath, the file body is the function; sourced, register it.
-if [[ "$funcstack[1]" == "_gh_safe_repo" ]]; then
+# Autoloaded from $fpath, the file body is the function, named after the
+# file (_gh-safe-repo): complete now. Sourced, register the function.
+if [[ "$funcstack[1]" == "_gh-safe-repo" ]]; then
     _gh_safe_repo "$@"
 else
     compdef _gh_safe_repo gh-safe-repo

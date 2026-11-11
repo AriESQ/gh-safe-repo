@@ -3,14 +3,20 @@
 The scripts are generated from the live parser, so the content tests walk
 `build_parser()` independently and check every command and flag appears.
 The bash tests source the script in a real `bash` and drive the completion
-function through COMP_WORDS / COMP_CWORD; zsh and fish are syntax-checked
-(and fish driven with `complete -C`) when those shells are installed.
+function through COMP_WORDS / COMP_CWORD; fish is driven with `complete -C`,
+and zsh through its real completion system in an interactive `zsh` on a
+pseudo-terminal. The zsh and fish tests skip when the shell is missing,
+except under CI (`CI` set), where they fail: CI installs both (#141).
 """
 
 import argparse
+import os
+import pty
+import select
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,9 +28,48 @@ from gh_safe_repo.completion import SHELLS, describe, generate
 COMPLETIONS = Path(__file__).resolve().parent.parent / "completions"
 CHECKED_IN = {"bash": "gh-safe-repo.bash", "zsh": "_gh-safe-repo", "fish": "gh-safe-repo.fish"}
 
-needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
-needs_zsh = pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh not installed")
-needs_fish = pytest.mark.skipif(shutil.which("fish") is None, reason="fish not installed")
+
+def _in_ci():
+    return os.environ.get("CI", "").lower() not in ("", "0", "false")
+
+
+def _require_shell(shell):
+    """Skip when `shell` is not installed; under CI, fail instead.
+
+    CI installs zsh and fish (.github/workflows/ci.yml), so a missing shell
+    there means that step broke, and a skip would let a broken script merge
+    with green CI (#141).
+    """
+    if shutil.which(shell) is not None:
+        return
+    if _in_ci():
+        pytest.fail(
+            f"{shell} is not installed, and CI is set: CI must run every shell "
+            f"completion test. Install {shell} (see the 'Install zsh and fish' step "
+            "in .github/workflows/ci.yml), or unset CI to skip these tests locally.",
+            pytrace=False,
+        )
+    pytest.skip(f"{shell} not installed")
+
+
+@pytest.fixture
+def bash_installed():
+    _require_shell("bash")
+
+
+@pytest.fixture
+def zsh_installed():
+    _require_shell("zsh")
+
+
+@pytest.fixture
+def fish_installed():
+    _require_shell("fish")
+
+
+needs_bash = pytest.mark.usefixtures("bash_installed")
+needs_zsh = pytest.mark.usefixtures("zsh_installed")
+needs_fish = pytest.mark.usefixtures("fish_installed")
 
 
 def _subparsers(parser):
@@ -282,3 +327,147 @@ class TestFishCompletion:
 
     def test_command_after_global_option_value(self, tmp_path):
         assert fish_complete("gh-safe-repo --config x.ini n", tmp_path) == ["new"]
+
+
+# --- zsh, driven through compsys on a pseudo-terminal -------------------------
+
+# The .zshrc of the zsh under test. compsys only runs inside ZLE, so the shell
+# is interactive on a pty, and the test types the line and a Tab. compadd is
+# wrapped to append what each call offers (after compsys's own prefix
+# matching, via `compadd -O`) to $GSR_OUT; calls that only collect matches
+# (-O / -A / -D) are compsys internals and pass straight through. Files mark
+# the hand-offs, so nothing depends on parsing the terminal or on timing:
+# zle-line-init writes $GSR_READY once ZLE is reading keys, and comppostfuncs
+# writes $GSR_DONE when completion has finished, with or without matches.
+_ZSHRC = r"""
+fpath=("$GSR_FPATH" $fpath)
+autoload -Uz compinit && compinit -u -D
+[[ -n $GSR_SOURCE ]] && source "$GSR_FPATH/_gh-safe-repo"
+PS1='> ' RPS1=''
+unsetopt beep
+bindkey '^I' complete-word
+compadd() {
+    if [[ ${@[1,(i)(-|--)]} == *-(O|A|D)\ * ]]; then
+        builtin compadd "$@"; return
+    fi
+    local -a hits
+    builtin compadd -O hits "$@"
+    (( $#hits )) && print -rl -- $hits >> "$GSR_OUT"
+    builtin compadd "$@"
+}
+_gsr_done() { print -r -- done > "$GSR_DONE" }
+comppostfuncs=(_gsr_done)
+_gsr_ready() { print -r -- ready > "$GSR_READY" }
+zle -N zle-line-init _gsr_ready
+"""
+
+
+def zsh_complete(line, tmp_path, cwd=None, script=None, source=False, timeout=15):
+    """Press Tab after `line` in an interactive zsh; return what compsys offered.
+
+    The script is installed the way completions/_gh-safe-repo is meant to
+    be, as `_gh-safe-repo` on $fpath before compinit (autoloaded on first
+    use), or, with `source=True`, sourced after compinit, as
+    `source <(gh-safe-repo --completion zsh)` does.
+    """
+    home = tmp_path / "zsh-home"
+    fpath = home / "fpath"
+    fpath.mkdir(parents=True, exist_ok=True)
+    (fpath / "_gh-safe-repo").write_text(script if script is not None else _script("zsh"))
+    (home / ".zshrc").write_text(_ZSHRC)
+    out, ready, done = home / "out", home / "ready", home / "done"
+    for f in (out, ready, done):
+        f.unlink(missing_ok=True)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
+        "ZDOTDIR": str(home), "TERM": "dumb", "GSR_FPATH": str(fpath),
+        "GSR_OUT": str(out), "GSR_READY": str(ready), "GSR_DONE": str(done),
+        **({"GSR_SOURCE": "1"} if source else {}),
+    }
+    master, slave = pty.openpty()
+    # -d: no global rc files beyond /etc/zshenv; ZDOTDIR supplies the .zshrc.
+    proc = subprocess.Popen(["zsh", "-d", "-i"], stdin=slave, stdout=slave, stderr=slave,
+                            cwd=cwd or tmp_path, env=env, start_new_session=True)
+    os.close(slave)
+    screen = b""
+
+    def wait_for(marker):
+        # Drain the pty while waiting, so zsh never blocks on a full buffer.
+        nonlocal screen
+        deadline = time.monotonic() + timeout
+        while not marker.exists():
+            if time.monotonic() > deadline or proc.poll() is not None:
+                pytest.fail(f"zsh wrote no {marker.name} marker completing {line!r}; "
+                            f"terminal:\n{screen.decode(errors='replace')}", pytrace=False)
+            if select.select([master], [], [], 0.05)[0]:
+                try:
+                    screen += os.read(master, 4096)
+                except OSError:
+                    pass
+
+    try:
+        wait_for(ready)
+        os.write(master, line.encode() + b"\t")
+        wait_for(done)
+    finally:
+        proc.kill()
+        proc.wait()
+        os.close(master)
+    return sorted({w for w in out.read_text().splitlines() if w}) if out.exists() else []
+
+
+@needs_zsh
+class TestZshCompletion:
+    def test_commands(self, tmp_path):
+        assert zsh_complete("gh-safe-repo ", tmp_path) == sorted(_all_commands())
+
+    def test_commands_when_sourced(self, tmp_path):
+        assert zsh_complete("gh-safe-repo ", tmp_path, source=True) == sorted(_all_commands())
+
+    def test_command_prefix(self, tmp_path):
+        assert zsh_complete("gh-safe-repo fi", tmp_path) == ["fix"]
+
+    def test_global_options_before_command(self, tmp_path):
+        assert zsh_complete("gh-safe-repo --", tmp_path) == sorted(
+            f for f in _flags(build_parser()) if f.startswith("--") and f != "--completion")
+
+    def test_command_options(self, tmp_path):
+        assert zsh_complete("gh-safe-repo fix --mi", tmp_path) == ["--migrate-branch-protection"]
+        # audit has no --yes / --dry-run
+        assert zsh_complete("gh-safe-repo audit --d", tmp_path) == ["--debug"]
+
+    def test_options_after_positional(self, tmp_path):
+        assert zsh_complete("gh-safe-repo new alice/app --p", tmp_path) == ["--public"]
+
+    def test_command_after_global_option_value(self, tmp_path):
+        assert zsh_complete("gh-safe-repo --config x.ini n", tmp_path) == ["new"]
+
+    def test_choices(self, tmp_path):
+        script = generate(_choices_parser(), "zsh")
+        assert zsh_complete("gh-safe-repo scan --format ", tmp_path, script=script) == [
+            "sarif", "table"]
+
+    def test_config_completes_files(self, tmp_path):
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "alt.ini").write_text("")
+        (work / "sub").mkdir()
+        assert zsh_complete("gh-safe-repo --config ", tmp_path, cwd=work) == ["alt.ini", "sub"]
+        assert zsh_complete("gh-safe-repo fix --config a", tmp_path, cwd=work) == ["alt.ini"]
+
+    def test_path_positionals_complete_directories(self, tmp_path):
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "file.txt").write_text("")
+        (work / "proj").mkdir()
+        assert zsh_complete("gh-safe-repo push ", tmp_path, cwd=work) == ["proj"]
+        assert zsh_complete("gh-safe-repo scan --json ", tmp_path, cwd=work) == ["proj"]
+        # Options a command shares with the top level (--debug, --config)
+        # belong to the command, and its positionals still complete.
+        assert zsh_complete("gh-safe-repo push --debug ", tmp_path, cwd=work) == ["proj"]
+        assert zsh_complete("gh-safe-repo push --config x.ini ", tmp_path, cwd=work) == ["proj"]
+        # The second positional of push is OWNER/REPO: no directories.
+        assert zsh_complete("gh-safe-repo push proj ", tmp_path, cwd=work) == []
+
+    def test_unknown_command_completes_nothing(self, tmp_path):
+        assert zsh_complete("gh-safe-repo frobnicate ", tmp_path) == []

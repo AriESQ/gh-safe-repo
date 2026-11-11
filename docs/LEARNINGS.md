@@ -931,3 +931,14 @@ out of the org's managed set (`configuration-statuses.md`).
 `GET /repos/{o}/{r}/code-security-configuration` reports the status, but
 needs an org admin or security manager. See section 7 of
 `docs/2026-11-01_security-settings-availability.md`.
+
+## Python 3.10 Floor in CI (#148)
+
+**Code and tests must run on Python 3.10.** `requires-python = ">=3.10"`
+and the CI matrix tests 3.10 and 3.14. Standard-library modules added in
+3.11+ (e.g. `tomllib`) fail only the 3.10 job. A local run on a newer Python
+will not catch it. In #149, `TestVersion.test_matches_pyproject` imported
+`tomllib` and failed on 3.10 with `ModuleNotFoundError`. The fix reads the
+version from `pyproject.toml` with a regex (`tests/test_cli.py`). Use a
+3.10-safe path for anything newer (regex, a guarded import, or a
+dependency), or run `UV_PYTHON=3.10 uv run pytest` before pushing.

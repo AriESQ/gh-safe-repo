@@ -2626,3 +2626,36 @@ class TestConfirmationPromptUnattended:
         assert captured.out == ""
         assert "Create alice/my-repo" in captured.err
         assert "--yes is required" in captured.err
+
+
+class TestVersion:
+    """`-v`/`--version` print the installed version and exit 0 (#148)."""
+
+    @pytest.mark.parametrize("flag", ["-v", "--version"])
+    def test_prints_version_and_exits_0(self, flag, capsys):
+        from gh_safe_repo import __version__
+        with pytest.raises(SystemExit) as exc_info:
+            build_parser().parse_args([flag])
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().out == f"gh-safe-repo {__version__}\n"
+
+    def test_matches_pyproject(self):
+        # No tomllib: it is 3.11+, and CI still runs 3.10.
+        import re
+        from pathlib import Path
+        from gh_safe_repo import __version__
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
+        assert m and __version__ == m.group(1)
+
+    def test_shown_in_help(self):
+        from gh_safe_repo import __version__
+        help_text = build_parser().format_help()
+        assert f"gh-safe-repo {__version__} — " in help_text
+        assert "-v, --version" in help_text
+
+    def test_top_level_only(self):
+        # -v is not a subcommand flag (and never means --verbose; that's --debug)
+        with pytest.raises(SystemExit) as exc_info:
+            build_parser().parse_args(["audit", "alice/app", "-v"])
+        assert exc_info.value.code == 2

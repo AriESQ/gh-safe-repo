@@ -47,7 +47,7 @@ _gh_safe_repo() {
 
     case "$cmd" in
         "")
-            opts='-h --help --debug --config --no-config'
+            opts='-h --help -v --version --debug --config --no-config'
             valopts=' --config '
             case "$prev" in
                 --config)

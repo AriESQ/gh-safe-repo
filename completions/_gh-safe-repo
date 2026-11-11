@@ -22,6 +22,7 @@ _gh_safe_repo() {
     typeset -A opt_args
     _arguments -C -A '-*' \
         '(-h --help)'{-h,--help}'[show this help message and exit]' \
+        '(-v --version)'{-v,--version}'[Show the version and exit]' \
         '--debug[Show every API call made]' \
         '--config=[Config file to use (default\: discovered from XDG dirs or the current directory)]:path:_files' \
         '--no-config[Ignore config files; use built-in defaults only]' \

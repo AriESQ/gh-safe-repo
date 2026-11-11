@@ -437,12 +437,9 @@ $SCRIPT --yes . secret.txt
 - git-filter-repo prints `NOTICE: Removing 'origin' remote`, then the script prints `✓ Restored remote configuration removed by git-filter-repo.` and refreshes tracking refs
 - `git remote get-url origin` prints `$up`; `git rev-parse --abbrev-ref @{u}` still prints `origin/<branch>`
 - Post-scrub step 2 tells you to check `git remote -v` before force-pushing
-- `git push --force-with-lease --all` succeeds and `git -C "$up" log --all --oneline -- secret.txt` is then empty
-
-Known limitation (predates the switch to git-filter-repo): `git push
---force-with-lease --tags` is rejected with `stale info` for tags that were
-rewritten, because there are no remote-tracking refs for tags. Push those
-tags with `git push --force origin <tag>` after checking them.
+- `git push --force-with-lease origin --all` succeeds and `git -C "$up" log --all --oneline -- secret.txt` is then empty
+- The repo has no tags, so step 2 reads "Force-push ALL branches to 'origin'"
+  and prints no tag push
 
 ### 18c. git-filter-repo not available
 
@@ -517,6 +514,103 @@ GIT_FILTER_REPO_VERSION=latest $SCRIPT --dry-run . secret.txt
 - `latest` (not a version number): real run prints
   `Error: GIT_FILTER_REPO_VERSION='latest' is not a version number ...`,
   exit 1, history untouched; dry run shows it as a warning, exit 0.
+
+### 18f. Rewritten tags are pushed with an explicit lease per tag (#135)
+
+`git push --force-with-lease --tags` (what the script used to print) is
+rejected with `stale info` for every rewritten tag: with no expected value
+the lease compares against remote-tracking refs, and git has none for tags.
+The script now records the remote's tags (`git ls-remote --tags`) before
+the rewrite and prints one push with `--force-with-lease=refs/tags/<tag>:<sha>`
+for each tag that differs.
+
+```bash
+up="/tmp/test-tags-up-$$.git"; dir="/tmp/test-tags-$$"; other="/tmp/test-tags-other-$$"
+git init --bare "$up"
+git init "$dir" && cd "$dir"
+echo normal > readme.txt && git add . && git commit -m init && git tag pre
+echo secret > secret.txt && git add . && git commit -m "add secret" && git tag v1
+echo more >> readme.txt && echo s2 >> secret.txt && git add . && git commit -m both
+git tag -a v2 -m "release v2"
+echo again >> readme.txt && git add . && git commit -m "readme only"
+# A tag on a branchless commit that holds only secret.txt: the rewrite prunes
+# that commit, and git-filter-repo deletes the tag.
+tree=$(printf '100644 blob %s\tsecret.txt\n' "$(echo x | git hash-object -w --stdin)" | git mktree)
+git tag gone "$(git commit-tree -m orphan "$tree")"
+git remote add origin "$up" && git push -u origin HEAD && git push origin pre v1 v2 gone
+git clone "$up" "$other"                       # someone else's clone
+git -C "$other" tag remote-only pre && git -C "$other" push origin remote-only
+git tag local-new v2^{}                        # local only, never pushed
+$SCRIPT --dry-run --yes . secret.txt
+$SCRIPT --yes . secret.txt
+```
+
+**Expected:**
+- Before the banner: `Recording tags on 'origin' (touch your key again, 10s timeout)... done (5 tag(s)).`
+- Banner: `Tags: 4 of 5 local tag(s) reach this file and will be rewritten` and `gone local-new v1 v2`
+- Dry run, under `Would print`: `v1  lease <sha> (lightweight)`, `v2  lease <sha> (annotated)`
+  (the tag object's SHA, not the peeled commit), `local-new  lease empty`, and a
+  note that `remote-only` is left as it is. No `.git/filter-file-push-tags.sh` is written.
+- Real run, step 2 prints (paths absolute, per #34):
+  ```
+  cd /tmp/test-tags-NNN && git push --force-with-lease origin --all
+  cd /tmp/test-tags-NNN && git push \
+      --force-with-lease=refs/tags/local-new: \
+      --force-with-lease=refs/tags/v1:<old v1 sha> \
+      --force-with-lease=refs/tags/v2:<old v2 tag object sha> \
+      --force-with-lease=refs/tags/gone:<old gone sha> \
+      origin \
+      refs/tags/local-new \
+      refs/tags/v1 \
+      refs/tags/v2 \
+      :refs/tags/gone
+  ```
+  then `Updates 2, creates 1, deletes 1 tag(s) on 'origin'`, `gone` listed as
+  deleted, and a note that `remote-only` is left alone. `pre` is not pushed (unchanged).
+- The tag push is also saved as `.git/filter-file-push-tags.sh`
+- `git tag` shows no `remote-only` (the fetches use `--no-tags`) and no `gone`
+- Copy and run the two printed push commands: both succeed, then
+  ```bash
+  rm -rf /tmp/test-tags-fresh-$$ && git clone "$up" /tmp/test-tags-fresh-$$
+  git -C /tmp/test-tags-fresh-$$ log --all --oneline -- secret.txt   # empty
+  git -C "$up" log --tags --oneline -- secret.txt                    # empty
+  git -C "$up" cat-file -t refs/tags/v2                              # tag
+  git -C "$up" rev-parse -q --verify refs/tags/gone                  # nothing
+  ```
+  and `git -C "$up" rev-parse refs/tags/<t>` equals `git rev-parse refs/tags/<t>`
+  for `pre`, `v1`, `v2` and `local-new`.
+- Repeat with `--keep`: the same, except the fresh clone's
+  `git log --all -- secret.txt` shows only the re-add commit, and
+  `git log --tags -- secret.txt` is empty.
+
+**Safety case (tag moved on the remote after the snapshot).** Repeat the
+setup, run `$SCRIPT --yes . secret.txt`, and before pushing move a tag from
+the other clone:
+
+```bash
+git -C "$other" fetch origin --tags
+git -C "$other" tag -f v1 HEAD && git -C "$other" push -f origin v1
+```
+
+(Move it to a commit other than the one the rewrite gives `v1`: here the
+"add secret" commit becomes empty and is pruned, so the rewritten `v1` is
+the `pre` commit, and moving the remote tag there would make the push a no-op.)
+
+**Expected:** running the printed tag push prints
+`! [rejected]        v1 -> v1 (stale info)` and exits non-zero; the other
+tags are still updated; `git -C "$up" rev-parse refs/tags/v1` is the other
+clone's value, not overwritten.
+
+**More than 10 tags:** create 12 or more tags on commits after the file was
+added and push them. Step 2 prints `bash /abs/path/.git/filter-file-push-tags.sh`
+and a `cat` to review it instead of an inline command; running it pushes all
+tags. Tag names with shell characters (e.g. `git tag "we'ird\$tag&x"`) are
+quoted in both the printed command and the file.
+
+**Fetch skipped:** answer `n` at the fetch prompt. The remote's tags cannot be
+recorded, so step 2 says so and prints `git ls-remote --tags origin` and
+`git push --force origin --tags`, to be run only after checking that nobody
+moved a tag. No push file is written.
 
 ---
 

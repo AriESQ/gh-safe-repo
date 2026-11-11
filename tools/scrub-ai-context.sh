@@ -61,7 +61,9 @@ Each target is scrubbed via git-filter-file in a separate pass.
 
 Options:
   --dry-run   Show what would happen without making any changes
-  --push      Force-push all branches and tags after scrubbing
+  --push      Force-push all branches and tags after scrubbing (skipped if
+              any target failed). Tags are pushed with an explicit lease
+              per tag, recorded from the remote before the first rewrite
   -h, --help  Show this help
 
 Examples:
@@ -72,7 +74,8 @@ Examples:
 
 After running (without --push), you MUST:
   1. Force-push all branches:  git push --force-with-lease --all
-  2. Force-push all tags:      git push --force-with-lease --tags
+  2. Push the rewritten tags:  bash .git/filter-file-push-tags.sh
+     (written by the last pass; each tag has an explicit lease)
   3. Alert collaborators to re-clone or reset their local copies
 EOF
     exit "${1:-0}"
@@ -155,6 +158,17 @@ fi
 # ── Scrub each target ───────────────────────────────────────────────────────
 FAILED=()
 
+# One tag snapshot for all passes (#135): the first git-filter-file pass
+# records the remote's tags and the local tags before any rewrite, and the
+# later passes reuse it. The last pass then writes a tag push
+# (.git/filter-file-push-tags.sh) whose leases compare against the remote
+# as it was before the first rewrite, covering every tag any pass changed.
+GIT_FILTER_FILE_TAG_SNAPSHOT="$(mktemp)"
+export GIT_FILTER_FILE_TAG_SNAPSHOT
+trap 'rm -f "$GIT_FILTER_FILE_TAG_SNAPSHOT"' EXIT
+TAG_PUSH_FILE="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)/filter-file-push-tags.sh"
+rm -f "$TAG_PUSH_FILE"   # a stale one from an earlier run must not be pushed
+
 for target in "${TARGETS[@]}"; do
     echo ""
     bold "--- Scrubbing: $target ---"
@@ -177,15 +191,27 @@ done
 # ── Optional force-push ───────────────────────────────────────────────────────
 REMOTES="$(git -C "$REPO_ROOT" remote 2>/dev/null || true)"
 
+PUSHED=false
 if [[ "$PUSH" = true ]]; then
     if [[ -z "$REMOTES" ]]; then
         warn "No remotes configured — skipping push."
+    elif [[ "${#FAILED[@]}" -gt 0 ]]; then
+        warn "Some targets failed — skipping push so a partly scrubbed history is not published."
     else
         echo ""
-        echo "Force-pushing all branches and tags..."
+        echo "Force-pushing all branches..."
         git -C "$REPO_ROOT" push --force-with-lease --all
-        git -C "$REPO_ROOT" push --force-with-lease --tags
+        if [[ -f "$TAG_PUSH_FILE" ]]; then
+            echo "Pushing rewritten tags (explicit lease per tag)..."
+            if ! bash "$TAG_PUSH_FILE"; then
+                err "Tag push failed. A tag rejected with \"stale info\" was changed on the"
+                echo "remote after the scrub started; check it with 'git ls-remote --tags'." >&2
+                echo "Retry the remaining tags with: bash $TAG_PUSH_FILE" >&2
+                exit 1
+            fi
+        fi
         ok "Force-push complete."
+        PUSHED=true
     fi
 fi
 
@@ -199,10 +225,12 @@ if [[ "${#FAILED[@]}" -gt 0 ]]; then
     echo "Check output above for details."
 fi
 
-if [[ -n "$REMOTES" && "$PUSH" = false ]]; then
+if [[ -n "$REMOTES" && "$PUSHED" = false ]]; then
     echo ""
-    echo "  Force-push ALL branches and tags to every remote:"
-    echo "    git push --force-with-lease --all"
-    echo "    git push --force-with-lease --tags"
+    echo "  Force-push ALL branches and tags (the last pass above printed the details):"
+    echo "    cd $REPO_ROOT && git push --force-with-lease --all"
+    if [[ -f "$TAG_PUSH_FILE" ]]; then
+        echo "    bash $TAG_PUSH_FILE   # tags, one explicit lease per tag"
+    fi
 fi
 echo ""

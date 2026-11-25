@@ -166,10 +166,30 @@ FAILED=()
 GIT_FILTER_FILE_TAG_SNAPSHOT="$(mktemp)"
 export GIT_FILTER_FILE_TAG_SNAPSHOT
 trap 'rm -f "$GIT_FILTER_FILE_TAG_SNAPSHOT"' EXIT
-TAG_PUSH_FILE="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)/filter-file-push-tags.sh"
+GIT_DIR_ABS="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)"
+TAG_PUSH_FILE="$GIT_DIR_ABS/filter-file-push-tags.sh"
 rm -f "$TAG_PUSH_FILE"   # a stale one from an earlier run must not be pushed
 
+# git-filter-repo state (#151): every pass is an independent rewrite, never a
+# continuation of the one before, so git-filter-file moves the state the
+# previous git-filter-repo run left in .git/filter-repo/ aside before each
+# pass. Collect those under one directory for this scrub, one subdirectory
+# per pass, instead of one timestamped directory per pass:
+#   before-pass-1  state from an earlier scrub, if there was one
+#   before-pass-N  state written by pass N-1
+# The directory is only created if there is something to move.
+STATE_BACKUP_BASE="$GIT_DIR_ABS/filter-file-backups/filter-repo-state-$(date +%Y-%m-%dT%H%M%S)"
+STATE_BACKUP_ROOT="$STATE_BACKUP_BASE"
+_n=1
+while [[ -e "$STATE_BACKUP_ROOT" || -L "$STATE_BACKUP_ROOT" ]]; do
+    _n=$((_n + 1))
+    STATE_BACKUP_ROOT="$STATE_BACKUP_BASE-$_n"
+done
+
+PASS=0
 for target in "${TARGETS[@]}"; do
+    PASS=$((PASS + 1))
+    export GIT_FILTER_FILE_STATE_BACKUP="$STATE_BACKUP_ROOT/before-pass-$PASS"
     echo ""
     bold "--- Scrubbing: $target ---"
 

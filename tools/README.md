@@ -163,6 +163,35 @@ README's Prerequisites) and exits with instructions if git is older. With
   release is unknown (`--version` prints a commit hash), it was packaged for
   your system, and it runs its own git-version checks.
 
+**Re-running on the same repo (#151).** git-filter-repo leaves its state in
+`.git/filter-repo/` (`already_ran`, `commit-map`, `ref-map`, ...). On a later
+run it would treat the new run as a continuation of the old one, or, if
+`already_ran` is older than a day, ask `Treat this run as a continuation of
+filtering in the previous run (Y/N)?` on stdin, which `--yes` cannot answer
+and which crashed with `EOFError` when stdin was not a terminal. Each run of
+this script is a self-contained scrub, so:
+
+- After its checks and the confirmation, and just before the rewrite, the
+  script moves an existing `.git/filter-repo/` to
+  `.git/filter-file-backups/filter-repo-state-<YYYY-MM-DD>T<HHMMSS>/` and
+  prints both paths. Nothing is deleted; a name that already exists gets a
+  `-2`, `-3`, ... suffix. `--dry-run` only lists the move. The paths are
+  under the repository's real git directory (in a submodule,
+  `<superproject>/.git/modules/<name>/`).
+- `scrub-ai-context.sh` runs one independent pass per target. It keeps the
+  moves of one scrub together: `filter-repo-state-<timestamp>/before-pass-N`
+  holds the state found before pass N (for N > 1, written by pass N-1).
+- git-filter-repo runs with stdin from `/dev/null`, so a question from it
+  fails at once instead of waiting or reading input meant for something else.
+- If git-filter-repo fails, the script compares HEAD and all refs with what
+  they were before. Unchanged: `git-filter-repo failed before rewriting
+  anything.` Changed: `Your repository may be in an inconsistent state.`
+  Exit code 1 either way.
+
+These backups are not cleaned up; delete
+`.git/filter-file-backups/filter-repo-state-*` when you no longer need the
+old commit maps.
+
 **Bumping the git-filter-repo pin.** Dependabot cannot update a version
 pinned inside a shell script, so check for a new release by hand before a
 release of gh-safe-repo (see [PyPI](https://pypi.org/project/git-filter-repo/)
@@ -173,8 +202,9 @@ or `pip index versions git-filter-repo`). To bump:
    (`https://github.com/newren/git-filter-repo/blob/v<version>/README.md`)
    and update `GIT_FILTER_REPO_MIN_GIT` and the source comment above it.
 3. Update the version in this section, then run the happy path (11), the
-   too-old-git case (18d) and the override (18e) in
-   `git-filter-file-TESTING.md`.
+   too-old-git case (18d), the override (18e) and the second-run cases (24)
+   in `git-filter-file-TESTING.md`. Check that the new release still keeps
+   its state in `<git dir>/filter-repo/`.
 
 ```bash
 # Remove a file from all history and disk (repo-relative path)

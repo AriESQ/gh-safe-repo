@@ -9,6 +9,23 @@ since the initial release.
 
 ## [Unreleased]
 
+### Fixed
+- `tools/git-filter-file.sh` (and `tools/scrub-ai-context.sh`, which calls
+  it) no longer fail or misbehave on a second run in the same repo (#151).
+  git-filter-repo leaves `.git/filter-repo/already_ran` behind; with a marker
+  older than a day it asked `Treat this run as a continuation of filtering in
+  the previous run (Y/N)?`, which crashed with `EOFError` under `--yes` when
+  stdin was not a terminal, and with a younger marker it silently continued
+  the previous run. The script now moves an existing `.git/filter-repo/` to
+  `.git/filter-file-backups/filter-repo-state-<YYYY-MM-DD>T<HHMMSS>/` just
+  before the rewrite and says so; nothing is deleted, and `--dry-run` only
+  lists the move. `scrub-ai-context.sh` keeps one such directory per scrub,
+  with a `before-pass-N` subdirectory per pass. git-filter-repo now runs
+  with stdin from `/dev/null`. When git-filter-repo fails, the script checks
+  HEAD and all refs: if nothing changed it reports `git-filter-repo failed
+  before rewriting anything` instead of `Your repository may be in an
+  inconsistent state`.
+
 ## [0.13.0] - 2026-11-11
 
 ### Added

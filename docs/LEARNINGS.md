@@ -1068,11 +1068,16 @@ and API bodies, which are legitimately multi-line. So a remote can still add
 `info()` cannot do the same, because callers pass it text that already holds
 the tool's colour codes; its callers escape the untrusted part themselves.
 
-**Not covered: child-process stderr that is passed straight through.**
-truffleHog (native or container) runs with `stderr=None` so its progress and
-the container runtime's image-pull output reach the terminal live. That
-stream is never seen by this process. Sanitizing it would mean relaying it
-through a pipe, and would garble the pull progress bars, which use `\r` and
-colour on purpose. Whether truffleHog's own log lines can carry a raw file
-name was not checked; if they can, this is an open hole. An uncaught
-exception's traceback is likewise unsanitized.
+**truffleHog's stderr is escaped on its way through.** #134 replaced the
+inherited `stderr=None` with a pipe that `_run_teeing_stderr()` echoes, so
+the echo goes through `safe_display(multiline=True)` as well. truffleHog's
+log lines are JSON in the shape of Go's zap encoder, which escapes C0
+controls but writes valid UTF-8 (C1, bidi) raw, so a file name in a log line
+could reach the terminal unescaped while the stream was inherited. (Inferred
+from zap's encoder and the log shape in #134, not tested against a live
+truffleHog.)
+Because the child now sees a pipe rather than a TTY, the container runtime
+prints plain pull lines instead of `\r` progress bars, so escaping garbles
+nothing. An incremental UTF-8 decoder keeps a character split across two
+4096-byte reads intact. An uncaught exception's traceback is still
+unsanitized.

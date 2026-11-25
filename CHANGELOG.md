@@ -78,7 +78,8 @@ since the initial release.
   `View with:` hint, skipped directories), the scan progress line, the plan
   table and its warnings, the `Verified` section, the closing banner, every
   `Error:` / `Warning:` message (which carry git and API error text), the
-  push-failure recovery commands and the `--debug` lines. `--json` output is
+  push-failure recovery commands, the `--debug` lines and truffleHog's own
+  log output as it is relayed to the terminal. `--json` output is
   unchanged and still carries the exact original values (JSON escapes them
   itself). One exception: the remediation text in an AI context file
   finding's `match` now embeds the escaped path; `file_path` stays raw.

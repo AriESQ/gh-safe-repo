@@ -8,6 +8,7 @@ truffleHog is used if installed; regex fallback otherwise.
 Always runs locally — never in GitHub Actions.
 """
 
+import codecs
 import json
 import os
 import re
@@ -1125,17 +1126,32 @@ class SecurityScanner:
         chunks: List[bytes] = []
 
         def pump():
+            # The echo is escaped like every other untrusted output (#125):
+            # truffleHog's JSON log escapes C0 controls but passes C1 and
+            # bidi characters from file names through. The incremental
+            # decoder keeps a multi-byte character split across two reads
+            # intact. The child sees a pipe, not a TTY, so the container
+            # runtime does not draw \r progress bars that escaping would
+            # garble.
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+            def echo(text):
+                if not text:
+                    return
+                try:
+                    sys.stderr.write(safe_display(text, multiline=True))
+                    sys.stderr.flush()
+                except (OSError, ValueError):
+                    pass  # our stderr went away; keep draining
+
             with os.fdopen(read_fd, "rb", buffering=0) as stream:
                 while True:
                     chunk = stream.read(4096)
                     if not chunk:
+                        echo(decoder.decode(b"", final=True))
                         return
                     chunks.append(chunk)
-                    try:
-                        sys.stderr.write(chunk.decode("utf-8", errors="replace"))
-                        sys.stderr.flush()
-                    except (OSError, ValueError):
-                        pass  # our stderr went away; keep draining
+                    echo(decoder.decode(chunk))
 
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()

@@ -224,6 +224,9 @@ left alone and the banner tells you what to run instead. Afterwards every
 pushed branch and tag is checked against GitHub SHA for SHA. Details in
 [Pushing code](#pushing-code).
 
+The directory needs at least one commit. For a project you have only just
+`git init`-ed, see [Starting from a directory with no commits](#starting-from-a-directory-with-no-commits).
+
 ### Mirror an existing repo
 
 ```bash
@@ -489,7 +492,7 @@ prompts and the banner go to stderr.
   `verification` block. Without `--yes` the plan table is shown on stderr
   before the prompt. Declining the prompt prints the document without
   `verification`.
-- A run that stops with exit `1` before or during the apply prints no
+- A run that stops with exit `1` or `2` before or during the apply prints no
   document: stdout is empty and the error is on stderr.
 
 ```json
@@ -625,7 +628,7 @@ no checks and `"ok": true`.
 |---|---|
 | `0` | Success, or the user declined at an interactive prompt. For `audit`, the repo is compliant (`PRESERVE` rows do not count). For the mutating commands, success means everything applied was read back and verified |
 | `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure, or a failed code push (the repo exists but is empty; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
-| `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, `--config` with `--no-config`, an unknown flag |
+| `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, the `push` path is a git repo with no commits (or no local branch), `--config` with `--no-config`, an unknown flag. Nothing was created |
 | `3` | `audit` found settings that `fix` would change (`ADD`/`UPDATE`/`DELETE` rows; never `PRESERVE`). Or a mutating command applied the changes but at least one did not stick when read back |
 | `130` | Interrupted with Ctrl-C |
 
@@ -764,6 +767,31 @@ The default branch is chosen from the local branches in this order:
 `init.defaultBranch` if set, then `main`, then `master`, then the checked-out
 branch. The plan shows the branch count and the chosen default.
 
+#### Starting from a directory with no commits
+
+`push` needs something to push. A directory that is `git init`-ed but has no
+commits is refused with exit `2` before the scan, before any GitHub call and
+before anything is created, with `--dry-run` as well. Untracked or staged
+files do not count: only a commit does. Either make a first commit and push:
+
+```bash
+git add -A
+git commit -m "Initial commit"      # no files yet? add --allow-empty
+gh-safe-repo push . <owner/repo>
+```
+
+or create the empty repo on GitHub and clone it:
+
+```bash
+gh-safe-repo new <owner/repo>
+gh repo clone <owner/repo>
+```
+
+`new` does not touch a local directory, so the first route is the one that
+leaves an existing directory wired to the new repo. A repository whose
+commits are on a detached HEAD with no local branch is refused the same way:
+create a branch with `git switch -c <branch>` first.
+
 ### `copy <src-owner/repo> <owner/repo>`
 
 1. The source is cloned with full history, so truffleHog can walk every
@@ -777,6 +805,10 @@ branch. The plan shows the branch count and the chosen default.
 7. Branch and tag protection are applied.
 8. [Verification](#verification): the new repo's branches and tags are
    compared with the source's, SHA for SHA.
+
+A source repository with no branches (an empty repo) is refused with exit
+`1` before step 1: there is nothing to copy. Use `new` for an empty repo.
+`copy --dry-run` makes no API calls, so it does not check this.
 
 ## Pre-flight scanner
 
@@ -843,6 +875,15 @@ is printed after the scan, because truffleHog can still fail mid-run:
 Running pre-flight security scan... (truffleHog v3.93.4)
   Scan engine: regex (fell back from truffleHog: truffleHog via podman exited with status 125)
 ```
+
+A truffleHog run counts as failed when it exits with a status other than `0`
+or `1`, or when it logs that the scan itself failed (`error running scan`,
+for example on a repository it cannot read), whatever its exit status. A scan
+that did not run is never reported as clean.
+
+`scan` on a git repository with no commits warns that only files staged with
+`git add` were scanned: in a git repository only tracked files are read, and
+there is no history yet.
 
 Set `trufflehog_mode` to pin an engine. `native` and `docker` are strict: if
 truffleHog cannot run, `scan` prints its findings and exits `1`, and

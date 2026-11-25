@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Set, Tuple
@@ -977,14 +978,13 @@ class SecurityScanner:
 
             # Stream stderr to the terminal in real-time so the user can
             # see trufflehog progress (especially useful for slow container
-            # runs).  stdout is still captured for JSON parsing.
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=None, text=True,
-            )
-            stdout, _ = proc.communicate()
+            # runs), and keep a copy: truffleHog reports a scan it could not
+            # run there, not in its exit code (#134).  stdout is still
+            # captured for JSON parsing.
+            stdout, stderr_text, returncode = self._run_teeing_stderr(cmd)
             result = subprocess.CompletedProcess(
-                args=cmd, returncode=proc.returncode,
-                stdout=stdout, stderr="",
+                args=cmd, returncode=returncode,
+                stdout=stdout, stderr=stderr_text,
             )
 
         except FileNotFoundError:
@@ -1072,10 +1072,122 @@ class SecurityScanner:
             except (KeyError, TypeError, ValueError):
                 continue
 
+        # Exit 0 or 1 does not prove the scan ran: truffleHog logs "error
+        # running scan" (e.g. "failed to read index file" on a repository
+        # with no commits) and still exits with a code that reads as "done".
+        # A scan that did not run must not be reported as clean (#134).
+        scan_error = _trufflehog_scan_error(
+            result.stderr, result.returncode, bool(findings)
+        )
+        if scan_error:
+            self._trufflehog_failure = f"truffleHog could not scan: {scan_error}"
+            if self.debug:
+                print(
+                    "[debug] trufflehog reported a scan error, falling back to regex",
+                    file=sys.stderr,
+                )
+            return None
+
         return findings
+
+    @staticmethod
+    def _run_teeing_stderr(cmd: List[str]) -> Tuple[str, str, int]:
+        """Run cmd; return (stdout, stderr, returncode), echoing stderr to
+        ours as it arrives.
+
+        stderr goes through a pipe we own, read on a thread in raw chunks so
+        progress output is not held back until a newline, while
+        communicate() collects stdout.
+        """
+        read_fd, write_fd = os.pipe()
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=write_fd, text=True,
+            )
+        except BaseException:
+            os.close(read_fd)
+            raise
+        finally:
+            # The child has its own copy; ours must close or the reader
+            # never sees EOF.
+            os.close(write_fd)
+
+        chunks: List[bytes] = []
+
+        def pump():
+            with os.fdopen(read_fd, "rb", buffering=0) as stream:
+                while True:
+                    chunk = stream.read(4096)
+                    if not chunk:
+                        return
+                    chunks.append(chunk)
+                    try:
+                        sys.stderr.write(chunk.decode("utf-8", errors="replace"))
+                        sys.stderr.flush()
+                    except (OSError, ValueError):
+                        pass  # our stderr went away; keep draining
+
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
+        stdout, _ = proc.communicate()
+        reader.join()
+        return (
+            stdout,
+            b"".join(chunks).decode("utf-8", errors="replace"),
+            proc.returncode,
+        )
 
 
 # --- Module-level utility ---
+
+# The message truffleHog's main() logs when the scan itself fails.
+_TRUFFLEHOG_SCAN_FAILED_MSG = "error running scan"
+
+
+def _trufflehog_scan_error(stderr: str, returncode: int, has_findings: bool) -> Optional[str]:
+    """Why a truffleHog run that exited 0 or 1 did not actually scan, or None.
+
+    With --json, truffleHog writes its log to stderr as one JSON object per
+    line. Two cases count as "did not scan":
+
+    - a line at level error/fatal whose msg is "error running scan",
+      whatever the exit code;
+    - exit 1 with no finding on stdout and any error/fatal line: exit 1 is
+      meant to say "findings", so here it can only be a fatal error.
+
+    Other error-level lines (a detector or a single chunk failing) do not
+    fail the scan. Lines that are not JSON (container runtime output) are
+    ignored. The returned text has control characters removed and is capped,
+    since it is printed.
+    """
+    first_error = None
+    for line in (stderr or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("level", "")).lower() not in ("error", "fatal"):
+            continue
+        msg = str(entry.get("msg", ""))
+        detail = str(entry.get("error") or msg or "unknown error")
+        if msg == _TRUFFLEHOG_SCAN_FAILED_MSG:
+            return _printable(detail)
+        if first_error is None:
+            first_error = detail
+    if first_error is not None and returncode == 1 and not has_findings:
+        return _printable(first_error)
+    return None
+
+
+def _printable(text: str, limit: int = 300) -> str:
+    text = "".join(c if c.isprintable() else " " for c in text).strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
 
 def _view_hint(f: "Finding") -> str:
     """Build a 'View with: ...' command string for a finding.

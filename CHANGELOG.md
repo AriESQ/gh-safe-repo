@@ -25,6 +25,42 @@ since the initial release.
   HEAD and all refs: if nothing changed it reports `git-filter-repo failed
   before rewriting anything` instead of `Your repository may be in an
   inconsistent state`.
+- `push` on a git repository with no commits (`git init`, nothing committed)
+  no longer creates the GitHub repo and then fails verification (#134). It
+  now stops first with exit `2` and creates nothing. The check is local git
+  only and runs before authentication, the scan and every API call, so
+  `--dry-run` reports it too. The error prints two ways forward: make a first
+  commit and run the same `push` again, or run `gh-safe-repo new <owner/repo>`
+  and `gh repo clone <owner/repo>`. A repository whose commits are on a
+  detached HEAD with no local branch is refused the same way, with the
+  `git switch -c <branch>` command. Under `--json` stdout stays empty and the
+  message is on stderr, like every other refusal before the apply.
+- `copy` from a source repository with no branches stops with exit `1` before
+  the scan and before the new repo is created, instead of creating an empty
+  repo and printing `Code mirrored successfully`. `copy --dry-run` makes no
+  API calls and so does not check this.
+- The pre-flight scan no longer reports a truffleHog run that could not scan
+  as clean (#134). truffleHog logs `error running scan` (for example
+  `failed to read index file`) and can still exit `0` or `1`. That run now
+  counts as a truffleHog failure: `trufflehog_mode = auto` falls back to the
+  regex scanner and the `Scan engine:` line gives the reason, and `native` /
+  `docker` exit `1` as for any other truffleHog failure. truffleHog's stderr
+  is still shown as it arrives.
+- `push` prints `Code pushed successfully.` only when at least one branch was
+  pushed. If none was, it warns `No branch was pushed`, and the
+  `code/branches` remediation says to commit first rather than to push again.
+- When the checked-out branch has no commits but other branches do
+  (`git switch --orphan`), the local wiring warning now reads
+  `branch '<b>' has no commits, so it was not pushed and has no upstream to
+  track` instead of git's `fatal: no commit on branch '<b>' yet`.
+- `scan` on a git repository with no commits warns on stderr that only files
+  staged with `git add` were scanned. The exit code is unchanged.
+
+### Changed
+- `push` checks its path (is a directory, is a git repository, has a commit)
+  before it authenticates, so these errors no longer need a working `gh`
+  login. The "not a git repository" hint and the `push --help` text for
+  `PATH` now say a first commit is needed, not only `git init`.
 
 ## [0.13.0] - 2026-11-11
 

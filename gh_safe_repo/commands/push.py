@@ -17,7 +17,7 @@ def add_arguments(parser):
     parser.add_argument(
         "path",
         metavar="PATH",
-        help="Local git repository to push (run 'git init' first if needed)",
+        help="Local git repository to push; it needs at least one commit",
     )
     parser.add_argument(
         "repo",

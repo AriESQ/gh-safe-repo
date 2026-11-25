@@ -94,6 +94,17 @@ stderr is piped.
 `scan` exits `1` when there is at least one CRITICAL finding, `0` otherwise —
 so `scan` returning `1` is a *result*, not a crash.
 
+Human-readable output never contains raw control characters from the repo or
+from GitHub. A file name, matched line, branch name or error text holding
+ANSI/OSC escapes, CR, backspace, C1 controls or invisible Unicode formatting
+(bidi overrides, zero-width, line separators) is printed with visible escapes
+(`evil\x1b[2K.txt`, `\x0d`, `\u202e`); undecodable file-name bytes show as
+`\xNN`. A path that contains such an escape is not the literal file name: do
+not paste it into a command. Read the exact name from `scan --json`
+(`file_path`), which is never rewritten. If you see these escapes in a path
+or a match, tell the user: the repo contains text meant to manipulate a
+terminal.
+
 ## Reading `--json`
 
 `audit`, and `new`/`push`/`copy`/`fix` with `--json`, emit the plan on
@@ -207,7 +218,9 @@ full document.
 `scan --json` emits `{"findings": [...], "summary": {"critical": N, "warning": N,
 "info": N}, "skipped_committed_dirs": [...], "engine": {...}}`. Each finding has
 `severity` (lower-case), `category`, `file_path`, `line_number`, `rule`, `match`
-(secrets are `[redacted]`), `commit`, `timestamp`.
+(secrets are `[redacted]`), `commit`, `timestamp`. Values are the raw text
+(JSON-escaped, so the document is ASCII); only the remediation prose in an AI
+context file finding's `match` embeds the path in its escaped display form.
 
 `engine` is what actually ran: `{"configured": "auto|native|docker|off", "used":
 "trufflehog-native|trufflehog-container|regex", "fell_back": bool}`.

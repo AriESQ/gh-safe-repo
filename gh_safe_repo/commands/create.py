@@ -13,6 +13,7 @@ from typing import Optional
 
 from .. import actions_usage
 from ..diff import Change, ChangeCategory, ChangeType, Plan
+from ..display import safe_display
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
 from ..github_client import LocalWiring
 from ..local_repo import NO_BRANCHES, NO_COMMITS, branch_state, is_git_checkout
@@ -213,7 +214,8 @@ def _abort_on_push_failure(e, owner, repo_name, recovery, transport=None):
     ]
     lines += [f"  {cmd}" for cmd in recovery]
     lines.append(f"  gh-safe-repo fix {owner}/{repo_name} --yes   # applies branch/tag protection")
-    print("\n".join(lines), file=sys.stderr)
+    # Recovery commands name the local path and branch: sanitize per line.
+    print("\n".join(safe_display(line, multiline=True) for line in lines), file=sys.stderr)
     sys.exit(1)
 
 
@@ -650,7 +652,7 @@ def run(args):
     # Push code from local directory (`push`)
     wiring = None
     if args.local_path:
-        _info(f"\nPushing code from {_BOLD}{local_path}{_RESET}...")
+        _info(f"\nPushing code from {_BOLD}{safe_display(local_path)}{_RESET}...")
         try:
             wiring = client.push_local(
                 local_path, owner, repo_name, default_branch=local_default_branch

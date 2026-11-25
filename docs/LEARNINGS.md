@@ -1009,3 +1009,70 @@ and touches nothing local. The refusal prints the sequence that finishes the
 job from where the user is (commit, then the same `push` again) ahead of the
 `new` + `gh repo clone` alternative. `gh repo clone` is used because the
 transport (ssh or https) has not been discovered at that point.
+
+## Terminal Injection From Scanned Content (#125)
+
+Anything printed from the scanned repo, from git or from the API goes through
+`display.safe_display()` at the point of printing. Notes on why it is built
+the way it is:
+
+**Escape at the output boundary, not at collection.** `Finding` keeps the raw
+path and match, so `--json` consumers get the exact file name back.
+`json.dumps` is always called with the default `ensure_ascii=True`, which
+escapes every control and non-ASCII character (C1, bidi, lone surrogates
+included), so the JSON documents need no sanitizing. Passing
+`ensure_ascii=False` anywhere would let raw C1 and bidi characters through;
+do not.
+
+**The one collection-time exception is `_ai_context_hint()`.** Its `match` is
+multi-line prose with the path embedded. At print time a `\n` inside a
+directory name can no longer be told apart from the hint's own line breaks,
+so the path is escaped when the hint is built. `file_path` stays raw.
+
+**`str.splitlines()` is not a safe way to split untrusted text.** It also
+breaks on `\r`, `\x0b`, `\x0c`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029. That
+happened to neutralise those characters in the CRITICAL match lines, but only
+by accident. `_print_findings()` splits on `"\n"` and escapes each piece.
+
+**What is escaped.** Unicode categories `Cc` (C0, DEL, C1), `Cf` (bidi
+overrides and isolates, zero-width characters, BOM, soft hyphen, the tag
+block), `Cs` (lone surrogates), `Zl` and `Zp`. Tab is kept. U+009B matters
+even in a UTF-8 terminal: some emulators treat the decoded C1 code point as
+CSI. `Cf` includes ZWJ, so an emoji ZWJ sequence in a file name is shown with
+a `\u200d` in it; that is the price of not maintaining a list of "harmless"
+format characters. Private-use and unassigned code points are left alone:
+they do nothing to a terminal, and `Cn` membership changes with the Python
+version's Unicode tables.
+
+**Lone surrogates were a crash, not just a display problem.** `os.walk()` and
+`git ls-files -z` (decoded with `surrogateescape`) turn a file-name byte that
+is not valid UTF-8 into U+DC80..U+DCFF, and `print()` raises
+`UnicodeEncodeError` on those. `safe_display()` shows the original byte
+(`\x9b`). macOS (APFS) refuses to create such names, so the tests build the
+string directly instead of the file.
+
+**`repr()` is already safe.** It escapes everything `str.isprintable()`
+rejects, which is a superset of the set above. Plan `UPDATE`/`PRESERVE`
+values and verification expected/actual values go through `repr()`; only the
+`str()` paths (`ADD`, `DELETE`, keys, reasons) needed the helper.
+
+**Backslashes are not doubled.** `a\x1b` in the output can mean an ESC or the
+four literal characters. The output is for reading; doubling every backslash
+would make Windows-style paths and regexes unreadable for no security gain.
+The exact value is in `--json`.
+
+**`error()` / `warn()` sanitize centrally with `multiline=True`.** Their
+messages are plain text (colour is added around them) and carry git stderr
+and API bodies, which are legitimately multi-line. So a remote can still add
+*lines* to an error message, but not move the cursor, recolour or overwrite.
+`info()` cannot do the same, because callers pass it text that already holds
+the tool's colour codes; its callers escape the untrusted part themselves.
+
+**Not covered: child-process stderr that is passed straight through.**
+truffleHog (native or container) runs with `stderr=None` so its progress and
+the container runtime's image-pull output reach the terminal live. That
+stream is never seen by this process. Sanitizing it would mean relaying it
+through a pipe, and would garble the pull progress bars, which use `\r` and
+colour on purpose. Whether truffleHog's own log lines can carry a raw file
+name was not checked; if they can, this is an open hole. An uncaught
+exception's traceback is likewise unsanitized.

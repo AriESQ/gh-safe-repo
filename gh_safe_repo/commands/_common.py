@@ -12,6 +12,7 @@ from typing import Optional
 
 from ..config_manager import ConfigManager
 from ..diff import Change, ChangeCategory, ChangeType, Plan
+from ..display import safe_display
 from ..errors import APIError, AuthError, ConfigError
 from ..github_client import GitHubClient
 from ..security_scanner import FindingCategory, SecurityScanner, Severity, _view_hint
@@ -212,11 +213,17 @@ def info(msg, *, json_mode=False):
 
 
 def error(msg):
-    print(f"{_c(_BOLD + _RED, 'Error:')} {msg}", file=sys.stderr)
+    """Print an error to stderr.
+
+    `msg` is plain text (no colour codes) and often carries git stderr or an
+    API response, so it is passed through safe_display() here (#125).
+    """
+    print(f"{_c(_BOLD + _RED, 'Error:')} {safe_display(msg, multiline=True)}", file=sys.stderr)
 
 
 def warn(msg):
-    print(f"{_c(_YELLOW, 'Warning:')} {msg}", file=sys.stderr)
+    """Print a warning to stderr; `msg` is sanitized like error()'s."""
+    print(f"{_c(_YELLOW, 'Warning:')} {safe_display(msg, multiline=True)}", file=sys.stderr)
 
 
 def print_plan(plan):
@@ -228,22 +235,26 @@ def print_plan(plan):
     """
     headers = ["Type", "Category", "Setting", "Value / Note"]
 
+    # Keys and values can come from GitHub (current settings, a `copy`
+    # source's description and topics) or from the local repo (branch names):
+    # sanitize each cell, then add the tool's own colour (#125).
     rows = []
     for change in plan.changes:
+        cat, key = change.category.value, safe_display(change.key)
         if change.type == ChangeType.SKIP:
-            rows.append(("SKIP", change.category.value, change.key, change.reason, "skip"))
+            rows.append(("SKIP", cat, key, safe_display(change.reason), "skip"))
         elif change.type == ChangeType.ADD:
-            rows.append(("ADD", change.category.value, change.key, str(change.new), "add"))
+            rows.append(("ADD", cat, key, safe_display(change.new), "add"))
         elif change.type == ChangeType.UPDATE:
-            value = f"{change.old!r} → {change.new!r}"
+            value = safe_display(f"{change.old!r} → {change.new!r}")
             if change.weakened:
                 value += f"  {_c(_YELLOW, _WEAKENED)}"
-            rows.append(("UPDATE", change.category.value, change.key, value, "update"))
+            rows.append(("UPDATE", cat, key, value, "update"))
         elif change.type == ChangeType.DELETE:
-            rows.append(("DELETE", change.category.value, change.key, str(change.old), "delete"))
+            rows.append(("DELETE", cat, key, safe_display(change.old), "delete"))
         elif change.type == ChangeType.PRESERVE:
             value = f"{change.old!r} ({change.reason})" if change.reason else repr(change.old)
-            rows.append(("PRESERVE", change.category.value, change.key, value, "preserve"))
+            rows.append(("PRESERVE", cat, key, safe_display(value), "preserve"))
 
     col_widths = [len(h) for h in headers]
     for row in rows:
@@ -300,24 +311,27 @@ def print_plan_warnings(plan):
     warnings = getattr(plan, "warnings", None) or []
     if not warnings:
         return
+    # Everything below the heading is read from workflow files (`uses:`
+    # strings, file and branch names): sanitize it all (#125).
+    s = safe_display
     print(f"{_BOLD}Warnings{_RESET}")
     for w in warnings:
         mark = "?" if w.kind == "actions_unknown" else "⚠"
         where = w.details.get("branch")
-        suffix = f" (branch {where}):" if where and w.details.get("actions") else (
+        suffix = f" (branch {s(where)}):" if where and w.details.get("actions") else (
             ":" if w.details.get("actions") else ""
         )
-        print(f"  {_c(_YELLOW, mark + ' ' + w.message)}{suffix}")
+        print(f"  {_c(_YELLOW, mark + ' ' + s(w.message))}{suffix}")
         for a in w.details.get("actions", []):
             loc = f"{a.get('file') or a['workflow']}:{a['line']}"
             if a.get("file") and a["file"] != a["workflow"]:
                 loc += f" (used by {a['workflow']})"
-            print(f"      {a['uses']}  {_c(_DIM, loc)}")
+            print(f"      {s(a['uses'])}  {_c(_DIM, s(loc))}")
             for r in a.get("reasons", []):
-                print(_c(_DIM, f"        - {r}"))
+                print(_c(_DIM, f"        - {s(r)}"))
             if a.get("pin"):
                 tag = a["uses"].split("@", 1)[-1]
-                print(_c(_DIM, f"        → pin: {a['pin']}  # {tag}"))
+                print(_c(_DIM, f"        → pin: {s(a['pin'])}  # {s(tag)}"))
     print()
 
 
@@ -428,8 +442,11 @@ def print_verification(verification, *, file=None):
         # Advisory mismatches are warnings (exit code unchanged): yellow.
         colour = _YELLOW if c.advisory else colours[c.status]
         mark = _c(colour, _MARKS[c.status])
+        # Check names can carry branch names; values go through repr(), which
+        # already escapes control and formatting characters.
+        name = safe_display(c.name)
         if c.status == "ok":
-            print(f"  {mark} {c.name}", file=out)
+            print(f"  {mark} {name}", file=out)
         elif c.status == "mismatch":
             local = c.category == "local"
             expected, actual = c.expected, c.actual
@@ -441,19 +458,19 @@ def print_verification(verification, *, file=None):
             actual = ("(not set)" if local and actual is None
                       else _fmt_value(actual))
             print(
-                f"  {mark} {c.name}: expected {_fmt_value(expected)}, "
+                f"  {mark} {name}: expected {_fmt_value(expected)}, "
                 f"{'local repo has' if local else 'GitHub has'} {actual}",
                 file=out,
             )
         else:
-            print(f"  {mark} {c.name}: could not read it back", file=out)
+            print(f"  {mark} {name}: could not read it back", file=out)
     # Remediation, de-duplicated and in check order.
     seen = []
     for c in verification.checks:
         if c.status != "ok" and c.remediation and c.remediation not in seen:
             seen.append(c.remediation)
     for r in seen:
-        print(_c(_DIM, f"  → {r}"), file=out)
+        print(_c(_DIM, f"  → {safe_display(r)}"), file=out)
     s = verification.summary()
     print(
         _c(_DIM, f"{s['ok']} ok, {s['mismatch']} mismatch, {s['unknown']} unknown"),
@@ -463,6 +480,8 @@ def print_verification(verification, *, file=None):
 
 def _print_banner(title, inner, colour, file=None):
     out = file or sys.stdout
+    # Banner lines can name a local branch or path: sanitize before measuring.
+    inner = "\n".join(safe_display(line) for line in inner.split("\n"))
     width = max(len(line) for line in inner.splitlines()) + 2
     top    = f"╭─ {title} " + "─" * (width - len(title) - 3) + "╮"
     bottom = "╰" + "─" * (width + 1) + "╯"
@@ -640,8 +659,34 @@ def print_success_fix(owner, repo, verification=None, file=None):
     _print_banner("Done with problems", inner, _YELLOW, file=file)
 
 
+def _finding_detail_lines(f):
+    """The dim lines under a CRITICAL/WARNING heading: location, commit, view hint.
+
+    Every value here comes from the scanned repo or from truffleHog's report
+    of it, so each is passed through safe_display() (#125).
+    """
+    loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
+    lines = [f"in {safe_display(loc)}"]
+    if f.commit:
+        detail = f"commit {safe_display(f.commit)}"
+        if f.timestamp:
+            detail += f"  {safe_display(f.timestamp)}"
+        lines.append(detail)
+    hint = _view_hint(f)
+    if hint:
+        # shlex.quote() made it shell-safe; this makes it terminal-safe. A
+        # name that needed escaping no longer pastes back as the real file.
+        lines.append(f"View with: {safe_display(hint)}")
+    return lines
+
+
 def _print_findings(findings, config):
-    """Print scan findings with ANSI formatting. Returns True if any criticals."""
+    """Print scan findings with ANSI formatting. Returns True if any criticals.
+
+    This is the output boundary for scan results: file names, matched text,
+    rule names and commit data are untrusted and are sanitized here, not in
+    the stored `Finding` (so `--json` keeps the raw values).
+    """
     criticals = [f for f in findings if f.severity == Severity.CRITICAL]
     warnings  = [f for f in findings if f.severity == Severity.WARNING]
     infos     = [f for f in findings if f.severity == Severity.INFO]
@@ -650,38 +695,25 @@ def _print_findings(findings, config):
         print(_c(_GREEN, "  No issues found."))
         return False
 
+    pad = " " * 13
     for f in criticals:
-        loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
-        print(f"  {_c(_RED, '[CRITICAL]')} {f.rule}")
-        print(_c(_DIM, f"             in {loc}"))
-        if f.commit:
-            detail = f"             commit {f.commit}"
-            if f.timestamp:
-                detail += f"  {f.timestamp}"
-            print(_c(_DIM, detail))
-        hint = _view_hint(f)
-        if hint:
-            print(_c(_DIM, f"             View with: {hint}"))
+        print(f"  {_c(_RED, '[CRITICAL]')} {safe_display(f.rule)}")
+        for line in _finding_detail_lines(f):
+            print(_c(_DIM, pad + line))
         if f.match and f.match != "[redacted]":
-            for match_line in f.match.splitlines():
-                print(_c(_DIM, f"             {match_line}"))
+            # Multi-line remediation text: split on "\n" only, so no other
+            # line-breaking character survives the split unescaped.
+            for match_line in f.match.split("\n"):
+                print(_c(_DIM, pad + safe_display(match_line)))
     for f in warnings:
-        loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
-        print(f"  {_c(_YELLOW, '[WARNING]')} {f.rule}")
-        print(_c(_DIM, f"             in {loc}"))
-        if f.commit:
-            detail = f"             commit {f.commit}"
-            if f.timestamp:
-                detail += f"  {f.timestamp}"
-            print(_c(_DIM, detail))
-        hint = _view_hint(f)
-        if hint:
-            print(_c(_DIM, f"             View with: {hint}"))
+        print(f"  {_c(_YELLOW, '[WARNING]')} {safe_display(f.rule)}")
+        for line in _finding_detail_lines(f):
+            print(_c(_DIM, pad + line))
         if f.match and f.match != "[redacted]":
-            print(_c(_DIM, f"             {f.match[:80]}"))
+            print(_c(_DIM, pad + safe_display(f.match[:80])))
     for f in infos:
         loc = f.file_path + (f":{f.line_number}" if f.line_number else "")
-        print(_c(_DIM, f"  [INFO] {f.rule} in {loc}"))
+        print(_c(_DIM, f"  [INFO] {safe_display(f.rule)} in {safe_display(loc)}"))
 
     print()
     banned_strings = [
@@ -723,7 +755,7 @@ def _scan_findings_prompt(scanner, findings, config, warn_skipped_committed_dirs
         print(_c(_YELLOW, "  Warning: the following directories are committed to the repo"))
         print(_c(_YELLOW, "  and were not fully scanned (secrets/large files may be missed):"))
         for d in scanner.skipped_committed_dirs:
-            print(_c(_DIM, f"    {d}/"))
+            print(_c(_DIM, f"    {safe_display(d)}/"))
         print()
 
     has_criticals = _print_findings(findings, config)

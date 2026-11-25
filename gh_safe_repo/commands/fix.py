@@ -6,6 +6,7 @@ from dataclasses import replace
 from .. import actions_usage
 from ..config_manager import DEPENDENT_SETTINGS, PREFERENCE, SECURITY, is_stricter
 from ..diff import ChangeType, Plan
+from ..display import safe_display
 from ..errors import APIError, SafeRepoError
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
@@ -184,7 +185,10 @@ def run(args, audit=False):
         repo_id = repo_data.get("id", "unknown")
         full_name = repo_data.get("full_name", f"{owner}/{repo_name}")
         owner_type = repo_data.get("owner", {}).get("type", "unknown")
-        print(f"[debug] repo: {full_name} (id={repo_id}, owner_type={owner_type})", file=sys.stderr)
+        print(
+            safe_display(f"[debug] repo: {full_name} (id={repo_id}, owner_type={owner_type})"),
+            file=sys.stderr,
+        )
 
     # Use canonical casing from the API; `fix` accepts org/collaborator repos.
     canonical_owner = repo_data.get("owner", {}).get("login")
@@ -192,7 +196,7 @@ def run(args, audit=False):
     if canonical_owner and canonical_name:
         owner, repo_name = canonical_owner, canonical_name
 
-    _info(f"\nAuditing {_BOLD}{owner}/{repo_name}{_RESET}...")
+    _info(f"\nAuditing {_BOLD}{safe_display(f'{owner}/{repo_name}')}{_RESET}...")
 
     # Verify the authenticated user has admin access (required to change settings)
     if not repo_data.get("permissions", {}).get("admin", False):

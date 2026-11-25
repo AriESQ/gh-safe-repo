@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Set, Tuple
 
+from .display import safe_display
 from .local_repo import external_git_dir, is_git_checkout
 
 
@@ -165,7 +166,13 @@ TODO_PATTERN = re.compile(r"(?i)\b(?:TODO|FIXME|HACK|XXX)\b")
 # --- Helpers ---
 
 def _ai_context_hint(rel_path: str) -> str:
-    """Build the remediation message for an AI context file finding."""
+    """Build the remediation message for an AI context file finding.
+
+    The message is multi-line prose that embeds the path, so the path is
+    sanitized here: at print time a newline inside a directory name could no
+    longer be told apart from the message's own line breaks (#125).
+    """
+    rel_path = safe_display(rel_path)
     return (
         f"This file may contain internal development notes. Its git history may hold\n"
         f"more sensitive content than the current version.\n"
@@ -178,6 +185,7 @@ def _ai_context_hint(rel_path: str) -> str:
 
 def _ai_context_history_hint(rel_path: str) -> str:
     """Remediation message for an AI context file found only in git history."""
+    rel_path = safe_display(rel_path)
     return (
         f"This file was present in git history but has since been deleted.\n"
         f"Its historical commits may contain sensitive development notes.\n"
@@ -305,7 +313,9 @@ class SecurityScanner:
         else:
             head = f"Scanning files: {done:,}  "
         width = shutil.get_terminal_size((80, 20)).columns - 1
-        line = (head + rel_path)[:width]
+        # The file name is untrusted: escape it before truncating to the
+        # width, so the line still fits and cannot move the cursor (#125).
+        line = (head + safe_display(rel_path))[:width]
         sys.stderr.write("\r\033[K" + line)
         sys.stderr.flush()
 
@@ -1216,6 +1226,9 @@ def format_findings(findings: List[Finding]) -> str:
     """
     Pure formatting: "[SEVERITY] rule in file:line" + view hint + match line.
     Used in tests to verify output shape without ANSI codes.
+
+    Untrusted values (paths, rule and commit data, matched text) are passed
+    through safe_display(), as in the CLI's own report (#125).
     """
     if not findings:
         return ""
@@ -1227,10 +1240,10 @@ def format_findings(findings: List[Finding]) -> str:
             if f.timestamp:
                 loc += f", {f.timestamp}"
             loc += ")"
-        lines.append(f"[{f.severity.value}] {f.rule} in {loc}")
+        lines.append(f"[{f.severity.value}] {safe_display(f.rule)} in {safe_display(loc)}")
         hint = _view_hint(f)
         if hint:
-            lines.append(f"  View with: {hint}")
+            lines.append(f"  View with: {safe_display(hint)}")
         if f.match and f.match != "[redacted]":
-            lines.append(f"  {f.match[:80]}")
+            lines.append(f"  {safe_display(f.match[:80], multiline=True)}")
     return "\n".join(lines)

@@ -16,6 +16,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
+from .display import safe_display
 from .errors import AuthError, ConfigError
 
 
@@ -124,7 +125,7 @@ class GitTransport:
         the user's ssh command from source_dir.
         """
         if self.debug:
-            print(f"[debug] {self.redact(' '.join(cmd))}", file=sys.stderr)
+            print(f"[debug] {safe_display(self.redact(' '.join(cmd)))}", file=sys.stderr)
         return subprocess.run(
             cmd,
             cwd=cwd,
@@ -419,8 +420,8 @@ def discover_transport(
         print(f"[debug] git transport: {protocol} via {cred} (mode={mode})",
               file=sys.stderr)
         if protocol == "ssh":
-            print(f"[debug] core.sshCommand from {abs_source}: "
-                  f"{ssh_command or '(none)'}", file=sys.stderr)
+            print(safe_display(f"[debug] core.sshCommand from {abs_source}: "
+                               f"{ssh_command or '(none)'}"), file=sys.stderr)
     return GitTransport(
         protocol=protocol,  # type: ignore[arg-type]
         source_dir=abs_source,

@@ -9,6 +9,12 @@ since the initial release.
 
 ## [Unreleased]
 
+### Changed
+- `push` checks its path (is a directory, is a git repository, has a commit)
+  before it authenticates, so these errors no longer need a working `gh`
+  login. The "not a git repository" hint and the `push --help` text for
+  `PATH` now say a first commit is needed, not only `git init`.
+
 ### Fixed
 - `tools/git-filter-file.sh` (and `tools/scrub-ai-context.sh`, which calls
   it) no longer fail or misbehave on a second run in the same repo (#151).
@@ -55,12 +61,27 @@ since the initial release.
   track` instead of git's `fatal: no commit on branch '<b>' yet`.
 - `scan` on a git repository with no commits warns on stderr that only files
   staged with `git add` were scanned. The exit code is unchanged.
+- `scan`, `push` and `copy` no longer crash with `UnicodeEncodeError` when a
+  finding is in a file whose name is not valid UTF-8; the undecodable bytes
+  are shown as `\xNN` (#125).
 
-### Changed
-- `push` checks its path (is a directory, is a git repository, has a commit)
-  before it authenticates, so these errors no longer need a working `gh`
-  login. The "not a git repository" hint and the `push --help` text for
-  `PATH` now say a first commit is needed, not only `git init`.
+### Security
+- Human-readable output escapes terminal control sequences in text that comes
+  from the scanned repo or from a remote (#125). A file name or file content
+  with ANSI/OSC escapes, a carriage return, a backspace, a C1 control, or an
+  invisible Unicode formatting character (bidi override, zero-width, line
+  separator) was written to the terminal as-is, so a repo being scanned could
+  erase a `[CRITICAL]` line, forge a `No issues found.` line, set the window
+  title, or emit OSC 8 links and OSC 52 clipboard writes. Each such character
+  is now shown as a visible escape (`\x1b`, `\x0d`, `\u202e`). This covers
+  the scan report (paths, rule names, matched text, commit data, the
+  `View with:` hint, skipped directories), the scan progress line, the plan
+  table and its warnings, the `Verified` section, the closing banner, every
+  `Error:` / `Warning:` message (which carry git and API error text), the
+  push-failure recovery commands and the `--debug` lines. `--json` output is
+  unchanged and still carries the exact original values (JSON escapes them
+  itself). One exception: the remediation text in an AI context file
+  finding's `match` now embeds the escaped path; `file_path` stays raw.
 
 ## [0.13.0] - 2026-11-11
 

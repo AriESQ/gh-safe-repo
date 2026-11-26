@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-26
+
 ### Added
 - While truffleHog runs, a one-line status on stderr shows what it is doing
   and for how long, for example `truffleHog via podman: pulling image... 0:42`
@@ -29,13 +31,13 @@ since the initial release.
   decoded and scanned instead of being skipped as binary, as is UTF-8 text
   with a few stray NUL bytes. Other files with NULs in the first 8 KB are
   still binary.
-
 - Immutable releases are turned on by default (#127). New config section
   `[releases]` with `immutable = true`. `new`, `push` and `copy` plan
   `ADD releases/immutable True` and enable it with
   `PUT /repos/{owner}/{repo}/immutable-releases`; `audit` and `fix` read it
-  (`GET`, which answers `200 {"enabled": false}` when off; a 404 is also read as off) and report `UPDATE releases/immutable
-  False → True` when it is off, which `audit` counts as drift (exit 3).
+  (`GET`, which answers `200 {"enabled": false}` when off; a 404 is also
+  read as off) and report `UPDATE releases/immutable False → True` when it
+  is off, which `audit` counts as drift (exit 3).
   Post-apply verification re-reads it. An organization policy that already
   enforces it (`enforced_by_owner`) shows as `SKIP` and is never written.
   `immutable = false` leaves the repo's setting alone; the tool never turns

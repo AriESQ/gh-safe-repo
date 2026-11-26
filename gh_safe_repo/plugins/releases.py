@@ -15,10 +15,12 @@ every tag but lets admins bypass it and locks no assets; immutability covers
 only released tags but has no bypass and locks assets too.
 
 API (REST description 2022-11-28, operations repos/check-, enable- and
-disable-immutable-releases):
+disable-immutable-releases; observed live 2026-11-26, see
+docs/2026-11-26_immutable-releases-probe.md):
     GET    /repos/{owner}/{repo}/immutable-releases
-           200 {"enabled": bool, "enforced_by_owner": bool} when on,
-           404 when off (the documented "disabled" answer, not an error).
+           200 {"enabled": bool, "enforced_by_owner": bool}, on AND off.
+           The spec documents 404 for off; live GitHub answers
+           200 {"enabled": false} instead. 404 is still read as off.
     PUT    /repos/{owner}/{repo}/immutable-releases   204 (409 on conflict)
     DELETE /repos/{owner}/{repo}/immutable-releases   204 (never called here)
 
@@ -50,8 +52,9 @@ class ReleasesPlugin(BasePlugin):
     def fetch_current_state(self, strict: bool = False) -> dict:
         """``{"immutable": bool, "enforced_by_owner": bool}``.
 
-        2xx: read ``enabled`` from the body (a 2xx with no parseable body
-        counts as on: only "on" answers 2xx). 404: off. Anything else (403,
+        2xx: read ``enabled`` from the body; live GitHub answers 200 for
+        both on and off (a 2xx with no parseable body counts as on). 404:
+        off, as the spec documents. Anything else (403,
         5xx, no status) is ambiguous: off when planning, APIError when
         verifying (strict), per the plugin contract.
         """

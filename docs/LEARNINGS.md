@@ -1238,11 +1238,13 @@ the local mirror of GitHub's docs and REST description (not yet live-tested):
 
 Design decisions:
 
-- **404 is "off", never an error**, even under `strict=True`: it is the
-  documented answer, like `vulnerability-alerts`. A 2xx is read from the
-  body (`enabled: false` counts as off, in case GitHub later answers 200 for
-  off the way `automated-security-fixes` does, #94); a 2xx without a body
-  counts as on, since only "on" is documented as 2xx.
+- **"Off" is `200 {"enabled": false}` live, 404 in the spec.** Probed
+  2026-11-26 (`docs/2026-11-26_immutable-releases-probe.md`): GitHub answered
+  200 with `enabled: false` on a fresh repo and after `DELETE`, never 404,
+  the same spec/live gap as `automated-security-fixes` (#94). The plugin
+  reads `enabled` from any 2xx, so it was already right. 404 is still "off",
+  never an error, even under `strict=True`, in case GitHub starts following
+  the spec. A 2xx without a body counts as on.
 - **`enforced_by_owner: true` → `SKIP`**, compliant, never written.
 - **`immutable = false` never DELETEs.** Same as the `[security]` toggles:
   false means "leave it alone". The tool has no reason to weaken it.
@@ -1252,18 +1254,19 @@ Design decisions:
   branch protection, which needs the branch to exist).
 - **No retry on the PUT.** It runs after README removal, Actions and
   security writes, by which time the eventual-consistency 404 seen on the
-  first `PATCH /repos` has passed. Unconfirmed live; if it 404s, the apply
-  warns and verification reports a mismatch (exit 3), and `fix` repairs it.
+  first `PATCH /repos` has passed. The probe sent a PUT immediately after
+  `POST /user/repos` and got 204 (one sample per visibility), so even an
+  early PUT did not race. If it ever 404s, the apply warns and verification
+  reports a mismatch (exit 3), and `fix` repairs it.
 - **Tier: security, direction True.** GitHub's default is off, so an `audit`
   of an untouched repo shows `UPDATE releases/immutable False → True`, never
   `PRESERVE` or ⚠ weakened.
 
-Still to check live (a probe script was handed to the user on 2026-11-25):
-the 404 body when off and the 200 body when on, on a
-public and a free private repo; the PUT status (204 per spec); whether PUT
-works on a free private repo at all; whether PUT right after
-`POST /user/repos` needs the `PATCH` retry. Record the results here and as
-`observed` blocks in `tools/api_drift/catalog.json`.
+Checked live 2026-11-26 on a public and a Free private repo (evidence doc
+above; `observed` blocks in `tools/api_drift/catalog.json`): GET is 200 for
+on and off, PUT is 204 and idempotent, a Free private repo accepts the
+setting (so no plan `SKIP`), and an immediate PUT after creation needs no
+retry. Still untested: `enforced_by_owner: true` (needs an org, #9).
 
 ## Releases From CI (#129)
 

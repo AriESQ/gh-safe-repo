@@ -34,7 +34,7 @@ since the initial release.
   `[releases]` with `immutable = true`. `new`, `push` and `copy` plan
   `ADD releases/immutable True` and enable it with
   `PUT /repos/{owner}/{repo}/immutable-releases`; `audit` and `fix` read it
-  (`GET`, where 404 means off) and report `UPDATE releases/immutable
+  (`GET`, which answers `200 {"enabled": false}` when off; a 404 is also read as off) and report `UPDATE releases/immutable
   False → True` when it is off, which `audit` counts as drift (exit 3).
   Post-apply verification re-reads it. An organization policy that already
   enforces it (`enforced_by_owner`) shows as `SKIP` and is never written.
@@ -57,6 +57,13 @@ since the initial release.
 - Scanner line numbers count `\n` only, as `sed` and git do. A lone carriage
   return no longer starts a new line, so findings after one moved up, and a
   regex hit on such a line now has the same line number as truffleHog's.
+
+### Fixed
+- Immutable releases (#127) were confirmed live on a public and a Free private
+  repo. Live GitHub answers `200 {"enabled": false}` when the setting is off,
+  where the API description documents 404. The plugin already read it as
+  off; the docs, tests and the API drift catalog now record the live shape
+  (`docs/2026-11-26_immutable-releases-probe.md`).
 
 ## [0.14.0] - 2026-11-25
 

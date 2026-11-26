@@ -1134,9 +1134,9 @@ Plan level and visibility are detected at runtime. Unavailable features
 appear as `SKIP` with a reason; nothing fails silently.
 
 GitHub's docs list immutable releases for every plan, so they are never
-skipped by plan. Free + private has not been confirmed on a live repo yet; if
-GitHub refuses the write there, the apply warns and verification reports the
-row as a mismatch (exit `3`) rather than passing silently.
+skipped by plan. Free + private was confirmed on a live repo on 2026-11-26.
+If GitHub ever refuses the write, the apply warns and verification reports
+the row as a mismatch (exit `3`) rather than passing silently.
 
 ## Using with an AI agent
 

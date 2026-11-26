@@ -47,7 +47,7 @@ gh_safe_repo/         ← this package (all real logic lives here)
 | `plugins/branch_protection.py` | Branch protection via Rulesets API (default; classic per-branch path behind `use_rulesets = false`) |
 | `plugins/security.py` | Dependabot alerts/security updates, secret scanning/push protection, private vuln reporting |
 | `plugins/tag_protection.py` | Immutable tags via Rulesets API (prevent deletion/rewriting of release tags) |
-| `plugins/releases.py` | Immutable releases (`[releases] immutable`, #127): `GET/PUT …/immutable-releases`; GET 404 is the documented "off" (never an error, even strict), a 2xx is read from its `enabled` body, `enforced_by_owner: true` is a compliant `SKIP` that is never written; never calls DELETE. No plan-based SKIP (the docs list it for every plan). `create` applies it after the security settings, before the code push |
+| `plugins/releases.py` | Immutable releases (`[releases] immutable`, #127): `GET/PUT …/immutable-releases`; a 2xx is read from its `enabled` body (live GitHub answers `200 {"enabled": false}` for off, checked 2026-11-26), 404 is also "off" as the spec documents (never an error, even strict), `enforced_by_owner: true` is a compliant `SKIP` that is never written; never calls DELETE. No plan-based SKIP (the docs list it for every plan). `create` applies it after the security settings, before the code push |
 | `templates/` | File templates (currently empty) |
 
 ## Global vs. command options

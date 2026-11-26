@@ -18,6 +18,22 @@ since the initial release.
   progress bars of its own. Shown only when stderr is a terminal, never with
   `--json`, like the file-scan progress line. truffleHog's own log lines are
   still relayed unchanged (#10).
+- The regex secret patterns and banned strings now match through hidden
+  characters (#157): zero-width and other invisible Unicode formatting, bidi
+  controls (a right-to-left override is read reversed), the tag block, ANSI
+  escape sequences, backspace and carriage-return overwrites, and stray NULs.
+  Such a hit keeps its usual severity and `[redacted]` match; its rule ends
+  in `(obfuscated with <characters>)`, and its `View with:` command pipes
+  through `cat -v` so the hidden characters show.
+- UTF-16 and UTF-32 files (with a byte order mark, or BOM-less UTF-16) are
+  decoded and scanned instead of being skipped as binary, as is UTF-8 text
+  with a few stray NUL bytes. Other files with NULs in the first 8 KB are
+  still binary.
+
+### Changed
+- Scanner line numbers count `\n` only, as `sed` and git do. A lone carriage
+  return no longer starts a new line, so findings after one moved up, and a
+  regex hit on such a line now has the same line number as truffleHog's.
 
 ## [0.14.0] - 2026-11-25
 

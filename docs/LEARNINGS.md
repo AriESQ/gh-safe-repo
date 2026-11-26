@@ -1123,6 +1123,75 @@ in a `finally` after the reader joins, so the line is cleared on every exit
 path. Phase detection reads the decoded text, but only fixed strings are
 drawn; the runtime name in the label goes through `safe_display()` because
 `CONTAINER_RUNTIME` sets it.
+## Hidden Characters and UTF-16 in the Regex Scan (#157)
+
+**Test set.** 25 obfuscations of an AWS key pair, now `TestEvasionVariants`
+in `tests/test_security_scanner.py`. The live runs used truffleHog's public
+canary key, which truffleHog can verify; the committed tests use AWS's
+documented example pair (`AKIAIOSFODNN7EXAMPLE`) instead, because GitHub push
+protection rejected the branch while it held the canary (GH013 on 2026-11-26).
+Never commit the canary, even as test data. Checked 2026-11-25 with
+`gh-safe-repo scan --json` on a committed git repo. Regex alone (`trufflehog_mode = off`): 4
+caught before, 15 after. Combined with truffleHog 3.x via podman
+(`trufflehog_mode = docker`): 17. truffleHog adds the two base64 variants (it
+decodes base64) and reports the plain pair; the regex half adds every
+hidden-character variant, the lone key ID and UTF-16. Still missed by both:
+Cyrillic `А`, fullwidth digits, string concatenation, a backslash line
+continuation, a reversed literal, `\x` escapes, URL encoding, a key split
+across lines. Those are #157's non-goals.
+
+**Two normalized forms, not one.** "Remove the hidden characters" is wrong
+for backspace: `X\b` shows the next character over `X`, so stripping only the
+`\b` leaves an extra `X` (the AWS pattern still matches the first 20
+characters, but a pattern anchored at the end would not). "Render like a
+terminal" is wrong on its own too: a trailing `\r` plus spaces blanks the
+rendered line and hides a key the bytes still carry. So each line is matched
+raw, then stripped (every `Cc`/`Cf` character and ANSI escape removed), then
+rendered (CR to column 0, backspace one left, later characters overwrite,
+RLO spans reversed). Lines that pass `str.isprintable()` after their line
+ending is removed skip both, so CRLF files and ordinary text cost nothing
+extra. NBSP and U+2028 fail `isprintable()` but are not hidden, so they
+return no forms.
+
+**Severity design.** A hit that needs normalization is the same finding at
+the same severity (a CRITICAL key stays CRITICAL), not an extra WARNING:
+the key is in the file and is published either way, and a second "possible
+obfuscated secret" finding on the same line would double-count. The
+obfuscation is reported in the rule (`AWS Access Key ID (obfuscated with
+U+200B ZERO WIDTH SPACE)`), named by Unicode name, so the report is ASCII,
+the match stays `[redacted]` like every secret, and `--json` needs no new
+key. `Finding.hidden` carries the names only to add `| cat -v` to the
+`View with:` hint, because `sed` alone lets the terminal hide them again.
+Emails and TODOs stay raw-only: they are not secrets and need no
+evasion-proofing.
+
+**No homoglyph or NFKC folding.** NFKC would fold fullwidth digits
+trivially, but not Cyrillic `А`, and it would put every non-ASCII line on the
+slow path. Listed as a non-goal; left out.
+
+**False positives.** Stripping `Cf` can only create a match where the
+remaining text spells a key, so ordinary text with ZWJ emoji sequences,
+Persian ZWNJ, Arabic bidi marks, a BOM, soft hyphens, coloured logs or `\r`
+progress lines produces nothing (`TestNormalizationFalsePositives`). The
+quoted-value warning patterns (`password = '...'`) already matched through
+a hidden character inside the value, since the value class accepts anything.
+
+**Binary sniff.** The old rule (a NUL in the first 8 KB means binary) also
+skipped UTF-16 and text with a stray NUL, which is how the NUL variant hid a
+key (git and GitHub also call such a file binary, but it is still pushed).
+A NUL block is now text when it is UTF-16 or UTF-32 with a BOM, BOM-less
+UTF-16 (at least 90% NULs in the high bytes and at most 10% in the low ones),
+or valid UTF-8 with no C0 control other than NUL, tab, LF, CR, VT, FF,
+backspace and ESC, and at most `max(4, size/256)` NULs. A decoded UTF-16/32
+sample must also be at most 5% control characters. The existing `.toe`
+test (`\x00\x01...`) stays binary through the C0 rule. BOM-less UTF-16 of
+mostly non-Latin text is not recognized; Windows writes a BOM.
+
+**Line numbers.** The walk used to read with universal newlines, so a lone
+`\r` started a new line and every later line number was off by one against
+`sed -n` and git. It now splits on `\n` only. In the CR-overwrite variant
+both engines now report line 1, so the `(file, line)` dedup against
+truffleHog drops the regex duplicate instead of listing the key twice.
 
 ## Python 3.10 Floor in CI (#148)
 

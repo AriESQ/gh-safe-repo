@@ -221,6 +221,13 @@ full document.
 (secrets are `[redacted]`), `commit`, `timestamp`. Values are the raw text
 (JSON-escaped, so the document is ASCII); only the remediation prose in an AI
 context file finding's `match` embeds the path in its escaped display form.
+A secret or banned-string `rule` ending in `(obfuscated with <characters>)`,
+for example `AWS Access Key ID (obfuscated with U+200B ZERO WIDTH SPACE)`,
+means the value is split by characters a viewer does not show (zero-width,
+bidi, ANSI escapes, backspace, NUL). Treat it like the same rule without the
+suffix (same severity, `match` still `[redacted]`), and tell the user the key
+was hidden on purpose or by a broken tool: removing the invisible characters
+does not make the key safe. Match on the rule's prefix, not the whole string.
 
 `engine` is what actually ran: `{"configured": "auto|native|docker|off", "used":
 "trufflehog-native|trufflehog-container|regex", "fell_back": bool, "error": string|null}`.

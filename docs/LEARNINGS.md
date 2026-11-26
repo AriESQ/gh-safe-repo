@@ -1264,3 +1264,51 @@ public and a free private repo; the PUT status (204 per spec); whether PUT
 works on a free private repo at all; whether PUT right after
 `POST /user/repos` needs the `PATCH` retry. Record the results here and as
 `observed` blocks in `tools/api_drift/catalog.json`.
+
+## Releases From CI (#129)
+
+`.github/workflows/release.yml`, on `push: tags: ["v*.*.*"]`. Decisions:
+
+- **Notes source: the tag's CHANGELOG section** (`tools/release_notes.py`),
+  plus a compare link. Not the annotated tag message (the tags say only
+  `vX.Y.Z`), and not a separate notes file (one more thing to forget). The
+  v0.12.0+ hand-written Highlights/Upgrading files are dropped; if a release
+  needs highlights, put them in its CHANGELOG section. The real sections for
+  0.14.0 and 0.13.0 are covered by `tests/test_release_notes.py`.
+- **Three jobs, write token only where needed.** `check` and `test` are
+  `contents: read`; `publish` is `contents: write` and runs no repo code
+  (it downloads the notes and dist artifact and calls `gh`). The workflow
+  default is `permissions: {}`.
+- **Tests reuse `ci.yml`** via `workflow_call` instead of a copy of the
+  matrix. In a called workflow `github.workflow` is the caller's name, so
+  `ci.yml`'s concurrency group becomes `Release-refs/tags/vX.Y.Z`; the
+  release workflow's own group is `release-refs/tags/vX.Y.Z` so the two never
+  wait on each other. Reusable workflows are exempt from SHA pinning (docs:
+  "Reusable workflows can still be referenced by tag"), and a same-repo one is
+  allowed under the `selected` Actions policy.
+- **Actions used:** `actions/checkout`, `actions/setup-python` (same pins as
+  CI), `actions/upload-artifact@cf430e0…` (v7.0.2) and
+  `actions/download-artifact@9000827…` (v8.0.2), all GitHub-owned, so the
+  repo's GitHub-owned-only policy admits them. SHAs looked up with
+  `gh api repos/actions/<name>/commits/<tag>` on 2026-11-25.
+- **Annotated-tag check reads the API** (`git/ref/tags/X` → `object.type`),
+  because `actions/checkout` can rewrite a tag ref locally. The signature
+  check (`git/tags/{sha}` → `verification.verified`) only warns: an SSH
+  signing key GitHub does not know about is not a reason to block a release.
+- **Existing release:** published → notice, exit 0 (re-runs are no-ops, and a
+  published release may already be immutable); draft → fail and ask a human.
+  `gh release view` failing for any reason other than "release not found"
+  fails the run rather than risking a duplicate.
+- **Immutable releases (#127):** passing asset files to `gh release create`
+  makes gh create a draft, upload, then publish (cli
+  `pkg/cmd/release/create/create.go`), and delete the draft if an upload or
+  the publish fails. Protection starts at publish, so nothing locked is ever
+  incomplete. gh also refuses when a *published* release with the tag exists
+  but not when a draft does, hence the draft check above.
+- **Latest:** `--latest=false` when a higher `vX.Y.Z` tag exists, so a
+  backfill does not take over Latest (the API default marks every new
+  non-draft release Latest).
+
+Unverified until a real tag push: the reusable-workflow call under this
+repo's Actions policy, the artifact round trip, `gh release view`'s
+"release not found" text on the runner's gh, and `isImmutable` in its JSON.

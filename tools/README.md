@@ -236,6 +236,24 @@ directly for arbitrary files.
 
 See `git-filter-file-TESTING.md` for a manual test suite.
 
+## release_notes.py
+
+Checks a release tag and prints its notes, for `.github/workflows/release.yml`
+(#129). Stdlib only, Python 3.10+.
+
+```bash
+uv run tools/release_notes.py v0.14.0                               # notes on stdout
+uv run tools/release_notes.py v0.14.0 --repo AriESQ/gh-safe-repo -o notes.md
+```
+
+Exit `1`, with the reason on stderr, when the tag is not `vX.Y.Z`, when
+`pyproject.toml`'s `[project] version` or `uv.lock`'s entry for the project
+differs, or when `CHANGELOG.md` has no `## [X.Y.Z] - YYYY-MM-DD` section, has
+it undated, or has it empty. The notes are the section body without its
+heading; with `--repo`, a `**Full changelog**` compare link from the previous
+version section is appended. Tested by `tests/test_release_notes.py`, which
+also runs it on the real `CHANGELOG.md`.
+
 ## api_drift
 
 Tracks where GitHub's published REST description (the OpenAPI files in

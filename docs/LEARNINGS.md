@@ -1079,13 +1079,36 @@ the tool's colour codes; its callers escape the untrusted part themselves.
 **truffleHog's stderr is escaped on its way through.** #134 replaced the
 inherited `stderr=None` with a pipe that `_run_teeing_stderr()` echoes, so
 the echo goes through `safe_display(multiline=True)` as well. truffleHog's
-log lines are JSON in the shape of Go's zap encoder, which escapes C0
-controls but writes valid UTF-8 (C1, bidi) raw, so a file name in a log line
-could reach the terminal unescaped while the stream was inherited. (Inferred
-from zap's encoder and the log shape in #134, not tested against a live
-truffleHog.)
+JSON log lines escape C0 controls (ESC, BEL) but write valid UTF-8 raw,
+including C1 (U+009B, which some terminals treat as CSI) and bidi overrides.
+Verified live on 2026-11-25 against truffleHog 3.99.8 (podman): with a
+committed file whose name held ESC, BEL, U+009B and U+202E, a scan at
+`--log-level=5` named the file three times on stderr, and before this change
+`gh-safe-repo scan` relayed all three U+202E characters raw. The default log
+level did not name the file, so the hole needs a verbose truffleHog (for
+example a wrapper script on PATH in `native` mode) to show.
 Because the child now sees a pipe rather than a TTY, the container runtime
 prints plain pull lines instead of `\r` progress bars, so escaping garbles
 nothing. An incremental UTF-8 decoder keeps a character split across two
 4096-byte reads intact. An uncaught exception's traceback is still
 unsanitized.
+
+## Python 3.10 Floor in CI (#148)
+
+**Code and tests must run on Python 3.10.** `requires-python = ">=3.10"`
+and the CI matrix tests 3.10 and 3.14. Standard-library modules added in
+3.11+ (e.g. `tomllib`) fail only the 3.10 job. A local run on a newer Python
+will not catch it. In #149, `TestVersion.test_matches_pyproject` imported
+`tomllib` and failed on 3.10 with `ModuleNotFoundError`. The fix reads the
+version from `pyproject.toml` with a regex (`tests/test_cli.py`). Use a
+3.10-safe path for anything newer (regex, a guarded import, or a
+dependency), and run the suite on 3.10 before pushing:
+
+```bash
+uv run --isolated --python 3.10 pytest tests/
+```
+
+`--isolated` builds a throwaway environment, so the project's `.venv` keeps
+its own interpreter. Checked 2026-11-25: 1520 passed on 3.10 and `.venv`
+stayed on 3.13. Add the same `trufflehog_mode = off` config the regular run
+uses (see `tests/README.md`).

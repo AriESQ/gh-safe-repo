@@ -25,6 +25,9 @@ uv run pytest tests/test_plugins.py::TestRepositoryPlugin::test_plan_creates_rep
 
 # Stop on first failure
 uv run pytest tests/ -x
+
+# On Python 3.10, the CI floor, without touching .venv (#148)
+uv run --isolated --python 3.10 pytest tests/
 ```
 
 CI (`.github/workflows/ci.yml`) runs `uv run pytest tests/ -v` on Python 3.10 and 3.14

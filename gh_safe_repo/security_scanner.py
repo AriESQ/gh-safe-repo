@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Set, Tuple
@@ -1005,8 +1006,19 @@ class SecurityScanner:
             # see trufflehog progress (especially useful for slow container
             # runs), and keep a copy: truffleHog reports a scan it could not
             # run there, not in its exit code (#134).  stdout is still
-            # captured for JSON parsing.
-            stdout, stderr_text, returncode = self._run_teeing_stderr(cmd)
+            # captured for JSON parsing.  On a TTY a status line shows the
+            # phase and elapsed time meanwhile (#10).
+            status = None
+            if self._progress:
+                if disc["method"] == "native":
+                    status = _TruffleHogStatus("truffleHog", "starting")
+                else:
+                    status = _TruffleHogStatus(
+                        "truffleHog via "
+                        + safe_display(disc.get("runtime", "container")),
+                        "starting container",
+                    )
+            stdout, stderr_text, returncode = self._run_teeing_stderr(cmd, status)
             result = subprocess.CompletedProcess(
                 args=cmd, returncode=returncode,
                 stdout=stdout, stderr=stderr_text,
@@ -1116,13 +1128,20 @@ class SecurityScanner:
         return findings
 
     @staticmethod
-    def _run_teeing_stderr(cmd: List[str]) -> Tuple[str, str, int]:
+    def _run_teeing_stderr(
+        cmd: List[str], status: Optional["_TruffleHogStatus"] = None,
+    ) -> Tuple[str, str, int]:
         """Run cmd; return (stdout, stderr, returncode), echoing stderr to
         ours as it arrives.
 
         stderr goes through a pipe we own, read on a thread in raw chunks so
         progress output is not held back until a newline, while
         communicate() collects stdout.
+
+        With `status`, a one-line status (phase and elapsed time) is kept at
+        the bottom of the terminal while the child runs, and cleared around
+        every echoed chunk and at the end (#10). Callers pass one only when
+        stderr is a TTY and not in --json mode.
         """
         read_fd, write_fd = os.pipe()
         try:
@@ -1152,6 +1171,10 @@ class SecurityScanner:
             def echo(text):
                 if not text:
                     return
+                if status is not None:
+                    # Clears the status line, writes, then redraws it.
+                    status.echo(safe_display(text, multiline=True), text)
+                    return
                 try:
                     sys.stderr.write(safe_display(text, multiline=True))
                     sys.stderr.flush()
@@ -1168,14 +1191,138 @@ class SecurityScanner:
                     echo(decoder.decode(chunk))
 
         reader = threading.Thread(target=pump, daemon=True)
-        reader.start()
-        stdout, _ = proc.communicate()
-        reader.join()
+        # Started before the reader, so the first echoed chunk already
+        # finds the line drawn and the clock running.
+        if status is not None:
+            status.start()
+        try:
+            reader.start()
+            stdout, _ = proc.communicate()
+            reader.join()
+        finally:
+            if status is not None:
+                status.stop()
         return (
             stdout,
             b"".join(chunks).decode("utf-8", errors="replace"),
             proc.returncode,
         )
+
+
+# --- truffleHog status line (#10) ---
+
+class _TruffleHogStatus:
+    """Single-line stderr status while truffleHog runs: what it is doing and
+    how long it has been running.
+
+    Since #134 the child's stderr is a pipe, so podman draws no image-pull
+    progress bars of its own, and truffleHog logs nothing between "running
+    source" and "finished scanning". Without this a first container run (an
+    image pull) or a large repository shows nothing for minutes.
+
+    The phase is read from complete stderr lines: podman's "Trying to pull"
+    and truffleHog's "running source" / "finished scanning" log messages.
+    Only our own fixed strings are drawn, never text from the stream.
+
+    Drawn the same way as the regex walk's progress line (carriage return
+    plus erase-line), TTY-only. One lock serializes the ticker and the
+    stderr relay: the line is cleared before each echoed chunk and redrawn
+    only when the cursor is back at the start of a line, so a partial
+    relayed line is never followed by the status text.
+    """
+
+    _CLEAR = "\r\033[K"
+    PULLING = "pulling image"
+    SCANNING = "scanning"
+    FINISHING = "finishing"
+
+    def __init__(self, label: str, initial_phase: str, interval: float = 1.0):
+        self._label = label
+        self._phase = initial_phase
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._start = 0.0
+        self._drawn = False
+        self._at_line_start = True
+        self._partial = ""
+
+    # --- lifecycle ---
+
+    def start(self) -> None:
+        self._start = time.monotonic()
+        with self._lock:
+            self._draw()
+        self._thread = threading.Thread(target=self._tick, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+        with self._lock:
+            self._clear()
+
+    def _tick(self) -> None:
+        while not self._stop.wait(self._interval):
+            with self._lock:
+                self._draw()
+
+    # --- relay ---
+
+    def echo(self, display_text: str, raw_text: str) -> None:
+        """Write one escaped stderr chunk with the status line out of the
+        way. raw_text (unescaped) is only matched to pick the phase."""
+        with self._lock:
+            self._feed(raw_text)
+            self._clear()
+            try:
+                sys.stderr.write(display_text)
+                sys.stderr.flush()
+            except (OSError, ValueError):
+                pass  # our stderr went away; keep draining
+            self._at_line_start = display_text.endswith("\n")
+            self._draw()
+
+    def _feed(self, text: str) -> None:
+        lines = (self._partial + text).split("\n")
+        self._partial = lines.pop()[-4096:]
+        for line in lines:
+            if "Trying to pull" in line:
+                self._phase = self.PULLING
+            elif '"msg":"running source"' in line:
+                self._phase = self.SCANNING
+            elif '"msg":"finished scanning"' in line:
+                self._phase = self.FINISHING
+
+    # --- drawing (lock held) ---
+
+    def _line(self) -> str:
+        secs = int(time.monotonic() - self._start)
+        return f"{self._label}: {self._phase}... {secs // 60}:{secs % 60:02d}"
+
+    def _draw(self) -> None:
+        if not self._at_line_start or self._stop.is_set():
+            return
+        width = shutil.get_terminal_size((80, 20)).columns - 1
+        try:
+            sys.stderr.write(self._CLEAR + self._line()[:width])
+            sys.stderr.flush()
+        except (OSError, ValueError):
+            return
+        self._drawn = True
+
+    def _clear(self) -> None:
+        if not self._drawn:
+            return
+        try:
+            sys.stderr.write(self._CLEAR)
+            sys.stderr.flush()
+        except (OSError, ValueError):
+            pass
+        self._drawn = False
 
 
 # --- Module-level utility ---

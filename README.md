@@ -895,6 +895,20 @@ Running pre-flight security scan... (truffleHog v3.93.4)
   Scan engine: regex (fell back from truffleHog: truffleHog via podman exited with status 125)
 ```
 
+truffleHog's log lines are relayed to stderr as they arrive. When stderr is a
+terminal (and not with `--json`), a status line below them shows the phase
+and the elapsed time, so a first container run that has to pull the image
+does not look hung:
+
+```
+truffleHog via podman: pulling image... 0:42
+```
+
+The phases are `starting` (`starting container` for podman/docker),
+`pulling image` (the runtime printed `Trying to pull`), `scanning`
+(truffleHog logged `running source`) and `finishing`. truffleHog logs nothing
+between the start and the end of the scan, so there is no file count.
+
 A truffleHog run counts as failed when it exits with a status other than `0`
 or `1`, or when it logs that the scan itself failed (`error running scan`,
 for example on a repository it cannot read), whatever its exit status. A scan

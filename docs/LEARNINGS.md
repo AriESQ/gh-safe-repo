@@ -1093,6 +1093,37 @@ nothing. An incremental UTF-8 decoder keeps a character split across two
 4096-byte reads intact. An uncaught exception's traceback is still
 unsanitized.
 
+## truffleHog Status Line (#10)
+
+**Why it was needed after #134.** With stderr on a pipe the container
+runtime no longer draws progress. Checked live on 2026-11-25 (podman,
+truffleHog 3.99.8) with `TRUFFLEHOG_IMAGE` pointing at an unreachable
+registry: podman printed one plain `Trying to pull <image>...` line and then
+nothing until it failed, with no `\r` and no escape sequences. A real pull
+was not measured (the cached image was not deleted); podman's non-TTY pull
+output also has `Copying blob ...` lines, which are relayed as they come.
+
+**truffleHog has nothing to count.** At the default log level, a
+filesystem scan logs exactly two lines on stderr: `"msg":"running source"`
+at the start and `"msg":"finished scanning"` (with `chunks`/`bytes` totals)
+at the end. There is no per-file or per-commit line to turn into a count, so
+the status shows a phase and the elapsed time. Matching is on the compact
+`"msg":"..."` form zap writes; if truffleHog changes it, the phase simply
+stays at `starting`, and the elapsed time still advances.
+
+**Drawing rules.** `_TruffleHogStatus` uses the same `\r\033[K` line as the
+regex walk's `_draw_progress()` and the same gate (`self._progress`: TTY and
+not `--json`). NO_COLOR does not apply, as it doesn't to the file progress
+line: it carries no colour. A lock is shared by the 1-second ticker thread
+and the relay thread. Each relayed chunk is written as clear, chunk, redraw,
+and the redraw is skipped while the last chunk did not end in `\n`: drawing
+there would append the status to half a relayed line. The status is started
+before the reader thread, so the first chunk finds it running, and stopped
+in a `finally` after the reader joins, so the line is cleared on every exit
+path. Phase detection reads the decoded text, but only fixed strings are
+drawn; the runtime name in the label goes through `safe_display()` because
+`CONTAINER_RUNTIME` sets it.
+
 ## Python 3.10 Floor in CI (#148)
 
 **Code and tests must run on Python 3.10.** `requires-python = ">=3.10"`

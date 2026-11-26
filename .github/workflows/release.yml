@@ -1,0 +1,171 @@
+name: Release
+
+# Publishes the GitHub Release for a pushed vX.Y.Z tag (#129). The tag
+# itself stays local and human-made (SSH-signed by the maintainer); this
+# workflow only replaces the hand-run `gh release create` step.
+#
+#   check   (contents: read)  tag is annotated, on master, matches
+#                             pyproject.toml/uv.lock, has a dated CHANGELOG
+#                             section; builds sdist + wheel; uploads them
+#                             with the notes as one artifact
+#   test    (contents: read)  the CI test matrix (ci.yml) on the tag
+#   publish (contents: write) creates the release with the notes and the
+#                             built files. Runs no repository code.
+#
+# Release notes are the tag's CHANGELOG.md section (tools/release_notes.py),
+# plus a "Full changelog" compare link. A release that already exists is left
+# alone (re-runs are no-ops); an existing *draft* fails the run.
+#
+# Immutable releases (#127): `gh release create` with asset files creates a
+# draft, uploads the assets, then publishes, so the assets are in place
+# before the release becomes immutable. On a failed upload gh deletes the
+# draft, and the tag name stays usable.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check tag and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+      UV_PYTHON_DOWNLOADS: never
+    outputs:
+      latest: ${{ steps.tag.outputs.latest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and every branch, for the on-master check.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Check the tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Annotated, per the release process; read from the API, because
+          # checkout can rewrite a tag ref locally.
+          type=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.type)
+          if [ "$type" != "tag" ]; then
+            echo "::error::$TAG is a lightweight tag ($type); release tags must be annotated (git tag -a $TAG -m $TAG)"
+            exit 1
+          fi
+          tag_sha=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha)
+          verified=$(gh api "repos/$GH_REPO/git/tags/$tag_sha" --jq .verification.verified)
+          if [ "$verified" != "true" ]; then
+            reason=$(gh api "repos/$GH_REPO/git/tags/$tag_sha" --jq .verification.reason)
+            echo "::warning::$TAG has no signature GitHub verifies ($reason)"
+          fi
+
+          commit=$(git rev-parse "refs/tags/$TAG^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/master; then
+            echo "::error::$TAG points at $commit, which is not on master. Tag the merge commit on master."
+            exit 1
+          fi
+
+          # Mark as Latest only when no higher vX.Y.Z tag exists (a backfill
+          # of an older release must not take over Latest).
+          highest=$(git tag --list 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+          if [ "$highest" = "$TAG" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TAG is not the highest release tag ($highest); it will not be marked Latest"
+          fi
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          mkdir -p "$RUNNER_TEMP/release/dist"
+          python tools/release_notes.py "$TAG" --repo "$GITHUB_REPOSITORY" \
+            -o "$RUNNER_TEMP/release/notes.md"
+          {
+            echo "### Release notes for $TAG"
+            echo
+            cat "$RUNNER_TEMP/release/notes.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv==0.12.21
+
+      - name: Build sdist and wheel
+        run: uv build --out-dir "$RUNNER_TEMP/release/dist"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    name: Tests
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish GitHub Release
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LATEST: ${{ needs.check.outputs.latest }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+
+      - name: Create the release
+        run: |
+          cd "$RUNNER_TEMP/release"
+          # Already there? A published release is left as it is (it may be
+          # immutable, and its notes may have been edited by hand); a draft
+          # is someone's unfinished release and needs a person.
+          if view=$(gh release view "$TAG" --json isDraft,url --jq '"\(.isDraft) \(.url)"' 2>err.txt); then
+            read -r is_draft url <<< "$view"
+            if [ "$is_draft" = "true" ]; then
+              echo "::error::A draft release for $TAG already exists ($url). Publish or delete it, then re-run this workflow."
+              exit 1
+            fi
+            echo "::notice::Release $TAG already exists ($url); nothing to do."
+            exit 0
+          fi
+          if ! grep -q "release not found" err.txt; then
+            echo "::error::Could not check for an existing release: $(cat err.txt)"
+            exit 1
+          fi
+
+          # With asset files, gh creates a draft, uploads, then publishes.
+          gh release create "$TAG" dist/* \
+            --repo "$GH_REPO" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --latest="$LATEST"
+          # Informational only: the release is published at this point.
+          gh release view "$TAG" --json url,isImmutable,assets \
+            --jq '"Published \(.url) (immutable: \(.isImmutable), assets: \([.assets[].name] | join(", ")))"' \
+            || echo "::warning::Release $TAG was created, but reading it back failed"

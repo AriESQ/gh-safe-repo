@@ -30,6 +30,29 @@ since the initial release.
   with a few stray NUL bytes. Other files with NULs in the first 8 KB are
   still binary.
 
+- Immutable releases are turned on by default (#127). New config section
+  `[releases]` with `immutable = true`. `new`, `push` and `copy` plan
+  `ADD releases/immutable True` and enable it with
+  `PUT /repos/{owner}/{repo}/immutable-releases`; `audit` and `fix` read it
+  (`GET`, where 404 means off) and report `UPDATE releases/immutable
+  False → True` when it is off, which `audit` counts as drift (exit 3).
+  Post-apply verification re-reads it. An organization policy that already
+  enforces it (`enforced_by_owner`) shows as `SKIP` and is never written.
+  `immutable = false` leaves the repo's setting alone; the tool never turns
+  it off. The feature is not plan-gated, so there is no plan `SKIP`. Once on,
+  a published release's assets and tag are locked and the tag name can never
+  be reused: publish releases as draft, attach assets, then publish (see
+  "Immutable releases" in the README).
+- Releases are published from CI (#129). Pushing a `vX.Y.Z` tag runs
+  `.github/workflows/release.yml`, which checks the tag (annotated, on
+  `master`, equal to the `pyproject.toml` and `uv.lock` version, with a dated
+  `CHANGELOG.md` section), runs the CI test matrix on it, builds the sdist and
+  wheel, and creates the GitHub Release with the CHANGELOG section as notes
+  and the built files attached. An existing release is left alone; an
+  existing draft fails the run. `tools/release_notes.py` does the checks and
+  the extraction, and can preview the notes locally. `ci.yml` can now also
+  be called as a reusable workflow.
+
 ### Changed
 - Scanner line numbers count `\n` only, as `sed` and git do. A lone carriage
   return no longer starts a new line, so findings after one moved up, and a

@@ -8,9 +8,9 @@ Create GitHub repositories with safe defaults applied, in one command.
 gh-safe-repo new <owner/repo>
 ```
 
-Branch protection, immutable tags, locked-down Actions, Dependabot, secret
-scanning with push protection, and private vulnerability reporting are all
-configured before you push your first commit. The same tool audits and fixes
+Branch protection, immutable tags and releases, locked-down Actions,
+Dependabot, secret scanning with push protection, and private vulnerability
+reporting are all configured before you push your first commit. The same tool audits and fixes
 repos you already have, and scans local code for secrets before it leaves
 your machine.
 
@@ -45,6 +45,10 @@ the plan before it touches anything:
 - **Branch protection.** PR required, one approving review, stale reviews
   dismissed, conversations resolved, no force pushes, no branch deletion.
 - **Immutable tags.** Release tags cannot be rewritten or deleted.
+- **Immutable releases.** Once a release is published, its assets and tag
+  are locked and the tag name can never be reused. See
+  [Immutable releases](#immutable-releases) for how this changes cutting a
+  release.
 - **Actions locked down.** Read-only token, no self-approving PRs, SHA-pinned
   actions, GitHub-owned and verified publishers only.
 - **Dependabot on.** Vulnerability alerts plus automatic fix PRs.
@@ -158,8 +162,9 @@ SKIP    security           private_vulnerability_reporting         Requires a pu
 SKIP    security           enable_dependency_graph                 Requires a public repo or paid GitHub plan
 SKIP    security           enable_secret_scanning_push_protection  Requires a public repo or paid GitHub plan
 SKIP    tag_protection     tag_protection                          Tag protection rulesets require a public repo or paid GitHub plan
+ADD     releases           immutable                               True
 
-7 change(s) to apply, 8 skipped
+8 change(s) to apply, 8 skipped
 
 Dry run — no changes made.
 ```
@@ -284,7 +289,8 @@ or your config (ours).
 
 Security-tier settings are branch and tag protection rules, Actions
 enforcement (`allowed_actions`, SHA pinning, workflow permissions, fork PR
-approval) and everything under `[security]`. Preference-tier settings are
+approval), everything under `[security]` and immutable releases
+(`[releases]`). Preference-tier settings are
 everything under `[repo]` (wiki, merge strategies, ...), whether Actions is
 enabled at all, and the branch-protection policy knobs (`enforce_admins`,
 `require_conversation_resolution`, `use_rulesets`).
@@ -708,6 +714,33 @@ Public repos on any plan, or any repo on a paid plan. A ruleset targeting
 **restrict deletions**, so tags cannot be force-pushed or deleted. Repo
 admins are on the bypass list, matching `enforce_admins = false`.
 
+### Immutable releases
+
+Every repo, on every plan (`[releases] immutable = true`). Once a release
+is **published**, GitHub locks it:
+
+- its assets cannot be added, replaced or deleted;
+- its tag cannot be moved, and cannot be deleted while the release exists;
+- the tag name can never be used again, even after the release, or the whole
+  repo, is deleted and recreated;
+- a release attestation (tag, commit SHA, assets) is generated.
+
+The title and release notes stay editable, and drafts are not locked. This
+changes how you cut a release: a published release can no longer be fixed by
+deleting it and recreating it with the same tag. Create it as a **draft**,
+attach every asset, then publish. `gh release create TAG FILES...` does that
+for you when you pass asset files. Immutability only applies to releases
+published after it is turned on.
+
+It complements tag protection: the tag ruleset covers every tag but lets
+admins bypass it and locks no assets; immutability covers only tags that
+belong to a published release, has no bypass, and locks the assets too.
+
+When an organization policy enforces immutable releases
+(`enforced_by_owner`), the row is `SKIP` and the setting is never written.
+`immutable = false` leaves the repo's setting as it is; gh-safe-repo never
+turns immutability off.
+
 ### Security
 
 | Feature | Behaviour |
@@ -760,7 +793,7 @@ of the three.
    a hardware key's touch is close to the real push. The check waits up to
    45 seconds over SSH and 15 over HTTPS; a timeout says the key was
    probably waiting for a touch.
-4. The repo is created; Actions and security settings are applied.
+4. The repo is created; Actions, security and immutable-release settings are applied.
 5. Every local branch and tag is pushed in a single `git push` from a bare
    clone, so branches other than the checked-out one are included and a
    hardware key needs one touch. The default branch is pushed first and
@@ -806,7 +839,7 @@ create a branch with `git switch -c <branch>` first.
 2. The [pre-flight scanner](#pre-flight-scanner) runs on the clone.
 3. You review findings and confirm, or abort.
 4. Git credentials are checked, as above.
-5. The repo is created; Actions and security settings are applied.
+5. The repo is created; Actions, security and immutable-release settings are applied.
 6. History is mirrored (`git clone --mirror` + `git push --mirror`) and the
    source's default branch is set.
 7. Branch and tag protection are applied.
@@ -1060,6 +1093,9 @@ enable_dependabot_security_updates = true
 enable_private_vulnerability_reporting = true
 enable_secret_scanning_push_protection = true
 
+[releases]
+immutable = true                          # false = leave the repo's setting alone
+
 [pre_flight_scan]
 scan_for_secrets = true
 scan_for_emails = true
@@ -1092,9 +1128,15 @@ mode = auto
 | Push protection | Yes | No | Yes |
 | Private vulnerability reporting | Yes | No | No (public repos only) |
 | Dependency graph | Auto | No | Yes |
+| Immutable releases | Yes | Yes | Yes |
 
 Plan level and visibility are detected at runtime. Unavailable features
 appear as `SKIP` with a reason; nothing fails silently.
+
+GitHub's docs list immutable releases for every plan, so they are never
+skipped by plan. Free + private has not been confirmed on a live repo yet; if
+GitHub refuses the write there, the apply warns and verification reports the
+row as a mismatch (exit `3`) rather than passing silently.
 
 ## Using with an AI agent
 
@@ -1131,7 +1173,8 @@ gh-safe-repo new <owner/repo>
       │   ├─ ActionsPlugin           allowed actions, workflow permissions, SHA pinning
       │   ├─ BranchProtectionPlugin  Rulesets API (classic if use_rulesets = false)
       │   ├─ SecurityPlugin          Dependabot, secret scanning, push protection, PVR
-      │   └─ TagProtectionPlugin     immutable tags via Rulesets API
+      │   ├─ TagProtectionPlugin     immutable tags via Rulesets API
+      │   └─ ReleasesPlugin          immutable releases
       │
       ├─ Print plan; confirm
       │
@@ -1140,6 +1183,7 @@ gh-safe-repo new <owner/repo>
       │   ├─ PUT  …/actions/permissions, …/selected-actions, …/workflow, …/fork-pr-contributor-approval
       │   ├─ PUT  …/vulnerability-alerts, …/automated-security-fixes, …/private-vulnerability-reporting
       │   ├─ PATCH /repos/{owner}/{repo}  (security_and_analysis)
+      │   ├─ PUT  …/immutable-releases
       │   ├─ git push (publish) or git push --mirror (mirror)
       │   └─ POST/PATCH …/rulesets  (branch and tag protection, after the push)
       │
@@ -1178,7 +1222,8 @@ authenticated and live tiers skip. It sets `trufflehog_mode = off` so scan
 tests use the regex engine. Every action is pinned to a commit SHA, as this
 repo's own Actions policy requires. A weekly `API drift` workflow checks the
 REST endpoints the tool calls against GitHub's latest published REST
-description (see [`tools/README.md`](tools/README.md#api_drift)).
+description (see [`tools/README.md`](tools/README.md#api_drift)). Pushing a
+release tag runs the `Release` workflow (see [Releasing](#releasing)).
 
 ```
 gh-safe-repo/
@@ -1194,6 +1239,50 @@ gh-safe-repo/
 ├── gh-safe-repo.ini.example  # Annotated example config
 └── tests/                    # See tests/README.md
 ```
+
+### Releasing
+
+The version bump and the tag stay local, so tags keep the maintainer's
+signature; CI publishes the GitHub Release.
+
+1. On a release branch, bump `version` in `pyproject.toml`, run `uv lock`,
+   and rename `## [Unreleased]` in `CHANGELOG.md` to
+   `## [X.Y.Z] - YYYY-MM-DD` (add a fresh empty `[Unreleased]` above it).
+   Preview the release notes with
+   `uv run tools/release_notes.py vX.Y.Z --repo AriESQ/gh-safe-repo`; it
+   runs the same checks as CI.
+2. Open the release PR and merge it.
+3. Pull `master`, check `HEAD` is the merge commit, then tag it and push the
+   tag:
+
+   ```bash
+   git tag -a vX.Y.Z -m vX.Y.Z      # annotated; signed when tag.gpgsign is on
+   git push origin vX.Y.Z
+   ```
+
+4. The `Release` workflow (`.github/workflows/release.yml`) does the rest:
+
+   - **check** (read-only): the tag is annotated (warns if GitHub cannot
+     verify its signature), points at a commit on `master`, and matches the
+     `pyproject.toml` and `uv.lock` version; `CHANGELOG.md` has a dated,
+     non-empty section for it. Builds the sdist and wheel.
+   - **test**: the CI matrix (`ci.yml`) on the tag.
+   - **publish** (the only job with `contents: write`, and it runs no repo
+     code): `gh release create vX.Y.Z dist/* --verify-tag --notes-file
+     notes.md`. The notes are the CHANGELOG section plus a "Full changelog"
+     compare link. A tag lower than the highest existing release tag is not
+     marked Latest.
+
+   If a release for the tag already exists it is left alone, so re-running
+   the workflow is safe. If a **draft** for the tag exists, the run fails:
+   publish or delete the draft, then re-run. If a check fails, fix it on
+   `master` and tag a new patch version; with immutable releases on, never
+   move a tag that already has a published release (GitHub refuses, and the
+   tag name cannot be reused).
+
+Because assets are passed to `gh release create`, gh creates the release as a
+draft, uploads the files, and only then publishes it, which is the order
+[immutable releases](#immutable-releases) need.
 
 ### Prior art
 

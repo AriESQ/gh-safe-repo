@@ -121,6 +121,14 @@ enable_secret_scanning_push_protection = true
 #   - Automatic dependency submission: enable via repository settings UI
 #   - Dependency graph: automatic for public repos; enable via UI for private repos
 
+[releases]
+# Immutable releases: once a release is published, its assets cannot be
+# changed, its tag cannot be moved or deleted, and the tag name can never be
+# reused (even after the release or the repo is deleted). Title and notes stay
+# editable; drafts are not locked. Publish as draft -> attach assets -> publish.
+# false leaves the repo's setting as it is (gh-safe-repo never turns it off).
+immutable = true
+
 [pre_flight_scan]
 # Runs automatically for push and copy, or standalone via `scan`.
 # Scans the source locally before any code is copied or made public.

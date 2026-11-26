@@ -9,6 +9,7 @@ from gh_safe_repo.diff import ChangeCategory, ChangeType
 from gh_safe_repo.errors import APIError, RepoExistsError
 from gh_safe_repo.plugins.actions import ActionsPlugin
 from gh_safe_repo.plugins.branch_protection import BranchProtectionPlugin
+from gh_safe_repo.plugins.releases import ReleasesPlugin
 from gh_safe_repo.plugins.repository import RepositoryPlugin
 from gh_safe_repo.plugins.security import SecurityPlugin
 from gh_safe_repo.plugins.tag_protection import TagProtectionPlugin
@@ -1991,3 +1992,148 @@ class TestApiReadShapes:
         client.call_api.side_effect = [(403, '{"message": "Upgrade to GitHub Pro"}')]
         with pytest.raises(APIError):
             plugin.fetch_current_state(strict=True)
+
+
+class TestReleasesPlugin:
+    """Immutable releases (#127): GET 200 {enabled, enforced_by_owner} = on,
+    404 = off (documented, not an error); PUT enables; never DELETE."""
+
+    PATH = "/repos/alice/my-repo/immutable-releases"
+
+    def _plugin(self, overrides=None):
+        client = make_mock_client()
+        return ReleasesPlugin(client, "alice", "my-repo", make_config(overrides)), client
+
+    # --- create mode ---
+
+    def test_create_plan_adds_immutable(self):
+        plugin, _ = self._plugin()
+        (c,) = plugin.plan().changes
+        assert c.type == ChangeType.ADD
+        assert c.category == ChangeCategory.RELEASES
+        assert (c.key, c.new) == ("immutable", True)
+
+    def test_create_apply_puts_endpoint(self):
+        plugin, client = self._plugin()
+        plugin.apply(plugin.plan())
+        client.call_json.assert_called_once_with("PUT", self.PATH)
+
+    def test_config_false_plans_nothing_and_never_deletes(self):
+        plugin, client = self._plugin(overrides={("releases", "immutable"): "false"})
+        assert plugin.plan().changes == []
+        assert plugin.plan(current_state={"immutable": True}).changes == []
+        plugin.apply(plugin.plan(current_state={"immutable": False}))
+        client.call_json.assert_not_called()
+
+    def test_no_plan_based_skip(self):
+        # The docs list the feature for every plan (fpt: '*'): a private repo
+        # on the free plan is planned like any other, never SKIPped.
+        plugin, _ = self._plugin()
+        assert [c.type for c in plugin.plan().changes] == [ChangeType.ADD]
+
+    # --- reads ---
+
+    def test_fetch_200_enabled(self):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (200, '{"enabled": true, "enforced_by_owner": false}')
+        assert plugin.fetch_current_state() == {"immutable": True, "enforced_by_owner": False}
+        client.call_api.assert_called_once_with("GET", self.PATH)
+
+    def test_fetch_404_is_disabled_even_when_strict(self):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (404, '{"message": "Not Found"}')
+        expected = {"immutable": False, "enforced_by_owner": False}
+        assert plugin.fetch_current_state() == expected
+        assert plugin.fetch_current_state(strict=True) == expected
+
+    def test_fetch_200_enabled_false_body_is_off(self):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (200, '{"enabled": false, "enforced_by_owner": false}')
+        assert plugin.fetch_current_state()["immutable"] is False
+
+    def test_fetch_2xx_without_body_is_on(self):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (200, "")
+        assert plugin.fetch_current_state()["immutable"] is True
+
+    def test_fetch_enforced_by_owner(self):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (200, '{"enabled": true, "enforced_by_owner": true}')
+        assert plugin.fetch_current_state()["enforced_by_owner"] is True
+
+    @pytest.mark.parametrize("status", [403, 500, None])
+    def test_fetch_ambiguous_is_off_when_planning(self, status):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (status, "")
+        assert plugin.fetch_current_state()["immutable"] is False
+
+    @pytest.mark.parametrize("status", [403, 500, None])
+    def test_fetch_ambiguous_raises_when_strict(self, status):
+        plugin, client = self._plugin()
+        client.call_api.return_value = (status, "")
+        with pytest.raises(APIError):
+            plugin.fetch_current_state(strict=True)
+
+    # --- audit ---
+
+    def test_audit_off_is_annotated_update(self):
+        plugin, _ = self._plugin()
+        (c,) = plugin.plan(current_state={"immutable": False, "enforced_by_owner": False}).changes
+        assert c.type == ChangeType.UPDATE
+        assert (c.old, c.new) == (False, True)
+        assert c.tier == "security"
+        assert c.github_default is False
+
+    def test_audit_on_is_skip(self):
+        plugin, client = self._plugin()
+        plan = plugin.plan(current_state={"immutable": True, "enforced_by_owner": False})
+        assert [c.type for c in plan.changes] == [ChangeType.SKIP]
+        assert not plan.has_changes()
+        plugin.apply(plan)
+        client.call_json.assert_not_called()
+
+    def test_audit_enforced_by_owner_is_skip_and_never_written(self):
+        plugin, client = self._plugin()
+        (c,) = plugin.plan(current_state={"immutable": True, "enforced_by_owner": True}).changes
+        assert c.type == ChangeType.SKIP
+        assert "organization" in c.reason
+        plugin.apply(plugin.plan(current_state={"immutable": False, "enforced_by_owner": True}))
+        client.call_json.assert_not_called()
+
+    def test_merge_policy_keeps_off_as_update(self):
+        # Off is GitHub's default, so nobody chose it: the three-way merge
+        # leaves the row an UPDATE (not PRESERVE), not flagged weakened.
+        from gh_safe_repo.commands.fix import apply_merge_policy
+        plugin, _ = self._plugin()
+        plan = apply_merge_policy(
+            plugin.plan(current_state={"immutable": False, "enforced_by_owner": False}),
+            make_config(),
+        )
+        (c,) = plan.changes
+        assert c.type == ChangeType.UPDATE and not c.weakened
+
+    def test_apply_then_reaudit_is_ok(self):
+        # Plugin contract for verification: after a successful apply, the
+        # strict re-audit has only SKIP rows, so the row verifies ok.
+        from gh_safe_repo.verify import verify_plugins
+        plugin, client = self._plugin()
+        client.call_api.side_effect = [
+            (404, ""),  # planning read: off
+            (200, '{"enabled": true, "enforced_by_owner": false}'),  # re-read
+        ]
+        plan = plugin.plan(current_state=plugin.fetch_current_state())
+        plugin.apply(plan)
+        v = verify_plugins([(plugin, plan)], sleep=lambda _s: None)
+        assert v.ok
+        assert [(c.category, c.key, c.status) for c in v.checks] == [
+            ("releases", "immutable", "ok"),
+        ]
+
+    def test_reaudit_still_off_is_mismatch(self):
+        from gh_safe_repo.verify import verify_plugins
+        plugin, client = self._plugin()
+        client.call_api.return_value = (404, "")
+        plan = plugin.plan(current_state=plugin.fetch_current_state())
+        plugin.apply(plan)
+        v = verify_plugins([(plugin, plan)], sleep=lambda _s: None, delays=())
+        assert [(c.key, c.status) for c in v.checks] == [("immutable", "mismatch")]

@@ -270,6 +270,32 @@
     },
     {
       "method": "GET",
+      "path": "/repos/{owner}/{repo}/immutable-releases",
+      "used_by": ["gh_safe_repo/plugins/releases.py"],
+      "spec": {
+        "status_codes": ["200", "404"],
+        "response_fields": ["enabled", "enforced_by_owner"],
+        "response_required": ["enabled", "enforced_by_owner"],
+        "request_fields": [],
+        "request_required": [],
+        "deprecated": false
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/repos/{owner}/{repo}/immutable-releases",
+      "used_by": ["gh_safe_repo/plugins/releases.py"],
+      "spec": {
+        "status_codes": ["204", "409"],
+        "response_fields": [],
+        "response_required": [],
+        "request_fields": [],
+        "request_required": [],
+        "deprecated": false
+      }
+    },
+    {
+      "method": "GET",
       "path": "/repos/{owner}/{repo}/actions/permissions",
       "used_by": ["gh_safe_repo/plugins/actions.py"],
       "observed": {

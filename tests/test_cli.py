@@ -584,8 +584,9 @@ class TestFixFlagValidation:
                  patch("gh_safe_repo.commands.fix.ActionsPlugin") as MockActions, \
                  patch("gh_safe_repo.commands.fix.BranchProtectionPlugin") as MockBP, \
                  patch("gh_safe_repo.commands.fix.SecurityPlugin") as MockSec, \
-                 patch("gh_safe_repo.commands.fix.TagProtectionPlugin") as MockTag:
-                for M in (MockRepo, MockActions, MockBP, MockSec, MockTag):
+                 patch("gh_safe_repo.commands.fix.TagProtectionPlugin") as MockTag, \
+                 patch("gh_safe_repo.commands.fix.ReleasesPlugin") as MockRel:
+                for M in (MockRepo, MockActions, MockBP, MockSec, MockTag, MockRel):
                     M.return_value = MagicMock()
                     M.return_value.plan.return_value = Plan()
                     M.return_value.fetch_current_state.return_value = {}
@@ -608,7 +609,7 @@ class TestFixFlagValidation:
                 except SystemExit:
                     pass
 
-        for M in (MockRepo, MockActions, MockBP, MockSec, MockTag):
+        for M in (MockRepo, MockActions, MockBP, MockSec, MockTag, MockRel):
             args_, _kw = M.call_args
             assert args_[1] == "Some-Org" and args_[2] == "Some-Repo", \
                 f"{M} called with non-canonical owner/repo: {args_}"
@@ -1402,11 +1403,11 @@ class TestFixVerification:
 
         `post_audits` are what SecurityPlugin's re-audit returns after apply
         (an Exception is raised from fetch_current_state instead). The other
-        four plugins plan nothing. Returns (exit_code, security_mock, sleep_mock).
+        five plugins plan nothing. Returns (exit_code, security_mock, sleep_mock).
         """
         initial = initial or self._bad()
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-                 "SecurityPlugin", "TagProtectionPlugin"]
+                 "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
         mocks = dict(zip(names, (p.start() for p in patches)))
         try:
@@ -1539,7 +1540,7 @@ class TestFixVerification:
     def test_declined_prompt_json_has_no_verification(self, capsys):
         """Without --yes the prompt goes to stderr and the doc stays parseable."""
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-                 "SecurityPlugin", "TagProtectionPlugin"]
+                 "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
         mocks = [p.start() for p in patches]
         try:
@@ -1576,7 +1577,7 @@ class TestAudit:
 
     def _run(self, plan, argv_extra=(), capsys=None):
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-                 "SecurityPlugin", "TagProtectionPlugin"]
+                 "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
         mocks = dict(zip(names, (p.start() for p in patches)))
         try:
@@ -1637,7 +1638,7 @@ class TestAudit:
     def test_fix_dry_run_still_exits_0_on_drift(self, capsys):
         """`fix --dry-run` keeps the uniform dry-run contract (exit 0)."""
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-                 "SecurityPlugin", "TagProtectionPlugin"]
+                 "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         with patch("sys.argv", ["gh-safe-repo", "fix", "alice/demo", "--dry-run"]), \
              patch("gh_safe_repo.commands.fix.build_context") as ctx:
             patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
@@ -1714,7 +1715,7 @@ class TestMergePolicyCli:
         are the re-audit plans returned after apply.
         """
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-                 "SecurityPlugin", "TagProtectionPlugin"]
+                 "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
         mocks = dict(zip(names, (p.start() for p in patches)))
         try:
@@ -1949,7 +1950,7 @@ class TestCreateJsonStdout:
 
     def test_plain_create_json_stdout_is_only_json(self, capsys):
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-                 "SecurityPlugin", "TagProtectionPlugin"]
+                 "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         patches = [patch(f"gh_safe_repo.commands.create.{n}") for n in names]
         mocks = [p.start() for p in patches]
         try:
@@ -1979,7 +1980,7 @@ class TestCreateVerification:
     """`create` re-reads what it applied (#77): exit 0/3/1, unknown → 0, JSON."""
 
     NAMES = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-             "SecurityPlugin", "TagProtectionPlugin"]
+             "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
 
     @staticmethod
     def _plan(*changes):
@@ -2477,7 +2478,7 @@ class TestConfirmationPromptUnattended:
     """
 
     PLUGINS = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
-               "SecurityPlugin", "TagProtectionPlugin"]
+               "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
 
     @staticmethod
     def _work():

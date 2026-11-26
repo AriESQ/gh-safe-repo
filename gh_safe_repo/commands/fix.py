@@ -10,6 +10,7 @@ from ..display import safe_display
 from ..errors import APIError, SafeRepoError
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
+from ..plugins.releases import ReleasesPlugin
 from ..plugins.repository import RepositoryPlugin
 from ..plugins.security import SecurityPlugin
 from ..plugins.tag_protection import TagProtectionPlugin
@@ -234,6 +235,7 @@ def run(args, audit=False):
             client, owner, repo_name, config,
             is_public=is_public, is_paid_plan=is_paid_plan,
         ),
+        ReleasesPlugin(client, owner, repo_name, config),
     ]
 
     actions_plugin = plugins[1]

@@ -680,19 +680,26 @@ def _finding_detail_lines(f):
     return lines
 
 
-def _print_findings(findings, config):
+def _print_findings(findings, config, *, incomplete=False):
     """Print scan findings with ANSI formatting. Returns True if any criticals.
 
     This is the output boundary for scan results: file names, matched text,
     rule names and commit data are untrusted and are sanitized here, not in
     the stored `Finding` (so `--json` keeps the raw values).
+
+    incomplete: a strict trufflehog_mode could not run truffleHog (#153), so
+    an empty result must not read as a clean scan.
     """
     criticals = [f for f in findings if f.severity == Severity.CRITICAL]
     warnings  = [f for f in findings if f.severity == Severity.WARNING]
     infos     = [f for f in findings if f.severity == Severity.INFO]
 
     if not findings:
-        print(_c(_GREEN, "  No issues found."))
+        if incomplete:
+            print(_c(_YELLOW, "  No issues found by the regex scanner, but truffleHog "
+                              "failed: this scan is incomplete."))
+        else:
+            print(_c(_GREEN, "  No issues found."))
         return False
 
     pad = " " * 13

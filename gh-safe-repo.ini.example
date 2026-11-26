@@ -138,8 +138,8 @@ max_file_size_mb = 100
 #   docker — container only (podman or docker); skip native PATH check
 #   off    — regex scanner only; no truffleHog attempt, no warning
 # native and docker are strict: if truffleHog cannot run (not found, wrong
-# version, or it fails mid-scan), `scan` and the `create` pre-flight exit 1
-# instead of falling back to regex. Only auto falls back.
+# version, or it fails mid-scan), `scan` and the `create` pre-flight exit 1:
+# a regex-only scan does not count as clean. Only auto accepts the fallback.
 trufflehog_mode = auto
 
 # Literal strings to flag as critical findings (case-insensitive).

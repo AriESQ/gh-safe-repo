@@ -481,13 +481,23 @@ class SecurityScanner:
 
     def engine_error(self) -> Optional[str]:
         """After scan(): an error message if an explicit mode fell back, else None."""
-        if not (self.fell_back and self.is_strict):
+        if not self.strict_failure:
             return None
+        # The regex patterns run on every scan, so their results are real and
+        # are still reported; what the strict mode refuses is to count a
+        # regex-only scan as a pass (#153).
         return (
             f"trufflehog_mode = {self._trufflehog_mode} but truffleHog could not run "
-            f"({self.fallback_reason}); refusing to fall back to the regex scanner. "
-            f"Fix the truffleHog install, or set trufflehog_mode = auto to allow the fallback"
+            f"({self.fallback_reason}). Only the regex scanner ran, and it misses "
+            f"most credential types, so this scan does not count as clean. "
+            f"Fix the truffleHog install, or set trufflehog_mode = auto to accept "
+            f"a regex-only scan"
         )
+
+    @property
+    def strict_failure(self) -> bool:
+        """After scan(): True when a strict mode could not run truffleHog."""
+        return self.fell_back and self.is_strict
 
     def engine_report(self) -> dict:
         """The `engine` object for `scan --json`."""
@@ -495,6 +505,7 @@ class SecurityScanner:
             "configured": self._trufflehog_mode,
             "used": self.engine_used,
             "fell_back": self.fell_back,
+            "error": self.engine_error(),
         }
 
     @property
@@ -505,6 +516,9 @@ class SecurityScanner:
             return f"truffleHog v{disc.get('version', '?')}"
         if self.engine_used == ENGINE_CONTAINER:
             return f"truffleHog via {disc.get('runtime', 'container')}"
+        if self.strict_failure:
+            # Not "fell back": the strict mode does not accept this result.
+            return f"regex only (truffleHog failed: {self.fallback_reason})"
         if self.fell_back:
             return f"regex (fell back from truffleHog: {self.fallback_reason})"
         if not self._scan_secrets:

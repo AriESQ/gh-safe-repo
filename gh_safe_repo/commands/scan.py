@@ -5,6 +5,7 @@ import sys
 
 from ..config_manager import ConfigManager
 from ..errors import ConfigError
+from ..local_repo import NO_COMMITS, branch_state
 from ..security_scanner import SecurityScanner, Severity
 from ._common import (
     _BOLD,
@@ -18,6 +19,7 @@ from ._common import (
     format_findings_json,
     info,
     resolve_config_arg,
+    warn,
 )
 
 NAME = "scan"
@@ -60,6 +62,15 @@ def run(args):
     _info(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
     findings = scanner.scan(scan_path)
     _info(_c(_DIM, f"Scan engine: {scanner.engine_summary}"))
+    # In a git repo only tracked files are scanned (#84). With no commits
+    # that is whatever has been staged, often nothing, and "No issues found"
+    # would then describe a scan of zero files (#134).
+    if branch_state(scan_path) == NO_COMMITS:
+        warn(
+            f"{scan_path} is a git repository with no commits: only files "
+            "staged with `git add` were scanned, and there is no history to "
+            "scan. Untracked files were not read."
+        )
 
     if scanner.skipped_committed_dirs:
         _info(_c(_YELLOW, "Warning: the following directories were skipped during scan:"))

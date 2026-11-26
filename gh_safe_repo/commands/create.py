@@ -15,7 +15,7 @@ from .. import actions_usage
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
 from ..github_client import LocalWiring
-from ..local_repo import is_git_checkout
+from ..local_repo import NO_BRANCHES, NO_COMMITS, branch_state, is_git_checkout
 from ..git_transport import (
     discover_transport,
     git_protocol_preference,
@@ -92,6 +92,60 @@ def _abort_on_scan(decision, _info):
         sys.exit(1)
     _info(_c(_YELLOW, "\nAborted by user."))
     sys.exit(0)
+
+
+def _validate_local_source(arg_path, owner, repo_name, dry_run=False):
+    """Check the `push` source before anything else runs. Returns its
+    absolute path, or exits 2.
+
+    Local checks only (filesystem and local git), so they run first: before
+    authentication, the scan and every API call, and under --dry-run too. A
+    repository with no commits has nothing to push; going ahead would create
+    an empty GitHub repo that then fails verification (#134).
+    """
+    local_path = os.path.abspath(arg_path)
+    if not os.path.isdir(local_path):
+        error(f"Source path '{arg_path}' is not a directory")
+        sys.exit(2)
+    if not is_git_checkout(local_path):
+        error(f"Source path '{arg_path}' is not a git repository "
+              "(run 'git init' and make a first commit)")
+        sys.exit(2)
+
+    state = branch_state(local_path)
+    if state not in (NO_COMMITS, NO_BRANCHES):
+        return local_path
+
+    where = shlex.quote(local_path)
+    dest = f"{owner}/{repo_name}"
+    again = f"gh-safe-repo push {where} {dest}" + (" --dry-run" if dry_run else "")
+    if state == NO_COMMITS:
+        error(
+            f"Source path '{arg_path}' is a git repository with no commits, so "
+            "there is nothing to push. Nothing was created."
+        )
+        lines = [
+            "To push this directory, make a first commit, then run push again:",
+            f"  git -C {where} add -A",
+            f"  git -C {where} commit -m \"Initial commit\"",
+            "      (no files yet? add --allow-empty to the commit)",
+            f"  {again}",
+            "Or create the empty repository on GitHub first, then clone it:",
+            f"  gh-safe-repo new {dest}",
+            f"  gh repo clone {dest}",
+        ]
+    else:
+        error(
+            f"Source path '{arg_path}' has commits but no local branch "
+            "(detached HEAD), so there is no branch to push. Nothing was created."
+        )
+        lines = [
+            "Create a branch at the current commit, then run push again:",
+            f"  git -C {where} switch -c <branch>",
+            f"  {again}",
+        ]
+    print("\n".join(lines), file=sys.stderr)
+    sys.exit(2)
 
 
 def _local_branch(local_path):
@@ -198,7 +252,15 @@ def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
         wiring = LocalWiring()
     where = shlex.quote(local_path)
     is_git = is_git_checkout(local_path)
-    if is_git:
+    if is_git and branch_state(local_path) in (NO_COMMITS, NO_BRANCHES):
+        # Pushing again cannot help: there is still nothing to push (#134).
+        remediation = (
+            f"Nothing was pushed because {where} has no branch with commits. "
+            f"Commit first (cd {where} && git add -A && git commit -m "
+            f"\"Initial commit\"), then `git push -u {dest} <branch>:<branch>`; "
+            f"{then_fix}."
+        )
+    elif is_git:
         remediation = (
             f"Push it again: cd {where} && git push {dest} "
             "'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*' "
@@ -229,6 +291,13 @@ def run(args):
     # Validate the `copy` source format
     if args.from_repo:
         from_owner, from_repo = parse_repo_arg(args.from_repo)
+
+    # Validate the `push` source path: local checks, before any API call.
+    local_path = None
+    if args.local_path:
+        local_path = _validate_local_source(
+            args.local_path, owner, repo_name, dry_run=args.dry_run,
+        )
 
     ctx = build_context(args, owner)
     config = ctx.config
@@ -288,17 +357,6 @@ def run(args):
             error(f"Failed to check if repo exists: {e}")
             sys.exit(1)
 
-    # Validate the `push` source path
-    local_path = None
-    if args.local_path:
-        local_path = os.path.abspath(args.local_path)
-        if not os.path.isdir(local_path):
-            error(f"Source path '{args.local_path}' is not a directory")
-            sys.exit(2)
-        if not is_git_checkout(local_path):
-            error(f"Source path '{args.local_path}' is not a git repository (run 'git init' first)")
-            sys.exit(2)
-
     # Validate source repo exists (`copy`) and capture metadata
     source_default_branch = None
     source_description = ""
@@ -318,6 +376,25 @@ def run(args):
                 source_topics = []
         except APIError as e:
             error(f"Failed to check source repo: {e}")
+            sys.exit(1)
+        # An empty source has nothing to mirror: the copy would create an
+        # empty repo and report the mirror as done (#134). matching_refs maps
+        # GitHub's 409 "Git Repository is empty" to {}. A failed read is not
+        # proof of emptiness, so it does not block.
+        try:
+            source_empty = not client.matching_refs(from_owner, from_repo, "heads")
+        except APIError:
+            source_empty = False
+        if source_empty:
+            error(
+                f"Source repo '{from_owner}/{from_repo}' has no branches (it is "
+                "empty), so there is nothing to copy. Nothing was created."
+            )
+            print(
+                "Push a commit to the source, then run copy again. Or create "
+                f"an empty repository:\n  gh-safe-repo new {owner}/{repo_name}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     # Create scanner once
@@ -580,9 +657,17 @@ def run(args):
             )
             if wiring is not None and wiring.default_branch:
                 bp_plugin.branches = [wiring.default_branch]
-            _info(_c(_GREEN, "  Code pushed successfully."))
-            if wiring is not None and wiring.error:
-                warn(f"Code pushed, but local repo not fully wired: {wiring.error}")
+            # "Pushed" means at least one branch went up, not just that git
+            # exited 0 (#134). Verification below then fails code/branches.
+            if wiring is None or wiring.pushed:
+                _info(_c(_GREEN, "  Code pushed successfully."))
+                if wiring is not None and wiring.error:
+                    warn(f"Code pushed, but local repo not fully wired: {wiring.error}")
+            else:
+                warn(
+                    f"No branch was pushed: {local_path} has no branch with "
+                    "commits. The new repository is empty."
+                )
         except APIError as e:
             url = client.transport.persistent_url(owner, repo_name)
             branch = _local_branch(local_path)

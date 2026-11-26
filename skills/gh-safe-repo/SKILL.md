@@ -79,7 +79,7 @@ drops ANSI codes when stdout is not a terminal.
 |---|---|
 | `0` | Success — **or** a person declined at the prompt (`n`, empty line, Ctrl-C). Never for an unanswerable prompt: that is `1`. For `audit`: the repo is compliant. For the mutating commands, everything applied was read back and verified (`unknown` checks and `advisory` local-wiring checks warn but still exit `0`) |
 | `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, or a failed code push on `push`/`copy` (the repo **was** created; see Failure modes). For the creating commands, also a failed **fatal** check: the new repo cannot be found, its visibility is wrong, or (`push`/`copy`) a pushed branch or tag is missing on GitHub or at a different SHA |
-| `2` | Usage error: bad `owner/repo`, path is not a directory, `--config` with `--no-config`, an unknown flag (including the removed `--local`/`--from`) |
+| `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, the `push` path is a git repo with **no commits** (or no local branch), `--config` with `--no-config`, an unknown flag (including the removed `--local`/`--from`). Nothing was created; stdout is empty even with `--json` |
 | `3` | `audit`: at least one setting differs from the safe defaults and `fix` would change it (an `add`/`update`/`delete` row; `preserve` rows never count). Or a mutating command applied the changes but at least one setting did not stick when read back (a non-fatal, non-advisory `mismatch` check, e.g. `repo/default_branch`). For the creating commands the repo exists and is usable. See Failure modes |
 | `130` | Interrupted (SIGINT); nothing after the interrupt point ran |
 
@@ -198,10 +198,10 @@ and `repo/default_branch` (exit `3`). `push` also adds `local/origin` and
 `local/tracking` (`advisory`): your repo's `remote.origin.url` and
 `branch.<b>.remote`/`.merge`, read from local git config.
 
-A creating command that exits `1` **before or during** the apply (repo
+A creating command that exits `1` or `2` **before or during** the apply (repo
 already exists, scan blocked, prompt hit end of input, credential pre-flight,
-failed code push) prints **no** JSON document: stdout is empty and the
-reason is on stderr. One that exits `1` from a fatal check still prints the
+failed code push, a `push` path with no commits, an empty `copy` source)
+prints **no** JSON document: stdout is empty and the reason is on stderr. One that exits `1` from a fatal check still prints the
 full document.
 
 `scan --json` emits `{"findings": [...], "summary": {"critical": N, "warning": N,
@@ -215,6 +215,12 @@ full document.
 scanner checked for secrets. Tell the user when that happens: regex misses
 credential types truffleHog detects. `scan` exiting `1` with
 `summary.critical == 0` means an explicit mode fell back (see Failure modes).
+A truffleHog run that logs `error running scan` counts as failed whatever its
+exit status, so it shows up here as `fell_back: true`, never as a clean scan.
+
+`scan` on a git repo with no commits warns on stderr (`is a git repository
+with no commits: only files staged with git add were scanned`). The exit code
+is unchanged, but "no findings" then says little: tell the user.
 
 ## `SKIP` is normal — do not retry it
 
@@ -267,6 +273,10 @@ settings when the current value is *stricter* than the desired one (e.g.
 | Symptom | Cause and fix |
 |---|---|
 | `unrecognized arguments: --local ...` or `--from ...` (exit 2) | Those flags were removed. Use `push <path> <owner/repo>` or `copy <src-owner/repo> <owner/repo>`. |
+| `push`: `Source path '...' is a git repository with no commits, so there is nothing to push. Nothing was created.` (exit 2, also under `--dry-run`) | The directory was `git init`-ed but never committed (untracked or staged files do not count). Nothing was scanned, no API call was made, no repo exists. Do **not** switch to `new` on your own: `new` creates the GitHub repo but does not wire the local directory. Stderr prints both routes; pick with the user. To keep the directory: `git -C <path> add -A`, `git -C <path> commit -m "Initial commit"` (`--allow-empty` if there are no files), then the same `push` command again. Ask before committing on the user's behalf. Or: `gh-safe-repo new <owner/repo> --yes`, then `gh repo clone <owner/repo>`. |
+| `push`: `Source path '...' has commits but no local branch (detached HEAD)` (exit 2) | Same early refusal; nothing was created. `git -C <path> switch -c <branch>`, then re-run `push`. |
+| `copy`: `Source repo '...' has no branches (it is empty), so there is nothing to copy. Nothing was created.` (exit 1) | The source repository is empty. Nothing was scanned or created. Use `new <owner/repo>` if an empty repo is what the user wants. `copy --dry-run` makes no API calls and does not detect this. |
+| `Warning: No branch was pushed: ... The new repository is empty.` followed by `✗ code/branches` (exit 1) | The source lost its commits after the early check, or git could not answer it. The repo exists; do not re-run the creating command. Follow the printed `remediation`: commit first, push that branch, then `gh-safe-repo fix <owner/repo> --yes`. |
 | `argument --config: expected one argument` (exit 2) | `--config` needs a path. To ignore config files, pass `--no-config`. |
 | `Owner 'X' does not match authenticated user 'Y'` | The creating commands require you own the namespace. Check which account `gh` is authenticated as; do not silently retry with `Y`. |
 | `audit`/`fix` reports the repo does not exist (404) | Ambiguous: missing repo, or private and invisible to the *active* account. Confirm the active `gh` account before concluding it is gone. |

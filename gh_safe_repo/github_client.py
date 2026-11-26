@@ -367,6 +367,12 @@ class GitHubClient:
                 pushed_tags = self._local_refs(transport, work_path, "refs/tags")
                 if default_branch not in pushed_refs:
                     default_branch = None
+                if not pushed_refs and not pushed_tags:
+                    # No commits (unborn HEAD): `git push` with only the tag
+                    # wildcard exits 0 having sent nothing, which used to
+                    # read as a successful push (#134). Nothing to send, and
+                    # the user's repo is left as it was.
+                    return LocalWiring()
                 # One push for every branch and tag: each connection costs a
                 # security-key touch, and a miss between separate pushes left
                 # a half-pushed repo (#79). Default branch first, since the
@@ -451,6 +457,14 @@ class GitHubClient:
         try:
             for name, sha in pushed_refs.items():
                 transport.run(git + ["update-ref", f"refs/remotes/origin/{name}", sha])
+            if branch not in pushed_refs:
+                # Unborn branch: git would say "fatal: no commit on branch
+                # '<b>' yet" (#134).
+                return LocalWiring(
+                    branch=branch, origin=True,
+                    error=(f"branch '{branch}' has no commits, so it was not "
+                           "pushed and has no upstream to track"),
+                )
             transport.run(
                 git + ["branch", f"--set-upstream-to=origin/{branch}", branch],
             )

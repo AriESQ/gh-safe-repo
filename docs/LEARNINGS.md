@@ -931,3 +931,81 @@ out of the org's managed set (`configuration-statuses.md`).
 `GET /repos/{o}/{r}/code-security-configuration` reports the status, but
 needs an org admin or security manager. See section 7 of
 `docs/2026-11-01_security-settings-availability.md`.
+
+## `push` on a Repository With No Commits (#134)
+
+A `git init`-ed directory with nothing committed is a git checkout
+(`is_git_checkout()` is true) with an unborn HEAD, no refs and no
+`.git/index`. Every stage of `push` accepted it and each one reported
+success:
+
+- `git clone --bare` of it succeeds (git only warns "You appear to have
+  cloned an empty repository").
+- `git push origin 'refs/tags/*:refs/tags/*'` with no branch refspecs and no
+  tags exits `0` having sent nothing, so `push_local` returned normally and
+  `create` printed "Code pushed successfully".
+- `git branch --set-upstream-to` then failed with
+  `fatal: no commit on branch '<b>' yet`, shown raw in the wiring warning.
+- `git ls-files` is empty, so the regex walk read no files (#84 restricts it
+  to tracked files).
+
+Only verification (`code/branches`: "at least one branch") caught it, after
+the repo existed.
+
+**The fix is a local check before anything else.**
+`local_repo.branch_state()` runs `git for-each-ref --count=1 refs/heads`, and
+`rev-parse --verify HEAD^{commit}` only when that is empty, to tell
+`NO_COMMITS` from `NO_BRANCHES` (commits on a detached HEAD, no branch).
+`create._validate_local_source()` calls it at the top of `run()`, ahead of
+`build_context()`, so the refusal costs no API call and `--dry-run` shows it.
+This moved the two existing path checks (not a directory, not a git repo)
+ahead of authentication as well; their exit code (`2`) is unchanged. The
+refusal uses `2` too, as another "this path cannot be pushed" input error.
+
+**Fail open on `UNKNOWN`.** Many tests (and some real directories) have a
+`.git` that is not a usable repository. `git -C` would then walk up and
+answer for a parent repo, so the call sets `GIT_CEILING_DIRECTORIES` to the
+path's parent; git fails and the result is `UNKNOWN`, which never refuses.
+The ceiling limits upward discovery only: a worktree's or submodule's `.git`
+file is still followed.
+
+**Branches, not commits, are what `push` needs.** The refspecs are built from
+`refs/heads`, so a repo with commits but no branch pushes nothing as well.
+Tags alone do not satisfy `code/branches` either. Staged files do not count:
+`NO_COMMITS` holds until the first commit.
+
+**truffleHog reports a failed scan in its log, not its exit code.** On that
+directory `trufflehog git file://...` logged
+`{"level":"error","msg":"error running scan","error":"... failed to read
+index file ..."}` on stderr and still exited with a status the scanner
+accepts (`0` or `1`; the issue's output shows the run was taken as clean).
+stderr was inherited, not captured, so nothing could look at it.
+`_run_teeing_stderr()` now hands the child a pipe we own, a thread echoes it
+to our stderr in raw chunks (progress output is not held back for a newline)
+and keeps a copy, and `communicate()` reads stdout as before. Existing tests
+that mock `subprocess.Popen` keep working: the mock writes nothing, the write
+end closes, the reader sees EOF. `_trufflehog_scan_error()` treats two shapes
+as "did not scan": an error/fatal line with msg `error running scan` at any
+exit code, and exit `1` with no finding on stdout plus any error/fatal line.
+Other error-level lines do not fail a scan that exited `0`: truffleHog logs
+recoverable per-detector problems at that level, and failing on them would
+turn `native`/`docker` runs into exit `1` for noise. The exact exit code of
+the #134 run was not re-measured against a live truffleHog; the rule covers
+both `0` and `1`.
+
+**`copy` has the same shape (by reading the code; not reproduced live).**
+Nothing in the `copy` path checked that the source had any ref: a mirror
+clone and mirror push of an empty repository have nothing to send, and
+`mirrored_ref_probes` would compare an empty source with an empty
+destination. `create` now reads the source's heads with
+`matching_refs()` (409 "Git Repository is empty" → `{}`) right after the
+source metadata and refuses on an empty map. A failed read does not refuse:
+it is not evidence of emptiness. This is one more API call per `copy`, and
+none under `--dry-run`.
+
+**The message matters as much as the check (#152).** "Use `new` instead" is a
+dead end for someone who has a local directory: `new` creates the GitHub repo
+and touches nothing local. The refusal prints the sequence that finishes the
+job from where the user is (commit, then the same `push` again) ahead of the
+`new` + `gh repo clone` alternative. `gh repo clone` is used because the
+transport (ssh or https) has not been discovered at that point.

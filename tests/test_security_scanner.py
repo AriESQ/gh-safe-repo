@@ -1,8 +1,10 @@
 """Tests for security_scanner.py — uses real tempfiles, no filesystem mocking."""
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -15,6 +17,7 @@ from gh_safe_repo.security_scanner import (
     Severity,
     format_findings,
     _ai_context_hint,
+    _trufflehog_scan_error,
 )
 
 
@@ -1520,3 +1523,152 @@ class TestProgress:
         err = capsys.readouterr().err
         assert "Scanning files: 1/1 (100%)  a.py" in err
         assert err.endswith("\r\033[K")
+
+
+# The line truffleHog logged for a repository with no commits (#134).
+INDEX_ERROR_LINE = json.dumps({
+    "level": "error", "ts": "2026-11-01T00:00:00Z", "logger": "trufflehog",
+    "msg": "error running scan",
+    "error": ("failed to scan Git: error preparing repo: failed to read index "
+              "file: open /src/.git/index: no such file or directory"),
+})
+
+
+def mock_popen_with_stderr(stderr_text, stdout="", returncode=0, only=None):
+    """Like mock_popen(), but the fake child writes stderr_text to the
+    stderr file descriptor it was handed, as a real child would.
+
+    With `only`, just commands whose argv[0] is `only` are faked; every
+    other command (the scanner's own git calls) runs for real."""
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, *args, **kwargs):
+        if only and cmd[0] != only:
+            return real_popen(cmd, *args, **kwargs)
+        os.write(kwargs["stderr"], stderr_text.encode())
+        proc = MagicMock()
+        proc.communicate.return_value = (stdout, None)
+        proc.returncode = returncode
+        return proc
+    return patch("subprocess.Popen", side_effect=fake_popen)
+
+
+class TestTrufflehogScanError:
+    """A truffleHog run that logs a scan error did not scan (#134)."""
+
+    def test_error_running_scan_with_exit_0(self):
+        reason = _trufflehog_scan_error(INDEX_ERROR_LINE + "\n", 0, False)
+        assert reason.startswith("failed to scan Git")
+        assert "failed to read index file" in reason
+
+    def test_error_running_scan_with_exit_1(self):
+        assert _trufflehog_scan_error(INDEX_ERROR_LINE, 1, False)
+
+    def test_fatal_level_counts(self):
+        line = json.dumps({"level": "fatal", "msg": "error running scan", "error": "boom"})
+        assert _trufflehog_scan_error(line, 0, False) == "boom"
+
+    def test_other_error_with_exit_1_and_no_findings(self):
+        line = json.dumps({"level": "error", "msg": "error creating engine", "error": "bad"})
+        assert _trufflehog_scan_error(line, 1, False) == "bad"
+
+    def test_other_error_does_not_fail_a_completed_scan(self):
+        line = json.dumps({"level": "error", "msg": "error verifying", "error": "timeout"})
+        # Exit 0: the scan finished. Exit 1 with findings: it found things.
+        assert _trufflehog_scan_error(line, 0, False) is None
+        assert _trufflehog_scan_error(line, 1, True) is None
+
+    def test_info_lines_and_non_json_are_ignored(self):
+        stderr = "\n".join([
+            "Trying to pull ghcr.io/trufflesecurity/trufflehog:latest...",
+            json.dumps({"level": "info-0", "msg": "running source"}),
+            '{"level": "error", truncated',
+            "[1, 2]",
+            "",
+        ])
+        assert _trufflehog_scan_error(stderr, 0, False) is None
+        assert _trufflehog_scan_error(stderr, 1, False) is None
+        assert _trufflehog_scan_error("", 1, False) is None
+
+    def test_reason_is_printable_and_capped(self):
+        line = json.dumps({"level": "error", "msg": "error running scan",
+                           "error": "bad\x1b[31m path " + "x" * 500})
+        reason = _trufflehog_scan_error(line, 0, False)
+        assert "\x1b" not in reason
+        assert len(reason) <= 300
+
+    @pytest.mark.parametrize("returncode", [0, 1])
+    def test_try_trufflehog_returns_none_not_empty(self, returncode, capsys):
+        """None = failed (fall back to regex); [] would mean "scanned, clean"."""
+        scanner = make_scanner()
+        scanner._discovery = {"method": "native", "version": "3.93.4"}
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock_popen_with_stderr(INDEX_ERROR_LINE + "\n", returncode=returncode):
+            assert scanner._try_trufflehog(tmpdir) is None
+        assert "failed to read index file" in scanner._trufflehog_failure
+        # Still shown to the user as it arrives.
+        assert "error running scan" in capsys.readouterr().err
+
+    def test_clean_run_still_returns_empty_list(self):
+        scanner = make_scanner()
+        scanner._discovery = {"method": "native", "version": "3.93.4"}
+        info_line = json.dumps({"level": "info-0", "msg": "finished scanning"})
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock_popen_with_stderr(info_line + "\n"):
+            assert scanner._try_trufflehog(tmpdir) == []
+
+    def test_scan_of_repo_without_commits_falls_back_to_regex(self):
+        """End to end on a real `git init`-ed directory: the secret scan is
+        reported as a regex fallback, never as a clean truffleHog run."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            make_git_repo(tmpdir)
+            write_file(tmpdir, "config.py", "key = 'AKIAIOSFODNN7EXAMPLE'\n")
+            subprocess.run(["git", "-C", tmpdir, "add", "-A"], check=True,
+                           capture_output=True)
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "auto"})
+            scanner._discovery = {"method": "native", "version": "3.93.4"}
+            with mock_popen_with_stderr(INDEX_ERROR_LINE + "\n", only="trufflehog"):
+                findings = scanner.scan(tmpdir)
+        assert scanner.fell_back is True
+        assert scanner.engine_used == "regex"
+        assert "failed to read index file" in scanner.fallback_reason
+        assert "fell back from truffleHog" in scanner.engine_summary
+        # The staged file was still scanned by the regex engine.
+        assert any(f.category == FindingCategory.SECRET for f in findings)
+
+    def test_explicit_mode_reports_engine_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scanner = make_scanner({("pre_flight_scan", "trufflehog_mode"): "native"})
+            with patch.object(scanner, "_detect_native", return_value="3.93.4"), \
+                 mock_popen_with_stderr(INDEX_ERROR_LINE + "\n"):
+                scanner.scan(tmpdir)
+        assert scanner.fell_back is True
+        assert "failed to read index file" in scanner.engine_error()
+
+
+class TestRunTeeingStderr:
+    """The real pipe plumbing, with a real child process."""
+
+    def test_returns_both_streams_and_echoes_stderr(self, capsys):
+        code = ("import sys; sys.stdout.write('out-line\\n'); "
+                "sys.stderr.write('err-line\\n'); sys.exit(1)")
+        stdout, stderr, returncode = SecurityScanner._run_teeing_stderr(
+            [sys.executable, "-c", code]
+        )
+        assert (stdout, stderr, returncode) == ("out-line\n", "err-line\n", 1)
+        assert "err-line" in capsys.readouterr().err
+
+    def test_large_output_on_both_streams_does_not_deadlock(self, capsys):
+        code = ("import sys; sys.stderr.write('e' * 300000); "
+                "sys.stdout.write('o' * 300000)")
+        stdout, stderr, returncode = SecurityScanner._run_teeing_stderr(
+            [sys.executable, "-c", code]
+        )
+        assert (len(stdout), len(stderr), returncode) == (300000, 300000, 0)
+
+    def test_missing_binary_raises_and_leaks_no_descriptor(self):
+        before = len(os.listdir("/dev/fd")) if os.path.isdir("/dev/fd") else None
+        with pytest.raises(FileNotFoundError):
+            SecurityScanner._run_teeing_stderr(["gh-safe-repo-no-such-binary"])
+        if before is not None:
+            assert len(os.listdir("/dev/fd")) == before

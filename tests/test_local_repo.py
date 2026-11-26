@@ -15,7 +15,15 @@ import pytest
 from gh_safe_repo.commands import create
 from gh_safe_repo.github_client import GitHubClient
 from gh_safe_repo.git_transport import GitTransport
-from gh_safe_repo.local_repo import external_git_dir, is_git_checkout
+from gh_safe_repo.local_repo import (
+    HAS_BRANCHES,
+    NO_BRANCHES,
+    NO_COMMITS,
+    UNKNOWN,
+    branch_state,
+    external_git_dir,
+    is_git_checkout,
+)
 from gh_safe_repo.security_scanner import FindingCategory
 
 from .test_security_scanner import make_scanner, mock_popen, write_file
@@ -224,3 +232,96 @@ class TestScanGitFileCheckout:
         expected = os.path.realpath(os.path.join(repos[gitdir[0]], *gitdir[1:]))
         assert any(os.path.realpath(m.split(":")[0]) == expected for m in mounts)
         assert "git" in cmd
+
+
+class TestBranchState:
+    """`branch_state()`: is there a branch `push` could send? (#134)"""
+
+    def test_git_init_without_commits(self, tmp_path):
+        git(tmp_path, "init", "-q", "-b", "main", str(tmp_path / "empty"))
+        # Untracked files do not make a commit.
+        write_file(str(tmp_path / "empty"), "file.txt", "hello\n")
+        assert branch_state(str(tmp_path / "empty")) == NO_COMMITS
+
+    def test_staged_but_uncommitted_is_still_no_commits(self, tmp_path):
+        repo = tmp_path / "staged"
+        git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        write_file(str(repo), "file.txt", "hello\n")
+        git(repo, "add", "-A")
+        assert branch_state(str(repo)) == NO_COMMITS
+
+    def test_repo_with_commits(self, repos):
+        assert branch_state(str(repos["main"])) == HAS_BRANCHES
+
+    def test_worktree_and_submodule_have_branches(self, repos):
+        assert branch_state(str(repos["linked"])) == HAS_BRANCHES
+        assert branch_state(str(repos["sub"])) == HAS_BRANCHES
+
+    def test_detached_head_with_no_branch(self, tmp_path):
+        repo = tmp_path / "detached"
+        git(tmp_path, "init", "-q", "-b", "main", str(repo))
+        git(repo, "commit", "-q", "--allow-empty", "-m", "one")
+        git(repo, "checkout", "-q", "--detach")
+        git(repo, "branch", "-D", "main")
+        assert branch_state(str(repo)) == NO_BRANCHES
+
+    def test_plain_directory_is_unknown(self, tmp_path):
+        assert branch_state(str(tmp_path)) == UNKNOWN
+
+    def test_unusable_dot_git_is_unknown_even_inside_a_repo(self, repos):
+        """A `.git` directory that is not a repository must not be answered
+        for by the repo above it (git walks up without the ceiling)."""
+        inner = repos["main"] / "inner"
+        (inner / ".git").mkdir(parents=True)
+        assert branch_state(str(inner)) == UNKNOWN
+
+    @pytest.mark.parametrize("failure", [OSError("no git"),
+                                         subprocess.TimeoutExpired("git", 5)])
+    def test_git_not_runnable_is_unknown(self, tmp_path, failure):
+        (tmp_path / ".git").mkdir()
+        with patch("gh_safe_repo.local_repo.subprocess.run", side_effect=failure):
+            assert branch_state(str(tmp_path)) == UNKNOWN
+
+
+class TestPushLocalNothingToPush:
+    """`push_local` on a source with no commits (#134), behind the early
+    refusal in `create`: nothing is sent and nothing is claimed."""
+
+    def test_unborn_repo_pushes_nothing_and_leaves_source_alone(self, tmp_path):
+        src = tmp_path / "empty"
+        git(tmp_path, "init", "-q", "-b", "main", str(src))
+        write_file(str(src), "file.txt", "hello\n")
+        remote = remote_repo(tmp_path)
+        client = make_client(remote)
+
+        wiring = client.push_local(str(src), "alice", "dest", "main")
+
+        assert wiring.pushed == {} and wiring.tags == {}
+        assert wiring.default_branch is None
+        assert wiring.error is None and wiring.origin is False
+        assert heads(remote) == set()
+        # No network push was attempted, no default branch was set, and the
+        # user's repo got no origin.
+        client.transport.run_remote.assert_not_called()
+        client.call_api.assert_not_called()
+        assert git(src, "remote") == ""
+
+    def test_unborn_current_branch_in_a_repo_with_history(self, repos):
+        """`git switch --orphan`: the other branches are pushed and tracked;
+        the unborn one gets a plain-language error, not git's
+        "fatal: no commit on branch ... yet"."""
+        main = repos["main"]
+        git(main, "switch", "-q", "--orphan", "fresh")
+        remote = remote_repo(repos["tmp"])
+
+        wiring = make_client(remote).push_local(str(main), "alice", "dest", "main")
+
+        assert "fresh" not in wiring.pushed
+        assert heads(remote) == {"main", "other", "feat"}
+        assert wiring.origin is True and wiring.tracking is False
+        assert wiring.error == (
+            "branch 'fresh' has no commits, so it was not pushed and has no "
+            "upstream to track"
+        )
+        assert git(main, "rev-parse", "refs/remotes/origin/main") == \
+            git(main, "rev-parse", "main")

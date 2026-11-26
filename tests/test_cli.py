@@ -40,6 +40,20 @@ def make_config(overrides=None):
     return config
 
 
+def git_first_commit(path):
+    """Give a freshly `git init`-ed repo one (empty) commit.
+
+    `push` refuses a repository with no commits (#134), so a test that runs
+    it against a real repo needs a branch that exists.
+    """
+    subprocess.run(
+        ["git", "-C", str(path), "-c", "user.name=Test",
+         "-c", "user.email=example@example.com", "-c", "commit.gpgsign=false",
+         "commit", "-q", "--allow-empty", "-m", "Initial commit"],
+        check=True,
+    )
+
+
 @contextmanager
 def patch_verify_sleep():
     """Mock the sleep between verify.py's retry rounds, and only that one.
@@ -394,6 +408,7 @@ class TestCreateFlagValidation:
     def test_failed_local_push_exits_1_with_recovery(self, tmp_path, capsys):
         """#79: a failed push is fatal, not a warning followed by a success banner."""
         subprocess.run(["git", "init", "-q", "-b", "dev", str(tmp_path)], check=True)
+        git_first_commit(tmp_path)
         code, err, bp = self._run_create_with_failed_push(
             ["push", str(tmp_path), "ariesq/my-repo"], "push_local", capsys,
         )
@@ -2242,6 +2257,7 @@ class TestCreateVerification:
     def _local_repo(self, tmp_path, wired=True, origin=None):
         path = tmp_path / "proj"
         subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+        git_first_commit(path)
 
         def cfg(k, v):
             subprocess.run(["git", "-C", str(path), "config", k, v], check=True)
@@ -2659,3 +2675,221 @@ class TestVersion:
         with pytest.raises(SystemExit) as exc_info:
             build_parser().parse_args(["audit", "alice/app", "-v"])
         assert exc_info.value.code == 2
+
+
+class TestPushSourceWithoutCommits:
+    """`push` refuses a repository with nothing to push before it scans,
+    authenticates or creates anything (#134)."""
+
+    @pytest.fixture(autouse=True)
+    def _hermetic_git(self, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    @staticmethod
+    def _init(path):
+        subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+        return path
+
+    def _run_push(self, path, capsys, *extra):
+        argv = ["gh-safe-repo", "push", str(path), "alice/my-repo", *extra]
+        with patch("sys.argv", argv), \
+             patch("gh_safe_repo.commands.create.build_context") as ctx, \
+             patch("gh_safe_repo.commands.create.discover_transport") as discover, \
+             patch("gh_safe_repo.commands.create.check_repo_exists") as exists, \
+             patch("gh_safe_repo.commands.create.run_preflight_scan_local") as scan_local, \
+             patch("gh_safe_repo.commands.create.SecurityScanner") as scanner, \
+             patch("gh_safe_repo.commands.create.RepositoryPlugin") as repo_plugin:
+            with pytest.raises(SystemExit) as exc:
+                main()
+        # Nothing ran: no auth or API call, no scan, no repo.
+        for mock in (ctx, discover, exists, scan_local, scanner, repo_plugin):
+            mock.assert_not_called()
+        captured = capsys.readouterr()
+        return exc.value.code, captured.out, captured.err
+
+    def test_no_commits_exits_2_with_a_workable_sequence(self, tmp_path, capsys):
+        repo = self._init(tmp_path / "proj")
+        (repo / "file.txt").write_text("hello\n")  # untracked: still no commit
+        code, out, err = self._run_push(repo, capsys, "--yes")
+        assert code == 2
+        assert out == ""
+        assert "is a git repository with no commits" in err
+        assert "Nothing was created." in err
+        # Route 1: commit, then the same push again.
+        assert f"git -C {repo} add -A" in err
+        assert f'git -C {repo} commit -m "Initial commit"' in err
+        assert "--allow-empty" in err
+        assert f"gh-safe-repo push {repo} alice/my-repo" in err
+        # Route 2: `new` alone does not finish the job; say how to get a clone.
+        assert "gh-safe-repo new alice/my-repo" in err
+        assert "gh repo clone alice/my-repo" in err
+
+    def test_dry_run_refuses_too(self, tmp_path, capsys):
+        repo = self._init(tmp_path / "proj")
+        code, out, err = self._run_push(repo, capsys, "--dry-run")
+        assert code == 2
+        assert out == ""
+        assert "no commits" in err
+        assert f"gh-safe-repo push {repo} alice/my-repo --dry-run" in err
+
+    def test_json_prints_no_document(self, tmp_path, capsys):
+        repo = self._init(tmp_path / "proj")
+        code, out, err = self._run_push(repo, capsys, "--json", "--yes")
+        assert code == 2
+        assert out == ""
+        assert "no commits" in err
+
+    def test_path_with_spaces_is_quoted_in_the_commands(self, tmp_path, capsys):
+        repo = self._init(tmp_path / "my proj")
+        code, _, err = self._run_push(repo, capsys, "--yes")
+        assert code == 2
+        assert f"git -C '{repo}' add -A" in err
+
+    def test_commits_but_no_branch_exits_2(self, tmp_path, capsys):
+        repo = self._init(tmp_path / "proj")
+        git_first_commit(repo)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach"], check=True)
+        subprocess.run(["git", "-C", str(repo), "branch", "-q", "-D", "main"], check=True)
+        code, out, err = self._run_push(repo, capsys, "--yes")
+        assert code == 2
+        assert out == ""
+        assert "has commits but no local branch" in err
+        assert f"git -C {repo} switch -c <branch>" in err
+        assert "no commits, so" not in err
+
+    def test_no_colour_escapes_off_a_tty(self, tmp_path, capsys):
+        repo = self._init(tmp_path / "proj")
+        _, _, err = self._run_push(repo, capsys)
+        assert "\033" not in err
+
+
+class TestNothingPushedIsNotSuccess:
+    """Behind the early refusal: if a push still sends no branch, say so
+    instead of "Code pushed successfully" (#134)."""
+
+    @pytest.fixture(autouse=True)
+    def _hermetic_git(self, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def _run_empty_push(self, tmp_path, capsys, extra_patches=()):
+        helper = TestCreateVerification()
+        path = helper._local_repo(tmp_path, wired=False)
+        client = helper._client(refs={("demo", "heads"): {}})
+        client.push_local.return_value = LocalWiring()
+        transport = MagicMock(protocol="ssh")
+        transport.persistent_url.side_effect = lambda o, r: f"git@github.com:{o}/{r}.git"
+        code, _, _, _ = helper._run(
+            repo_plan=helper._repo_plan(), client=client, source=("push", path),
+            extra_patches=[
+                patch("gh_safe_repo.commands.create.discover_transport",
+                      return_value=transport),
+                patch("gh_safe_repo.commands.create.run_preflight_scan_local",
+                      return_value=ScanDecision(proceed=True)),
+                *extra_patches,
+            ],
+        )
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err, path
+
+    def test_warns_and_fails_verification(self, tmp_path, capsys):
+        code, out, err, path = self._run_empty_push(tmp_path, capsys)
+        assert code == 1
+        assert "Code pushed successfully" not in out + err
+        assert f"No branch was pushed: {path} has no branch with commits" in err
+        assert "✗ code/branches" in out
+
+    def test_remediation_says_commit_first_when_source_has_no_commits(self, tmp_path, capsys):
+        """The source lost its commits between validation and verification
+        (or validation could not tell): "push it again" cannot work."""
+        from gh_safe_repo.local_repo import HAS_BRANCHES, NO_COMMITS
+        code, out, _, _ = self._run_empty_push(tmp_path, capsys, extra_patches=[
+            patch("gh_safe_repo.commands.create.branch_state",
+                  side_effect=[HAS_BRANCHES, NO_COMMITS]),
+        ])
+        assert code == 1
+        assert "Nothing was pushed because" in out
+        assert 'git commit -m "Initial commit"' in out
+        assert "Push it again" not in out
+        assert "gh-safe-repo fix alice/demo --yes" in out
+
+
+class TestCopyFromEmptySource:
+    """`copy` refuses a source repository with no branches before it scans
+    or creates anything (#134)."""
+
+    def _run_copy(self, capsys, refs):
+        helper = TestCreateVerification()
+        client = helper._client(refs=refs)
+        scan = patch("gh_safe_repo.commands.create.run_preflight_scan",
+                     return_value=ScanDecision(proceed=True))
+        code, mocks, client, _ = helper._run(
+            client=client, source=("copy", "alice/src"),
+            extra_patches=[
+                patch("gh_safe_repo.commands.create.discover_transport"), scan,
+            ],
+        )
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err, mocks, client
+
+    def test_empty_source_exits_1_before_creating(self, capsys):
+        code, out, err, mocks, client = self._run_copy(
+            capsys, {("src", "heads"): {}},
+        )
+        assert code == 1
+        assert "Source repo 'alice/src' has no branches" in err
+        assert "Nothing was created." in err
+        assert "gh-safe-repo new alice/demo" in err
+        mocks["RepositoryPlugin"].return_value.apply.assert_not_called()
+        client.copy_repo.assert_not_called()
+        client.transport.preflight.assert_not_called()
+        assert "Code mirrored successfully" not in out
+
+    def test_unreadable_source_refs_do_not_block(self, capsys):
+        """A failed read is not proof the source is empty."""
+        refs = {("src", "heads"): APIError("boom", status_code=502)}
+        code, out, err, mocks, client = self._run_copy(capsys, refs)
+        assert "has no branches" not in err
+        mocks["RepositoryPlugin"].return_value.apply.assert_called_once()
+        client.copy_repo.assert_called_once()
+
+    def test_dry_run_makes_no_api_call(self, capsys):
+        helper = TestCreateVerification()
+        client = helper._client(refs={("src", "heads"): {}})
+        code, _, client, _ = helper._run(
+            client=client, source=("copy", "alice/src"), argv_extra=["--dry-run"],
+        )
+        assert code == 0
+        client.matching_refs.assert_not_called()
+
+
+class TestScanRepoWithoutCommits:
+    """`scan` says when it had (next to) nothing to read (#134)."""
+
+    def _scan(self, path, capsys, *extra):
+        argv = ["gh-safe-repo", "scan", str(path), *extra,
+                "--config", _write_scan_config(path, "off")]
+        with patch("sys.argv", argv), pytest.raises(SystemExit) as exc:
+            main()
+        captured = capsys.readouterr()
+        return exc.value.code, captured.out, captured.err
+
+    def test_warns_on_git_init_without_commits(self, tmp_path, capsys):
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        code, out, err = self._scan(tmp_path, capsys)
+        assert code == 0
+        assert "is a git repository with no commits" in err
+        assert "Untracked files were not read" in err
+
+    def test_json_stdout_stays_one_document(self, tmp_path, capsys):
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        code, out, err = self._scan(tmp_path, capsys, "--json")
+        assert code == 0
+        json.loads(out)
+        assert "no commits" in err
+
+    def test_silent_for_a_plain_directory(self, tmp_path, capsys):
+        (tmp_path / "main.py").write_text("print('hello')")
+        _, _, err = self._scan(tmp_path, capsys)
+        assert "no commits" not in err

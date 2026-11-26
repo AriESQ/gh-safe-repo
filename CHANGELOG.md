@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-25
+
 ### Changed
 - `scan --json`: the `engine` object has a new `error` key, `null` unless a
   strict `trufflehog_mode` (`native`/`docker`) could not run truffleHog, in

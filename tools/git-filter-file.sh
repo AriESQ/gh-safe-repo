@@ -265,6 +265,12 @@ Tags:
   are deleted on the remote the same way; tags that exist only on the
   remote are left alone and listed.
 
+Re-running:
+  Every run is a fresh rewrite. State left by an earlier git-filter-repo
+  run (.git/filter-repo/) is moved, not deleted, to
+  .git/filter-file-backups/filter-repo-state-<timestamp>/ before rewriting,
+  so git-filter-repo neither continues that run nor asks whether to.
+
 Exit codes:
   0  Success
   1  Runtime failure (file not found, dirty tree, nothing to do,
@@ -326,6 +332,63 @@ if [[ "$(git -C "$REPO_ROOT" rev-parse --git-dir)" != "$(git -C "$REPO_ROOT" rev
     echo "Switch to the main working tree and run this script from there." >&2
     exit 2
 fi
+
+# The repository's git directory. Not "$REPO_ROOT/.git": in a submodule that
+# is a file pointing at the real git dir. git-filter-repo keeps its state in
+# <git dir>/filter-repo (it asks `git rev-parse --git-dir`), and past the
+# worktree guard above the git dir and the common dir are the same.
+GIT_DIR_ABS="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)"
+
+# ── git-filter-repo state from an earlier run (#151) ─────────────────────────
+# git-filter-repo leaves <git dir>/filter-repo/ behind (already_ran,
+# commit-map, ref-map, ...). If it finds already_ran on the next run it
+# either treats that run as a continuation of the previous one (marker
+# younger than a day) or asks "Treat this run as a continuation ...?" on
+# stdin (older than a day); no option turns that off, and its --force does
+# not skip it. Every run of this script is a self-contained scrub, and the
+# earlier rewrite may not even be in the repo any more (e.g. after
+# `git reset --hard origin/<branch>`), so the old state is moved aside, not
+# deleted, just before git-filter-repo runs.
+#
+# GIT_FILTER_FILE_STATE_BACKUP=<dir> (set by scrub-ai-context.sh, one per
+# pass, all under one directory per scrub) names where to move it; the
+# default is <git dir>/filter-file-backups/filter-repo-state-<timestamp>.
+FILTER_REPO_STATE_DIR="$GIT_DIR_ABS/filter-repo"
+FILTER_REPO_STATE_BACKUP="${GIT_FILTER_FILE_STATE_BACKUP:-}"
+
+# _has_filter_repo_state — true if an earlier git-filter-repo run left state.
+_has_filter_repo_state() {
+    [[ -e "$FILTER_REPO_STATE_DIR" || -L "$FILTER_REPO_STATE_DIR" ]]
+}
+
+# _set_aside_filter_repo_state — move the state directory to a backup that
+# does not exist yet (a numeric suffix is added on a name collision, e.g. two
+# runs within the same second) and set FILTER_REPO_STATE_MOVED_TO.
+# Returns 1 if the move fails.
+FILTER_REPO_STATE_MOVED_TO=""
+_set_aside_filter_repo_state() {
+    local base dest n=1
+    base="$FILTER_REPO_STATE_BACKUP"
+    if [[ -z "$base" ]]; then
+        base="$GIT_DIR_ABS/filter-file-backups/filter-repo-state-$(date +%Y-%m-%dT%H%M%S)"
+    fi
+    dest="$base"
+    while [[ -e "$dest" || -L "$dest" ]]; do
+        n=$((n + 1))
+        dest="$base-$n"
+    done
+    mkdir -p "$(dirname "$dest")" || return 1
+    mv "$FILTER_REPO_STATE_DIR" "$dest" || return 1
+    FILTER_REPO_STATE_MOVED_TO="$dest"
+}
+
+# _ref_state — print HEAD and every ref with its object, to tell whether a
+# failed git-filter-repo run changed anything.
+_ref_state() {
+    echo "HEAD $(git -C "$REPO_ROOT" symbolic-ref --quiet HEAD 2>/dev/null || echo detached)" \
+         "$(git -C "$REPO_ROOT" rev-parse --verify --quiet HEAD 2>/dev/null || echo unborn)"
+    git -C "$REPO_ROOT" for-each-ref --format='%(refname) %(objectname)'
+}
 
 # ── Locate file in git history ───────────────────────────────────────────────
 # If FILE_ARG contains a /, treat it as an exact repo-relative path.
@@ -713,6 +776,11 @@ if [[ "$DRY_RUN" = true ]]; then
         echo ""
     fi
     echo "Would run:"
+    if _has_filter_repo_state; then
+        echo "  mv '$FILTER_REPO_STATE_DIR' '${FILTER_REPO_STATE_BACKUP:-$GIT_DIR_ABS/filter-file-backups/filter-repo-state-<timestamp>}'"
+        echo "    (state left by an earlier git-filter-repo run is set aside, not deleted,"
+        echo "     so this run is not treated as a continuation of that one)"
+    fi
     echo "  ${FILTER_REPO_CMD[*]} --force --invert-paths --path '$RELATIVE_PATH'"
     echo "    (rewrites all branches and tags, prunes commits left empty,"
     echo "     then expires reflogs and repacks to purge the old objects)"
@@ -779,7 +847,6 @@ fi
 # ── Tag push file / snapshot for later passes ──────────────────────────────
 # The tag push for this rewrite is written to TAG_PUSH_FILE below. Remove one
 # left by an earlier run so it cannot be mistaken for this run's.
-GIT_DIR_ABS="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)"
 TAG_PUSH_FILE="$GIT_DIR_ABS/filter-file-push-tags.sh"
 rm -f "$TAG_PUSH_FILE"
 if [[ -n "$TAG_SNAPSHOT_FILE" && "$TAG_SNAPSHOT_LOADED" = false ]]; then
@@ -847,6 +914,26 @@ _restore_remote_config() {
     done
 }
 
+# ── Set aside state from an earlier git-filter-repo run (#151) ───────────────
+# Done here, after every check and the confirmation, so nothing is moved by a
+# run that stops early. See FILTER_REPO_STATE_DIR above for why.
+if _has_filter_repo_state; then
+    if _set_aside_filter_repo_state; then
+        echo ""
+        ok "Set aside state from an earlier git-filter-repo run (nothing deleted):"
+        echo "    $FILTER_REPO_STATE_DIR"
+        echo "    -> $FILTER_REPO_STATE_MOVED_TO"
+    else
+        err "Could not move '$FILTER_REPO_STATE_DIR' out of the way."
+        echo "git-filter-repo would treat this run as a continuation of an earlier one," >&2
+        echo "so nothing was rewritten. Move or remove that directory and re-run." >&2
+        exit 1
+    fi
+fi
+
+# Recorded to tell, if git-filter-repo fails, whether it changed anything.
+REF_STATE_BEFORE="$(_ref_state)"
+
 # ── Run git-filter-repo ───────────────────────────────────────────────────────
 echo ""
 echo "Rewriting history to remove '$RELATIVE_PATH' from $HISTORY_COUNT commit(s)..."
@@ -863,18 +950,30 @@ echo ""
 # every branch and tag. Commits that become empty are pruned; filter-repo then
 # expires reflogs and repacks so the old objects are purged from the local
 # object store.
+# </dev/null: git-filter-repo must never read the terminal (or whatever this
+# script's stdin is). Its questions have no option to answer them; with no
+# input one fails at once instead of waiting or reading stray input (#151).
 if ! (cd "$REPO_ROOT" && "${FILTER_REPO_CMD[@]}" \
         --force \
         --invert-paths \
-        --path "$RELATIVE_PATH"); then
-    err "git-filter-repo failed. Your repository may be in an inconsistent state."
-    if [[ -n "$BACKUP_PATH" ]]; then
-        echo "Backup is at: $BACKUP_PATH"
-    fi
+        --path "$RELATIVE_PATH" </dev/null); then
     if [[ ${#SAVED_REMOTE_CONFIG[@]} -gt 0 ]]; then
         _restore_remote_config || true
     fi
-    echo "To recover, check: git reflog"
+    if [[ "$(_ref_state)" == "$REF_STATE_BEFORE" ]]; then
+        err "git-filter-repo failed before rewriting anything."
+        echo "HEAD and all refs are unchanged; history was not rewritten and" >&2
+        echo "'$RELATIVE_PATH' is still in it. See the git-filter-repo output above." >&2
+    else
+        err "git-filter-repo failed. Your repository may be in an inconsistent state."
+        echo "Some refs changed. To recover, check: git reflog" >&2
+    fi
+    if [[ -n "$BACKUP_PATH" ]]; then
+        echo "Backup is at: $BACKUP_PATH"
+    fi
+    if [[ -n "$FILTER_REPO_STATE_MOVED_TO" ]]; then
+        echo "Earlier git-filter-repo state is at: $FILTER_REPO_STATE_MOVED_TO"
+    fi
     exit 1
 fi
 

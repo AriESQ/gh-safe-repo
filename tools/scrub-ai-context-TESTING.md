@@ -355,3 +355,47 @@ $SCRIPT CLAUDE.md   # confirm
 - Runs successfully
 - After: still 1 commit touching CLAUDE.md (new re-add replaces previous one)
 - Content preserved
+
+---
+
+## 16. Several passes, and a re-run after a day (#151)
+
+Every pass is an independent git-filter-repo run. `git-filter-file.sh` moves
+the state the previous run left in `.git/filter-repo/` aside before each
+pass, so no pass is treated as a continuation of the one before, and
+git-filter-repo never asks its `Treat this run as a continuation ...?`
+question. The wrapper collects those moves in one directory per scrub.
+
+```bash
+make_multi_repo
+echo y | $SCRIPT; echo "exit=$?"            # stdin is a pipe, not a terminal
+find .git/filter-file-backups -maxdepth 2 -name 'before-pass-*' | sort
+```
+
+**Expected:**
+- Passes 2 and 3 print `✓ Set aside state from an earlier git-filter-repo run (nothing deleted):`
+- `exit=0`, all three targets `✓ Completed`
+- One state directory for the whole scrub:
+  ```
+  .git/filter-file-backups/filter-repo-state-<YYYY-MM-DD>T<HHMMSS>/before-pass-2
+  .git/filter-file-backups/filter-repo-state-<YYYY-MM-DD>T<HHMMSS>/before-pass-3
+  ```
+  (`before-pass-N` is the state written by pass N-1; there is no
+  `before-pass-1` on a first scrub)
+
+Now make the marker older than a day and scrub again:
+
+```bash
+# macOS / BSD; on GNU: touch -d '2 days ago' .git/filter-repo/already_ran
+touch -t "$(date -v-2d +%Y%m%d%H%M)" .git/filter-repo/already_ran
+echo y | $SCRIPT; echo "exit=$?"
+find .git/filter-file-backups -maxdepth 2 -name 'before-pass-*' | sort
+```
+
+**Expected:**
+- No `Treat this run as a continuation` question and no `EOFError`
+- `exit=0`
+- A second `filter-repo-state-<timestamp>/` directory holding
+  `before-pass-1` (the state from the first scrub), `before-pass-2` and
+  `before-pass-3`; the first scrub's directory is untouched
+- Each of `CLAUDE.md`, `AGENTS.md`, `.cursor` still has exactly 1 commit

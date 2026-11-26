@@ -725,3 +725,145 @@ $SCRIPT . secret.bin   # confirm
 [ ! -f secret.bin ] && echo "PASS: deleted" || echo "FAIL"
 git log --all --oneline -- secret.bin   # no output
 ```
+
+---
+
+## 24. Second run after an earlier git-filter-repo run (#151)
+
+git-filter-repo leaves `.git/filter-repo/` behind (`already_ran`,
+`commit-map`, `ref-map`, ...). If it finds `already_ran` on the next run it
+asks `Treat this run as a continuation of filtering in the previous run
+(Y/N)?` when the marker is older than a day, and silently continues the
+previous run when it is younger. The script moves that directory aside
+before every rewrite, so each run is a fresh one. Both cases run under
+`--yes` with stdin not a terminal (`</dev/null`), the way an agent shell, CI
+or a pipe runs it.
+
+```bash
+# Age a file by two days: BSD/macOS touch has no -d '2 days ago'.
+age_two_days() {
+    if date -v-2d +%Y >/dev/null 2>&1; then
+        touch -t "$(date -v-2d +%Y%m%d%H%M)" "$1"    # macOS / BSD
+    else
+        touch -d '2 days ago' "$1"                   # GNU
+    fi
+}
+
+# First run, then put secret.txt back so there is something to scrub again
+# (same situation as scrubbing, not pushing, and resetting to the remote).
+rerun_setup() {
+    make_repo
+    $SCRIPT --yes . secret.txt </dev/null
+    ls .git/filter-repo/already_ran          # left by git-filter-repo
+    echo "secret=abc123" > secret.txt
+    git add . && git commit -m "add secret again"
+}
+```
+
+### 24a. `already_ran` older than a day
+
+```bash
+rerun_setup
+age_two_days .git/filter-repo/already_ran
+before="$(git rev-parse HEAD)"
+$SCRIPT --yes . secret.txt </dev/null; echo "exit=$?"
+```
+
+**Expected:**
+- Before `Rewriting history ...`:
+  ```
+  ✓ Set aside state from an earlier git-filter-repo run (nothing deleted):
+      /tmp/test-gff-<pid>/.git/filter-repo
+      -> /tmp/test-gff-<pid>/.git/filter-file-backups/filter-repo-state-<YYYY-MM-DD>T<HHMMSS>
+  ```
+- No `Treat this run as a continuation` question, no `EOFError` traceback
+- `exit=0`
+
+```bash
+git log --all --oneline -- secret.txt                 # no output
+[ "$(git rev-parse HEAD)" != "$before" ] && echo "PASS: rewritten"
+ls .git/filter-file-backups/filter-repo-state-*/already_ran   # the old state, kept
+ls .git/filter-repo/already_ran                       # new state from this run
+```
+
+### 24b. `already_ran` younger than a day
+
+```bash
+rerun_setup          # marker is seconds old
+$SCRIPT --yes . secret.txt </dev/null; echo "exit=$?"
+```
+
+**Expected:** same as 24a: the `Set aside state ...` lines, `exit=0`,
+`secret.txt` gone from history, the earlier state under
+`.git/filter-file-backups/filter-repo-state-*/`.
+
+Two runs within the same second do not collide: the second backup gets a
+`-2` suffix (`filter-repo-state-<timestamp>-2`).
+
+### 24c. Dry run does not move the state
+
+```bash
+rerun_setup
+$SCRIPT --dry-run . secret.txt </dev/null
+ls -d .git/filter-repo                   # still there
+ls .git/filter-file-backups 2>&1         # no filter-repo-state-* entry added
+```
+
+**Expected:** `Would run:` starts with
+`mv '<repo>/.git/filter-repo' '<repo>/.git/filter-file-backups/filter-repo-state-<timestamp>'`
+and the note that the state is set aside, not deleted. Nothing is moved.
+
+### 24d. git-filter-repo fails before rewriting anything
+
+A stand-in `git-filter-repo` that fails, and reports what it sees on stdin:
+
+```bash
+make_repo
+fake="/tmp/test-gff-fake-$$"; mkdir -p "$fake"
+cat > "$fake/git-filter-repo" <<'FAKE'
+#!/bin/sh
+[ "$1" = "--version" ] && { echo fake; exit 0; }
+if read -r line; then echo "fake: read stdin: $line"; else echo "fake: stdin is at EOF"; fi
+exit 1
+FAKE
+chmod +x "$fake/git-filter-repo"
+before="$(git rev-parse HEAD)"
+echo "stray input" | PATH="$fake:$PATH" $SCRIPT --yes . secret.txt; echo "exit=$?"
+```
+
+**Expected:**
+- `fake: stdin is at EOF` (git-filter-repo runs with stdin from `/dev/null`,
+  so it does not see `stray input`)
+- stderr:
+  ```
+  Error: git-filter-repo failed before rewriting anything.
+  HEAD and all refs are unchanged; history was not rewritten and
+  'secret.txt' is still in it. See the git-filter-repo output above.
+  ```
+- Not `Your repository may be in an inconsistent state` (that message, with
+  `Some refs changed. To recover, check: git reflog`, is only printed when
+  HEAD or a ref differs from before the run)
+- `exit=1`, and `[ "$(git rev-parse HEAD)" = "$before" ]`
+
+### 24e. Submodule: state is in the real git dir
+
+In a submodule `.git` is a file; git-filter-repo's state is in
+`<superproject>/.git/modules/<name>/filter-repo/`.
+
+```bash
+src="/tmp/test-gff-subsrc-$$"; super="/tmp/test-gff-super-$$"
+git init "$src" && cd "$src"
+echo normal > readme.txt && git add . && git commit -m init
+echo secret > secret.txt && git add . && git commit -m "add secret"
+git init "$super" && cd "$super"
+git -c protocol.file.allow=always submodule add "$src" sub && git commit -m "add sub"
+cd sub && git remote remove origin
+gd="$(git rev-parse --absolute-git-dir)"       # .../.git/modules/sub
+mkdir "$gd/filter-repo" && touch "$gd/filter-repo/already_ran"
+age_two_days "$gd/filter-repo/already_ran"
+$SCRIPT --yes . secret.txt </dev/null; echo "exit=$?"
+ls "$gd/filter-file-backups"                   # filter-repo-state-<timestamp>
+```
+
+**Expected:** `Set aside state ...` shows both paths under
+`.git/modules/sub/`, `exit=0`, `secret.txt` gone from the submodule's history.

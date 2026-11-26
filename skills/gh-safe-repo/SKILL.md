@@ -256,7 +256,7 @@ combination. Explain them; never loop trying to force them.
 | Dependabot alerts + security updates | ✅ | ❌ | ✅ |
 | Secret scanning + push protection | ✅ | ❌ | ✅ |
 | Private vulnerability reporting | ✅ | ❌ | ❌ (public only) |
-| Immutable releases (`releases/immutable`) | ✅ | ✅ (docs; not yet confirmed live) | ✅ |
+| Immutable releases (`releases/immutable`) | ✅ | ✅ (confirmed live 2026-11-26) | ✅ |
 
 `releases/immutable` is never skipped by plan. Its only `SKIP` besides
 "already at desired value" is `Enforced by the repository owner's

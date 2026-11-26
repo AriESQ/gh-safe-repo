@@ -1995,8 +1995,9 @@ class TestApiReadShapes:
 
 
 class TestReleasesPlugin:
-    """Immutable releases (#127): GET 200 {enabled, enforced_by_owner} = on,
-    404 = off (documented, not an error); PUT enables; never DELETE."""
+    """Immutable releases (#127): GET 200 {enabled, enforced_by_owner}, read
+    from `enabled` (live GitHub answers 200 for off too); 404 = off (the
+    spec's answer, not an error); PUT enables; never DELETE."""
 
     PATH = "/repos/alice/my-repo/immutable-releases"
 
@@ -2038,6 +2039,18 @@ class TestReleasesPlugin:
         client.call_api.return_value = (200, '{"enabled": true, "enforced_by_owner": false}')
         assert plugin.fetch_current_state() == {"immutable": True, "enforced_by_owner": False}
         client.call_api.assert_called_once_with("GET", self.PATH)
+
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_fetch_200_enabled_false_is_off(self, strict):
+        """The live "off" answer (2026-11-26, public and Free private repos):
+        200 {"enabled": false}, not the spec's 404."""
+        plugin, client = self._plugin()
+        client.call_api.return_value = (200, '{"enabled":false,"enforced_by_owner":false}')
+        assert plugin.fetch_current_state(strict=strict) == {
+            "immutable": False, "enforced_by_owner": False,
+        }
+        (c,) = plugin.plan(current_state=plugin.fetch_current_state()).changes
+        assert (c.type, c.old, c.new) == (ChangeType.UPDATE, False, True)
 
     def test_fetch_404_is_disabled_even_when_strict(self):
         plugin, client = self._plugin()

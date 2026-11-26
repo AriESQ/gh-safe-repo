@@ -272,6 +272,11 @@
       "method": "GET",
       "path": "/repos/{owner}/{repo}/immutable-releases",
       "used_by": ["gh_safe_repo/plugins/releases.py"],
+      "observed": {
+        "status_codes": ["200"],
+        "date": "2026-11-26",
+        "evidence": "docs/2026-11-26_immutable-releases-probe.md"
+      },
       "spec": {
         "status_codes": ["200", "404"],
         "response_fields": ["enabled", "enforced_by_owner"],
@@ -285,6 +290,11 @@
       "method": "PUT",
       "path": "/repos/{owner}/{repo}/immutable-releases",
       "used_by": ["gh_safe_repo/plugins/releases.py"],
+      "observed": {
+        "status_codes": ["204"],
+        "date": "2026-11-26",
+        "evidence": "docs/2026-11-26_immutable-releases-probe.md"
+      },
       "spec": {
         "status_codes": ["204", "409"],
         "response_fields": [],

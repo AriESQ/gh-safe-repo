@@ -4,6 +4,7 @@ import os
 import sys
 
 from ..config_manager import ConfigManager
+from ..display import safe_display
 from ..errors import ConfigError
 from ..local_repo import NO_COMMITS, branch_state
 from ..security_scanner import SecurityScanner, Severity
@@ -59,7 +60,7 @@ def run(args):
     _info = lambda msg: info(msg, json_mode=json_mode)
 
     scanner = SecurityScanner(config, debug=args.debug, progress=not json_mode)
-    _info(f"\n{_c(_BOLD, 'Scanning')} {scan_path}...")
+    _info(f"\n{_c(_BOLD, 'Scanning')} {safe_display(scan_path)}...")
     findings = scanner.scan(scan_path)
     _info(_c(_DIM, f"Scan engine: {scanner.engine_summary}"))
     # In a git repo only tracked files are scanned (#84). With no commits
@@ -75,7 +76,7 @@ def run(args):
     if scanner.skipped_committed_dirs:
         _info(_c(_YELLOW, "Warning: the following directories were skipped during scan:"))
         for d in scanner.skipped_committed_dirs:
-            _info(_c(_DIM, f"  {d}/"))
+            _info(_c(_DIM, f"  {safe_display(d)}/"))
         _info("")
 
     if json_mode:

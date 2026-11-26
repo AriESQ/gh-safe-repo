@@ -539,6 +539,10 @@ from [What `fix` leaves alone](#what-fix-leaves-alone): `tier` (`security`,
 `weakened` (`true` on an `UPDATE` that restores a security control someone
 relaxed).
 
+`--json` documents are ASCII: control and non-ASCII characters in file names
+and other values are JSON-escaped (`\u001b`), and parse back to the exact
+original text.
+
 `scan --json`:
 
 ```json
@@ -850,6 +854,18 @@ Pre-flight scan: my-private-project
 Secrets are redacted. When banned strings or AI context files are found, the
 scanner prints a ready-to-run `git filter-repo` command to remove them from
 history.
+
+File names and matched text come from the repo being scanned, so they are
+never written to the terminal as-is. Control characters (ANSI and OSC escape
+sequences, carriage return, backspace, C1 controls) and invisible Unicode
+formatting (bidi overrides, zero-width characters, line separators) are shown
+as visible escapes: a file named `evil<ESC>[2K.txt` is reported as
+`evil\x1b[2K.txt`. A scanned repo cannot hide a finding, forge a
+`No issues found.` line or write to your clipboard this way. The same applies
+to everything else the tool prints from a repo or from GitHub: the plan
+table, warnings, error messages and `--debug` output. A `View with:` command
+that shows an escaped name will not paste back as the real file; use
+`scan --json`, whose `file_path` is the exact name.
 
 ### Scanner engine
 

@@ -1666,6 +1666,29 @@ class TestRunTeeingStderr:
         )
         assert (len(stdout), len(stderr), returncode) == (300000, 300000, 0)
 
+    def test_echo_escapes_control_sequences_but_capture_stays_raw(self, capsys):
+        # #125: the terminal copy is escaped; the copy used for error
+        # detection is the child's exact output.
+        code = ("import sys; sys.stderr.write("
+                "'{\"msg\":\"a\\x1b]0;pwned\\x07\\u009b\\u202e\"}\\n')")
+        _, stderr, _ = SecurityScanner._run_teeing_stderr(
+            [sys.executable, "-c", code]
+        )
+        assert "\x1b" in stderr and "\u202e" in stderr
+        echoed = capsys.readouterr().err
+        for raw in ("\x1b", "\x07", "\u009b", "\u202e"):
+            assert raw not in echoed
+        assert "\\x1b]0;pwned" in echoed
+        assert echoed.endswith("\n")
+
+    def test_echo_keeps_multibyte_character_split_across_reads(self, capsys):
+        # 4095 ASCII bytes put the two-byte 'é' across the 4096-byte read.
+        code = ("import sys; sys.stderr.buffer.write("
+                "b'x' * 4095 + 'é'.encode() + b'\\n')")
+        SecurityScanner._run_teeing_stderr([sys.executable, "-c", code])
+        echoed = capsys.readouterr().err
+        assert echoed == "x" * 4095 + "é\n"
+
     def test_missing_binary_raises_and_leaks_no_descriptor(self):
         before = len(os.listdir("/dev/fd")) if os.path.isdir("/dev/fd") else None
         with pytest.raises(FileNotFoundError):

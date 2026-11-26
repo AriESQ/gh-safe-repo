@@ -18,6 +18,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from .display import safe_display
 from .errors import APIError, AuthError
 from .git_transport import GitTransport
 from .local_repo import is_git_checkout
@@ -143,7 +144,7 @@ class GitHubClient:
             cmd += ["--input", "-"]
 
         if self.debug:
-            print(f"[debug] {method} {endpoint}", file=sys.stderr)
+            print(f"[debug] {method} {safe_display(endpoint)}", file=sys.stderr)
             if body:
                 print(f"[debug] body: {json.dumps(body, indent=2)}", file=sys.stderr)
 
@@ -161,7 +162,11 @@ class GitHubClient:
             status_code = 200
 
         if self.debug and result.stderr:
-            print(f"[debug] stderr: {result.stderr.strip()}", file=sys.stderr)
+            # gh's stderr can quote the API response: untrusted (#125).
+            print(
+                f"[debug] stderr: {safe_display(result.stderr.strip(), multiline=True)}",
+                file=sys.stderr,
+            )
 
         return status_code, result.stdout
 

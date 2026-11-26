@@ -20,6 +20,7 @@ import json
 import sys
 
 from ..diff import Change, ChangeCategory, ChangeType, Plan
+from ..display import safe_display
 from ..errors import APIError
 from .base import BasePlugin, ruleset_enforced
 
@@ -400,7 +401,7 @@ class BranchProtectionPlugin(BasePlugin):
             except APIError as e:
                 if e.status_code in (404, 422):
                     print(
-                        f"[skip] Branch '{branch}' not found — skipping protection",
+                        f"[skip] Branch '{safe_display(branch)}' not found — skipping protection",
                         file=sys.stderr,
                     )
                     continue

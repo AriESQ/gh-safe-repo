@@ -60,6 +60,9 @@ SAFE_DEFAULTS = {
         "enable_private_vulnerability_reporting": "true",
         "enable_secret_scanning_push_protection": "true",
     },
+    "releases": {
+        "immutable": "true",
+    },
     "pre_flight_scan": {
         "scan_for_secrets":  "true",
         "scan_for_emails":   "true",
@@ -89,7 +92,9 @@ SAFE_DEFAULTS = {
 
 # Config sections that describe repo state and take part in the merge.
 # [pre_flight_scan] and [git_transport] are tool-run behaviour and never do.
-MERGE_SECTIONS = ("repo", "actions", "branch_protection", "tag_protection", "security")
+MERGE_SECTIONS = (
+    "repo", "actions", "branch_protection", "tag_protection", "security", "releases",
+)
 
 SECURITY = "security"
 PREFERENCE = "preference"
@@ -101,6 +106,7 @@ _SECTION_TIERS = {
     "branch_protection": SECURITY,
     "tag_protection": SECURITY,
     "security": SECURITY,
+    "releases": SECURITY,
 }
 
 # (section, key) → tier. Keyed by the *plan row* a plugin emits, i.e. the
@@ -154,6 +160,8 @@ SETTING_TIERS = {
     ("security", "private_vulnerability_reporting"): SECURITY,
     ("security", "secret_scanning"): SECURITY,
     ("security", "enable_dependency_graph"): SECURITY,
+    # [releases] — immutable releases lock published assets and tags.
+    ("releases", "immutable"): SECURITY,
 }
 
 # Which way is "stricter", for every security-tier setting that can appear
@@ -194,6 +202,7 @@ SAFE_DIRECTIONS = {
     ("security", "private_vulnerability_reporting"): True,
     ("security", "secret_scanning"): True,
     ("security", "enable_dependency_graph"): True,
+    ("releases", "immutable"): True,
 }
 
 

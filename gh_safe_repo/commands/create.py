@@ -24,6 +24,7 @@ from ..git_transport import (
 )
 from ..plugins.actions import ActionsPlugin
 from ..plugins.branch_protection import BranchProtectionPlugin
+from ..plugins.releases import ReleasesPlugin
 from ..plugins.repository import RepositoryPlugin
 from ..plugins.security import SecurityPlugin
 from ..plugins.tag_protection import TagProtectionPlugin
@@ -461,6 +462,7 @@ def run(args):
         BranchProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan, branches=branches),
         SecurityPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
         TagProtectionPlugin(client, owner, repo_name, config, is_public=is_public, is_paid_plan=is_paid_plan),
+        ReleasesPlugin(client, owner, repo_name, config),
     ]
 
     full_plan = Plan()
@@ -594,6 +596,7 @@ def run(args):
     bp_plugin        = plugins[2]
     security_plugin  = plugins[3]
     tag_plugin       = plugins[4]
+    releases_plugin  = plugins[5]
 
     # Apply repo creation + settings
     try:
@@ -628,6 +631,13 @@ def run(args):
         security_plugin.apply(full_plan)
     except APIError as e:
         warn(f"Security settings failed: {e}")
+
+    # Immutable releases (#127): only published releases are locked, so this
+    # does not depend on the code push (pushed tags have no release yet).
+    try:
+        releases_plugin.apply(full_plan)
+    except APIError as e:
+        warn(f"Immutable releases setting failed: {e}")
 
     # Mirror code from source repo (`copy`)
     if args.from_repo:

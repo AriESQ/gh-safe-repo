@@ -1212,3 +1212,55 @@ uv run --isolated --python 3.10 pytest tests/
 its own interpreter. Checked 2026-11-25: 1520 passed on 3.10 and `.venv`
 stayed on 3.13. Add the same `trufflehog_mode = off` config the regular run
 uses (see `tests/README.md`).
+
+## Immutable Releases (#127)
+
+`plugins/releases.py`, config `[releases] immutable = true`. Sources, all from
+the local mirror of GitHub's docs and REST description (not yet live-tested):
+
+- REST description `api.github.com.2022-11-28.json`, operations
+  `repos/check-immutable-releases`, `repos/enable-immutable-releases`,
+  `repos/disable-immutable-releases` on `/repos/{owner}/{repo}/immutable-releases`.
+  GET: 200 with schema `check-immutable-releases` (`enabled`,
+  `enforced_by_owner`, both required) "if immutable releases are enabled",
+  **404 "if immutable releases are not enabled"**. PUT/DELETE: 204, or 409.
+- `docs/data/features/immutable-releases.yml`: `fpt: '*'`, `ghec: '*'`,
+  `ghes: '>=3.20'`. No plan gating in the docs, so the plugin never SKIPs
+  by plan.
+- `content/code-security/concepts/supply-chain-security/immutable-releases.md`:
+  only assets and the tag are locked; title, notes, pre-release and latest
+  stay editable. A deleted immutable release's tag can be deleted, but the
+  name can never be reused, even in a recreated repo. Recommended flow:
+  draft → attach assets → publish.
+- `gh release create` help (cli `pkg/cmd/release/create/create.go`): with
+  asset files it creates a draft, uploads, then publishes (separate API
+  requests, not atomic); protection starts at publish.
+
+Design decisions:
+
+- **404 is "off", never an error**, even under `strict=True`: it is the
+  documented answer, like `vulnerability-alerts`. A 2xx is read from the
+  body (`enabled: false` counts as off, in case GitHub later answers 200 for
+  off the way `automated-security-fixes` does, #94); a 2xx without a body
+  counts as on, since only "on" is documented as 2xx.
+- **`enforced_by_owner: true` → `SKIP`**, compliant, never written.
+- **`immutable = false` never DELETEs.** Same as the `[security]` toggles:
+  false means "leave it alone". The tool has no reason to weaken it.
+- **Order in `create`:** applied right after the security settings, before
+  the code push. Immutability only locks *published releases*; a freshly
+  pushed tag has none, so pushing tags afterwards is unaffected (unlike
+  branch protection, which needs the branch to exist).
+- **No retry on the PUT.** It runs after README removal, Actions and
+  security writes, by which time the eventual-consistency 404 seen on the
+  first `PATCH /repos` has passed. Unconfirmed live; if it 404s, the apply
+  warns and verification reports a mismatch (exit 3), and `fix` repairs it.
+- **Tier: security, direction True.** GitHub's default is off, so an `audit`
+  of an untouched repo shows `UPDATE releases/immutable False → True`, never
+  `PRESERVE` or ⚠ weakened.
+
+Still to check live (a probe script was handed to the user on 2026-11-25):
+the 404 body when off and the 200 body when on, on a
+public and a free private repo; the PUT status (204 per spec); whether PUT
+works on a free private repo at all; whether PUT right after
+`POST /user/repos` needs the `PATCH` retry. Record the results here and as
+`observed` blocks in `tools/api_drift/catalog.json`.

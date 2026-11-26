@@ -1,6 +1,6 @@
 ---
 name: gh-safe-repo
-description: Drive the gh-safe-repo CLI to create a GitHub repository with hardened defaults, push a local project or copy an existing repo into a new hardened one, audit or fix settings on an existing repo (branch protection, rulesets, Dependabot alerts, secret scanning, push protection, Actions permissions, tag protection), or scan a local directory for secrets before publishing it. Use when asked to create/publish a GitHub repo, push a local project to a new repo, harden or audit repo security settings, or check code for leaked credentials before it goes public.
+description: Drive the gh-safe-repo CLI to create a GitHub repository with hardened defaults, push a local project or copy an existing repo into a new hardened one, audit or fix settings on an existing repo (branch protection, rulesets, Dependabot alerts, secret scanning, push protection, Actions permissions, tag protection, immutable releases), or scan a local directory for secrets before publishing it. Use when asked to create/publish a GitHub repo, push a local project to a new repo, harden or audit repo security settings, or check code for leaked credentials before it goes public.
 ---
 
 # gh-safe-repo
@@ -256,6 +256,23 @@ combination. Explain them; never loop trying to force them.
 | Dependabot alerts + security updates | ✅ | ❌ | ✅ |
 | Secret scanning + push protection | ✅ | ❌ | ✅ |
 | Private vulnerability reporting | ✅ | ❌ | ❌ (public only) |
+| Immutable releases (`releases/immutable`) | ✅ | ✅ (docs; not yet confirmed live) | ✅ |
+
+`releases/immutable` is never skipped by plan. Its only `SKIP` besides
+"already at desired value" is `Enforced by the repository owner's
+organization policy`: compliant, and the tool never writes it. If GitHub
+refuses the write, the run warns `Immutable releases setting failed: ...` and
+verification reports `releases/immutable` as a mismatch (exit `3`). Report
+that to the user; do not retry in a loop.
+
+Once immutable releases are on, a **published** release's assets and tag are
+locked for good and its tag name can never be reused, even after deleting
+the release or the repo. Title and notes stay editable; drafts are not
+locked. When you cut a release on such a repo, create it as a draft, attach
+every asset, then publish (`gh release create TAG FILES...` does this when
+given files). Never delete and recreate a published release to "fix" it:
+the tag name is gone. `[releases] immutable = false` stops gh-safe-repo from
+turning it on; nothing in the tool turns it off.
 
 A `SKIP` can also simply mean the setting is already correct. `audit` prints
 `All settings compliant.` instead of a table when every row would be a `SKIP`.

@@ -544,7 +544,7 @@ def fix_client(actions_state, files):
 
 
 def run_fix(argv, client, config):
-    names = ["RepositoryPlugin", "BranchProtectionPlugin", "SecurityPlugin", "TagProtectionPlugin"]
+    names = ["RepositoryPlugin", "BranchProtectionPlugin", "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
     patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
     try:
         for p in patches:

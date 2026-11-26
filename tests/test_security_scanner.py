@@ -582,7 +582,7 @@ class TestEngineUsed:
         assert scanner.fell_back is False
         assert scanner.engine_error() is None
         assert scanner.engine_report() == {
-            "configured": "docker", "used": "trufflehog-container", "fell_back": False,
+            "configured": "docker", "used": "trufflehog-container", "fell_back": False, "error": None,
         }
 
     def test_off_is_regex_without_fallback(self):
@@ -600,7 +600,7 @@ class TestEngineUsed:
             )
         mock_popen.assert_not_called()
         assert scanner.engine_report() == {
-            "configured": "off", "used": "regex", "fell_back": False,
+            "configured": "off", "used": "regex", "fell_back": False, "error": None,
         }
 
     def test_secret_scanning_disabled_is_not_a_fallback(self):
@@ -663,7 +663,7 @@ class TestEngineUsed:
         assert "trufflehog_mode = docker" in msg
         assert "no container runtime" in msg
         assert scanner.engine_report() == {
-            "configured": "docker", "used": "regex", "fell_back": True,
+            "configured": "docker", "used": "regex", "fell_back": True, "error": msg,
         }
 
     def test_docker_container_failure_is_an_error(self):

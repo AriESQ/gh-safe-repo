@@ -223,7 +223,9 @@ full document.
 context file finding's `match` embeds the path in its escaped display form.
 
 `engine` is what actually ran: `{"configured": "auto|native|docker|off", "used":
-"trufflehog-native|trufflehog-container|regex", "fell_back": bool}`.
+"trufflehog-native|trufflehog-container|regex", "fell_back": bool, "error": string|null}`.
+`error` is non-null only when a strict mode (`native`/`docker`) could not run
+truffleHog: the scan does not count as clean, even with zero findings.
 `fell_back: true` means truffleHog was attempted but failed, so only the regex
 scanner checked for secrets. Tell the user when that happens: regex misses
 credential types truffleHog detects. `scan` exiting `1` with
@@ -297,7 +299,7 @@ settings when the current value is *stricter* than the desired one (e.g.
 | `Repository already exists` | Use `audit`/`fix` instead of a creating command. |
 | `--yes is required for unattended runs` (exit 1) | You ran a mutating command without `--yes` and stdin was closed, so the confirmation prompt got no answer. Nothing was created or changed. If the user has agreed to the plan, re-run the same command with `--yes`; otherwise show them the plan first. |
 | Pre-flight scan blocked the run (exit 1) | Real secrets were found. Show the findings, let the user remove them; do not re-run with different flags to bypass. |
-| `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `push`/`copy` stopped before creating anything. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
+| `trufflehog_mode = native` (or `docker`) `but truffleHog could not run (...)` (exit 1) | The user pinned an engine and it is missing or failed; `push`/`copy` stopped before creating anything. `scan` still lists the regex findings and prints `this scan is incomplete` instead of `No issues found.`; do not report that as clean. Report the reason in the parentheses. Do not edit the config to `auto`/`off` yourself to get past it; that silently weakens the scan. Ask the user to fix the install or choose the fallback. |
 | `git ls-remote ... timed out after 45s` (exit 1, nothing created) | Over SSH this is usually a hardware security key waiting for a touch. Ask the user to be ready at the key, then re-run the same command; it is safe because nothing was created. |
 | `Permission denied (publickey)` with `Likely cause: SSH settings are read from the git config of <dir>` (exit 1) | The user's key is chosen per directory and did not apply where the tool ran. For `copy`, re-run from inside the directory where their key setting applies (e.g. their checkout tree); for `push`, the PATH's own git config is used. Do not change their SSH or git config. |
 | Push rejected on `.github/workflows/*` | The API token lacks the `workflow` scope. Set `[git_transport] mode = user_creds` in config to push with the user's own git credentials. |

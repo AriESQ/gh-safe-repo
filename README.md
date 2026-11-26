@@ -553,7 +553,7 @@ original text.
   ],
   "summary": { "critical": 1, "warning": 0, "info": 0 },
   "skipped_committed_dirs": [],
-  "engine": { "configured": "auto", "used": "trufflehog-native", "fell_back": false }
+  "engine": { "configured": "auto", "used": "trufflehog-native", "fell_back": false, "error": null }
 }
 ```
 
@@ -562,7 +562,10 @@ All three severity keys are always present. Secret matches are `[redacted]`.
 history. `engine` records what actually ran: `configured` is the effective
 `trufflehog_mode`, `used` is `trufflehog-native`, `trufflehog-container` or
 `regex`, and `fell_back` is `true` when truffleHog was attempted but could
-not run.
+not run. `error` is `null` unless a strict mode (`native`/`docker`) could not
+run truffleHog; it then holds the same message `scan` prints on stderr, and
+the findings are the regex scanner's only, so an empty list is not a clean
+scan.
 
 ### Verification
 
@@ -902,7 +905,8 @@ that did not run is never reported as clean.
 there is no history yet.
 
 Set `trufflehog_mode` to pin an engine. `native` and `docker` are strict: if
-truffleHog cannot run, `scan` prints its findings and exits `1`, and
+truffleHog cannot run, `scan` prints the regex scanner's findings, says the
+scan is incomplete (never `No issues found.`), and exits `1`, and
 `push`/`copy` exits `1` before the repo is created. Only `auto`
 falls back to regex; `off` uses regex by choice.
 

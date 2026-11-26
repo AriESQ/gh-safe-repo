@@ -85,11 +85,13 @@ def run(args):
         ))
         has_criticals = any(f.severity == Severity.CRITICAL for f in findings)
     else:
-        has_criticals = _print_findings(findings, config)
+        has_criticals = _print_findings(findings, config,
+                                        incomplete=scanner.strict_failure)
 
-    # An explicit trufflehog_mode (native/docker) that fell back to regex is a
-    # failure even with no findings: the scan was weaker than configured. The
-    # results are still printed above (they are real), but the exit is 1.
+    # An explicit trufflehog_mode (native/docker) that could not run truffleHog
+    # is a failure even with no findings: the scan was weaker than configured.
+    # The regex results are still printed above (they are real, and the regex
+    # patterns run on every scan), but the exit is 1 (#153).
     engine_msg = scanner.engine_error()
     if engine_msg:
         error(engine_msg)

@@ -1018,7 +1018,7 @@ class TestScanEngine:
         code = self._run_scan(tmp_path, "off", "--json")
         assert code == 0
         payload = json.loads(capsys.readouterr().out)
-        assert payload["engine"] == {"configured": "off", "used": "regex", "fell_back": False}
+        assert payload["engine"] == {"configured": "off", "used": "regex", "fell_back": False, "error": None}
         # Existing keys unchanged.
         assert {"findings", "summary", "skipped_committed_dirs"} <= set(payload)
 
@@ -1028,7 +1028,7 @@ class TestScanEngine:
         assert code == 0
         captured = capsys.readouterr()
         payload = json.loads(captured.out)
-        assert payload["engine"] == {"configured": "auto", "used": "regex", "fell_back": True}
+        assert payload["engine"] == {"configured": "auto", "used": "regex", "fell_back": True, "error": None}
         assert "Scan engine: regex (fell back" in captured.err
 
     def test_json_native_success(self, tmp_path, capsys):
@@ -1039,7 +1039,7 @@ class TestScanEngine:
         assert code == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["engine"] == {
-            "configured": "native", "used": "trufflehog-native", "fell_back": False,
+            "configured": "native", "used": "trufflehog-native", "fell_back": False, "error": None,
         }
 
     def test_explicit_native_fallback_exits_one_with_json(self, tmp_path, capsys):
@@ -1049,6 +1049,7 @@ class TestScanEngine:
         captured = capsys.readouterr()
         payload = json.loads(captured.out)   # stdout is still a valid document
         assert payload["engine"]["fell_back"] is True
+        assert "does not count as clean" in payload["engine"]["error"]
         assert payload["summary"]["critical"] == 0
         assert "trufflehog_mode = native" in captured.err
         assert "not found on PATH" in captured.err
@@ -1058,7 +1059,9 @@ class TestScanEngine:
         code = self._run_scan(tmp_path, "docker")
         assert code == 1
         captured = capsys.readouterr()
-        assert "Scan engine: regex (fell back" in captured.out
+        assert "Scan engine: regex only (truffleHog failed" in captured.out
+        assert "this scan is incomplete" in captured.out
+        assert "No issues found." not in captured.out
         assert "trufflehog_mode = docker" in captured.err
         assert "no container runtime" in captured.err
 
@@ -1096,7 +1099,8 @@ class TestCreatePreflightEngine:
         repo_plugin.apply.assert_not_called()
         mock_discover.return_value.preflight.assert_not_called()
         captured = capsys.readouterr()
-        assert "Scan engine: regex (fell back" in captured.out
+        assert "Scan engine: regex only (truffleHog failed" in captured.out
+        assert "fell back" not in captured.out
         assert "trufflehog_mode = native" in captured.err
         assert "Nothing was created" in captured.err
 

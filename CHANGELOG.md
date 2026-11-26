@@ -10,12 +10,23 @@ since the initial release.
 ## [Unreleased]
 
 ### Changed
+- `scan --json`: the `engine` object has a new `error` key, `null` unless a
+  strict `trufflehog_mode` (`native`/`docker`) could not run truffleHog, in
+  which case it holds the message `scan` prints on stderr (#153).
 - `push` checks its path (is a directory, is a git repository, has a commit)
   before it authenticates, so these errors no longer need a working `gh`
   login. The "not a git repository" hint and the `push --help` text for
   `PATH` now say a first commit is needed, not only `git init`.
 
 ### Fixed
+- With `trufflehog_mode = native` or `docker`, a scan where truffleHog could
+  not run no longer prints `Scan engine: regex (fell back ...)` and
+  `No issues found.` next to an error saying it refused to fall back (#153).
+  The engine line now reads `regex only (truffleHog failed: <reason>)`, an
+  empty result says `No issues found by the regex scanner, but truffleHog
+  failed: this scan is incomplete.`, and the error explains that a regex-only
+  scan does not count as clean. The regex findings are still listed (the
+  regex patterns run on every scan) and the exit code is unchanged (`1`).
 - `tools/git-filter-file.sh` (and `tools/scrub-ai-context.sh`, which calls
   it) no longer fail or misbehave on a second run in the same repo (#151).
   git-filter-repo leaves `.git/filter-repo/already_ran` behind; with a marker

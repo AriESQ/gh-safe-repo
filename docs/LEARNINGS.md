@@ -567,6 +567,14 @@ treated as strict too, rather than as `auto` (a typo of `native` should not
 silently weaken the scan). `off` and `scan_for_secrets = false` are regex by
 choice and report `fell_back: false`.
 
+The strict-mode wording used to contradict itself (#153): the error said
+"refusing to fall back to the regex scanner" while the report above it said
+`Scan engine: regex (fell back ...)` and `No issues found.`. The findings are
+kept, because the regex patterns run on every scan, truffleHog or not; what a
+strict mode refuses is to count a regex-only scan as a pass. So the engine
+line says `regex only (truffleHog failed: ...)`, an empty report says the
+scan is incomplete, and `scan --json` carries the message in `engine.error`.
+
 Under `create --json` the pre-flight report used to print to stdout ahead of
 the plan document. It now runs inside `prose_to_stderr(json_mode)` (the shared
 `_common.py` helper), so stdout carries only JSON.

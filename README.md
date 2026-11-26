@@ -834,6 +834,32 @@ The scanner runs locally and never sends code anywhere. Use it standalone
 | Large files | Warning | Over the configured threshold (default 100 MB) |
 | TODO/FIXME comments | Info | `# TODO`, `# FIXME`, `# HACK`, `# XXX` |
 
+#### Hidden characters
+
+The regex secret patterns and banned strings also match through characters
+that a terminal or GitHub's file view does not show: invisible Unicode
+formatting (zero-width space and joiners, BOM, soft hyphen, word joiner, bidi
+controls, the tag block), ANSI escape sequences, and stray control characters
+such as NUL. Each line holding one is matched again twice: with them removed,
+and as a viewer renders it (a backspace or carriage return lets the next
+characters overwrite earlier ones, and a right-to-left override reverses its
+text). A key that only matches that way is reported at its usual severity, at
+the file's real line number, with the hidden characters named in the rule:
+
+```
+  [CRITICAL] AWS Access Key ID (obfuscated with U+200B ZERO WIDTH SPACE)
+             in config.py:3
+             View with: sed -n '1,7p' config.py | cat -v
+```
+
+The match stays `[redacted]`, as for every secret. `cat -v` in the `View
+with:` command shows the hidden characters that `sed` alone would let the
+terminal hide again. Emails and TODOs are matched on the raw text only.
+
+Not covered: look-alike letters (Cyrillic `А`, fullwidth digits), keys built
+up in code (concatenation, escapes, reversed literals, split lines), and
+encodings such as URL encoding. truffleHog decodes base64.
+
 ### Interactive review
 
 ```
@@ -885,7 +911,9 @@ The engine is chosen in this order:
 3. **Regex fallback.** Used when neither is available or truffleHog fails to
    run. The regex pass always runs alongside truffleHog for emails and
    TODOs, and catches lone key-ID patterns that truffleHog skips because it
-   wants both halves of a credential pair.
+   wants both halves of a credential pair, and keys split by
+   [hidden characters](#hidden-characters), which truffleHog does not
+   normalize.
 
 The planned engine is shown in the scan header; the engine that actually ran
 is printed after the scan, because truffleHog can still fail mid-run:
@@ -932,7 +960,12 @@ walked in full. Build-artifact directories (`node_modules`, `__pycache__`,
 `.venv`, `venv`, `dist`, `build`) are skipped unless files inside them are
 tracked, in which case they are scanned and a warning notes that more is
 committed than expected. A file whose first 8 KB contains a NUL byte is
-treated as binary and not content-scanned. When stderr is a terminal, a
+treated as binary and not content-scanned, unless those 8 KB read as text:
+UTF-16 or UTF-32 with a byte order mark, UTF-16 without one (a NUL in every
+other byte), or UTF-8 with a few stray NULs and no other binary control
+bytes. UTF-16 and UTF-32 files are decoded before matching. Line numbers
+count `\n` only, as `sed` and git do, so a lone carriage return does not
+start a new line. When stderr is a terminal, a
 one-line progress indicator shows the file being scanned.
 
 ### Suppressing false positives

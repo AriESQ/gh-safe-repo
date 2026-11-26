@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Set, Tuple
@@ -48,16 +49,224 @@ BINARY_EXTENSIONS = {
 }
 
 # Content sniff for binaries the extension list misses (e.g. TouchDesigner
-# .toe): a NUL byte in the first block means the file is not regex-scanned.
+# .toe): NUL bytes in the first block mean the file is not regex-scanned,
+# unless the block reads as UTF-16 text or as UTF-8 text with a few stray
+# NULs (#157).
 _BINARY_SNIFF_BYTES = 8192
 
+# UTF-16/32 byte order marks with their code unit size, longest first: the
+# UTF-32 LE mark begins with the UTF-16 LE one.
+_WIDE_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32", 4),
+    (codecs.BOM_UTF32_BE, "utf-32", 4),
+    (codecs.BOM_UTF16_LE, "utf-16", 2),
+    (codecs.BOM_UTF16_BE, "utf-16", 2),
+)
 
-def _looks_binary(path: str) -> bool:
+# C0 controls that may appear in text a terminal renders. Any other C0
+# control next to a NUL marks the block as binary.
+_TEXT_CONTROLS_NO_NUL = frozenset(b"\t\n\r\x0b\x0c\x08\x1b")
+_TEXT_CONTROLS = _TEXT_CONTROLS_NO_NUL | {0}
+
+
+def _utf16_without_bom(block: bytes) -> Optional[str]:
+    """"utf-16-le"/"utf-16-be" when block looks like mostly-ASCII UTF-16:
+    a NUL in (nearly) every high byte and (almost) none in the low bytes."""
+    pairs = len(block) // 2
+    if pairs < 2:
+        return None
+    even_nuls = block[0:pairs * 2:2].count(0)
+    odd_nuls = block[1:pairs * 2:2].count(0)
+    if odd_nuls >= 0.9 * pairs and even_nuls <= 0.1 * pairs:
+        return "utf-16-le"
+    if even_nuls >= 0.9 * pairs and odd_nuls <= 0.1 * pairs:
+        return "utf-16-be"
+    return None
+
+
+def _mostly_text(sample: str) -> bool:
+    """True when at most 5% of a decoded sample are control characters a
+    text file would not hold (NUL counts; whitespace, BS and ESC do not)."""
+    if not sample:
+        return True
+    bad = sum(1 for c in sample
+              if unicodedata.category(c) == "Cc" and ord(c) not in _TEXT_CONTROLS_NO_NUL)
+    return bad <= 0.05 * len(sample)
+
+
+def _text_encoding(block: bytes) -> Optional[str]:
+    """The codec to read a file whose first block is `block`, or None if the
+    file is binary and must not be content-scanned."""
+    if block.startswith(codecs.BOM_UTF8) and b"\0" not in block:
+        return "utf-8-sig"
+    for bom, codec, unit in _WIDE_BOMS:
+        if block.startswith(bom):
+            # Whole code units only: the block may end mid-character.
+            sample = block[: len(block) // unit * unit].decode(codec, errors="replace")
+            return codec if _mostly_text(sample) else None
+    if b"\0" not in block:
+        return "utf-8"
+    codec = _utf16_without_bom(block)
+    if codec:
+        sample = block[: len(block) // 2 * 2].decode(codec, errors="replace")
+        return codec if _mostly_text(sample) else None
+    # UTF-8 text with a few stray NULs (an evasion trick, #157): valid
+    # UTF-8, no other non-text control byte, and NULs rare. Real binaries
+    # fail the first two tests almost always.
+    if any(b < 0x20 and b not in _TEXT_CONTROLS for b in block):
+        return None
+    if block.count(0) > max(4, len(block) // 256):
+        return None
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(block, final=False)
+    except UnicodeDecodeError:
+        return None
+    return "utf-8"
+
+
+def _read_text(path: str) -> Optional[str]:
+    """Return the decoded content of a text file, or None when the file is
+    binary or unreadable. Undecodable bytes become U+FFFD."""
     try:
         with open(path, "rb") as f:
-            return b"\0" in f.read(_BINARY_SNIFF_BYTES)
+            data = f.read()
     except OSError:
-        return True
+        return None
+    codec = _text_encoding(data[:_BINARY_SNIFF_BYTES])
+    if codec is None:
+        return None
+    return data.decode(codec, errors="replace")
+
+
+def _split_lines(text: str) -> List[str]:
+    """Split on "\\n" only, keeping it, so line numbers match `sed -n` and
+    git. A lone CR stays inside its line, where normalization handles it."""
+    lines = text.split("\n")
+    out = [line + "\n" for line in lines[:-1]]
+    if lines[-1]:
+        out.append(lines[-1])
+    return out
+
+
+# --- Normalization of hidden characters (#157) ---
+#
+# A terminal shows text differently from its bytes: Cf characters (zero-width,
+# BOM, soft hyphen, bidi controls, the tag block) take no space, ANSI escape
+# sequences and most C0 controls are not shown, a backspace moves the cursor
+# left so the next character overwrites the previous one, and a CR returns to
+# column 0. A key split by any of these reads normally on screen but is not
+# matched by a regex over the raw line. Each line that contains such a
+# character is matched again in two normalized forms:
+#   stripped  every hidden character removed (keeps text a later overwrite
+#             would cover, so a CR or backspace cannot destroy a key)
+#   rendered  what a terminal shows: CR and backspace move the cursor and
+#             later characters overwrite earlier ones
+# A secret pattern that matches only a normalized form is reported with the
+# hidden characters named in its rule.
+
+_ANSI_ESCAPE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"            # CSI (colours, cursor movement)
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?"  # OSC, ended by BEL or ST
+    r"|\x1b[PX^_][^\x1b]*(?:\x1b\\)?"     # DCS / SOS / PM / APC strings
+    r"|\x1b[ -/]*[0-~]"                   # two-character escapes, ESC ( B
+    r"|\x9b[0-?]*[ -/]*[@-~]"             # C1 CSI
+)
+
+_CONTROL_NAMES = {
+    "\x00": "NUL",
+    "\x08": "BACKSPACE",
+    "\x0d": "CARRIAGE RETURN",
+    "\x1b": "ESCAPE",
+    "\x7f": "DELETE",
+}
+
+
+def _hidden_name(ch: str) -> str:
+    cp = ord(ch)
+    name = _CONTROL_NAMES.get(ch) or unicodedata.name(ch, "")
+    return f"U+{cp:04X} {name}".rstrip() if name else f"U+{cp:04X}"
+
+
+def _normalize_line(line: str) -> Optional[Tuple[Tuple[str, str], str]]:
+    """Return ((stripped, rendered), hidden) for a line with hidden
+    characters, or None when the line has none.
+
+    `hidden` names what was hidden, for the finding's rule. The line ending
+    ("\\n" or "\\r\\n") is removed first, so CRLF files take the fast path.
+    """
+    body = line[:-1] if line.endswith("\n") else line
+    if body.endswith("\r"):
+        body = body[:-1]
+    if body.isprintable():
+        return None
+    names: List[str] = []
+
+    def note(name: str) -> None:
+        if name not in names:
+            names.append(name)
+
+    def drop_escape(m: "re.Match") -> str:
+        note("ANSI escape sequence")
+        return ""
+
+    body = _ANSI_ESCAPE.sub(drop_escape, body)
+    stripped = []
+    for ch in body:
+        if _is_hidden(ch):
+            note(_hidden_name(ch))
+        else:
+            stripped.append(ch)
+    if not names:
+        return None  # e.g. NBSP or U+2028: not printable, but nothing hidden
+    shown = names[:3] + (["..."] if len(names) > 3 else [])
+    return ("".join(stripped), _render(body)), ", ".join(shown)
+
+
+# RIGHT-TO-LEFT OVERRIDE up to POP DIRECTIONAL FORMATTING or the end of the
+# line: a bidi-aware viewer (GitHub's file view, many editors) shows the
+# characters in it in reverse order.
+_RLO_SPAN = re.compile(r"\u202e([^\u202c]*)")
+
+
+def _is_hidden(ch: str) -> bool:
+    return ch != "\t" and unicodedata.category(ch) in ("Cc", "Cf")
+
+
+def _render(body: str) -> str:
+    """What a viewer shows for body (ANSI escapes already removed): RLO
+    spans reversed, then CR and backspace move the cursor so later
+    characters overwrite earlier ones, and other hidden characters take no
+    space."""
+    body = _RLO_SPAN.sub(lambda m: m.group(1)[::-1], body)
+    screen: List[str] = []
+    cursor = 0
+    for ch in body:
+        if not _is_hidden(ch):
+            if cursor < len(screen):
+                screen[cursor] = ch
+            else:
+                screen.append(ch)
+            cursor += 1
+        elif ch == "\r":
+            cursor = 0
+        elif ch == "\b":
+            cursor = max(0, cursor - 1)
+    return "".join(screen)
+
+
+def _pattern_hit(pattern, line: str, normalized) -> Optional[str]:
+    """None: no match. "": the raw line matches. Otherwise the match needed
+    the hidden characters removed, and this names them."""
+    if pattern.search(line):
+        return ""
+    if normalized and any(pattern.search(form) for form in normalized[0]):
+        return normalized[1]
+    return None
+
+
+def _obfuscated_rule(rule: str, hidden: str) -> str:
+    """The rule name, marked as obfuscated when hidden characters split it."""
+    return f"{rule} (obfuscated with {hidden})" if hidden else rule
 
 SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
@@ -131,6 +340,7 @@ class Finding:
     match: str          # "[redacted]" for secrets, literal for emails/todos
     commit: str = ""    # short commit hash (trufflehog git mode only)
     timestamp: str = "" # commit timestamp (trufflehog git mode only)
+    hidden: str = ""    # hidden characters the match needed removed (#157)
 
 
 # --- Compiled regex patterns ---
@@ -711,37 +921,37 @@ class SecurityScanner:
 
                 # Skip binary files for text content scanning
                 _, ext = os.path.splitext(filename)
-                if ext.lower() in BINARY_EXTENSIONS or _looks_binary(full_path):
+                if ext.lower() in BINARY_EXTENSIONS:
+                    continue
+                # None for binary (NUL bytes that are not UTF-16 or a few
+                # stray NULs in UTF-8 text) or unreadable files
+                text = _read_text(full_path)
+                if text is None:
                     continue
 
-                # Text content scanning
-                try:
-                    with open(full_path, encoding="utf-8", errors="replace") as f:
-                        lines = f.readlines()
-                except OSError:
-                    continue
+                for line_number, line in enumerate(_split_lines(text), start=1):
+                    # Secret patterns and banned strings are matched again
+                    # with hidden characters removed (#157)
+                    normalized = _normalize_line(line) if (
+                        scan_secrets or self._banned_strings) else None
 
-                for line_number, line in enumerate(lines, start=1):
                     if scan_secrets:
-                        for pattern, rule_name in _CRITICAL_PATTERNS:
-                            if pattern.search(line):
+                        for severity, patterns in (
+                            (Severity.CRITICAL, _CRITICAL_PATTERNS),
+                            (Severity.WARNING, _WARNING_PATTERNS),
+                        ):
+                            for pattern, rule_name in patterns:
+                                hidden = _pattern_hit(pattern, line, normalized)
+                                if hidden is None:
+                                    continue
                                 findings.append(Finding(
-                                    severity=Severity.CRITICAL,
+                                    severity=severity,
                                     category=FindingCategory.SECRET,
                                     file_path=rel_path,
                                     line_number=line_number,
-                                    rule=rule_name,
+                                    rule=_obfuscated_rule(rule_name, hidden),
                                     match="[redacted]",
-                                ))
-                        for pattern, rule_name in _WARNING_PATTERNS:
-                            if pattern.search(line):
-                                findings.append(Finding(
-                                    severity=Severity.WARNING,
-                                    category=FindingCategory.SECRET,
-                                    file_path=rel_path,
-                                    line_number=line_number,
-                                    rule=rule_name,
-                                    match="[redacted]",
+                                    hidden=hidden,
                                 ))
 
                     if self._scan_emails:
@@ -768,16 +978,24 @@ class SecurityScanner:
                             ))
 
                     line_lower = line.lower()
+                    forms_lower = [f.lower() for f in normalized[0]] if normalized else []
                     for banned in self._banned_strings:
-                        if banned.lower() in line_lower:
-                            findings.append(Finding(
-                                severity=Severity.CRITICAL,
-                                category=FindingCategory.BANNED_STRING,
-                                file_path=rel_path,
-                                line_number=line_number,
-                                rule=f"Banned string: {banned}",
-                                match="[redacted]",
-                            ))
+                        needle = banned.lower()
+                        if needle in line_lower:
+                            hidden = ""
+                        elif any(needle in form for form in forms_lower):
+                            hidden = normalized[1]
+                        else:
+                            continue
+                        findings.append(Finding(
+                            severity=Severity.CRITICAL,
+                            category=FindingCategory.BANNED_STRING,
+                            file_path=rel_path,
+                            line_number=line_number,
+                            rule=_obfuscated_rule(f"Banned string: {banned}", hidden),
+                            match="[redacted]",
+                            hidden=hidden,
+                        ))
 
         return findings, skipped_dirs
 
@@ -1396,7 +1614,9 @@ def _view_hint(f: "Finding") -> str:
     ctx = 4
     start = max(1, f.line_number - ctx)
     end = f.line_number + ctx
-    return f"sed -n '{start},{end}p' {shlex.quote(f.file_path)}"
+    hint = f"sed -n '{start},{end}p' {shlex.quote(f.file_path)}"
+    # The terminal would hide the characters that split the match again
+    return hint + " | cat -v" if f.hidden else hint
 
 
 def format_findings(findings: List[Finding]) -> str:

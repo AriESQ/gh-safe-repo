@@ -1851,3 +1851,376 @@ class TestTruffleHogStatus:
         assert status._thread is None
         assert threading.active_count() == threads_before
         assert capsys.readouterr().err == ""
+# --- Hidden-character normalization and UTF-16 (#157) ---
+#
+# AWS's documented example key pair (not a real credential). The live
+# evasion runs used truffleHog's public canary key, but GitHub push
+# protection blocks that one, so it must never be committed (#157).
+# Hidden characters are written as escapes only; never put a raw bidi or
+# control character in this file.
+
+EXAMPLE_KID = "AKIAIOSFODNN7EXAMPLE"
+EXAMPLE_SEC = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+ZWSP = "\u200b"
+
+
+def _pair(kid, sec=EXAMPLE_SEC):
+    return f"aws_access_key_id = {kid}\naws_secret_access_key = {sec}\n"
+
+
+def _mid(s, ins, at=8):
+    return s[:at] + ins + s[at:]
+
+
+def _evasion_variants():
+    import base64
+    import urllib.parse
+    kid, sec = EXAMPLE_KID, EXAMPLE_SEC
+    return {
+        "00_baseline": _pair(kid),
+        "01_zwsp": _pair(_mid(kid, "\u200b")),
+        "02_zwj": _pair(_mid(kid, "\u200d")),
+        "03_soft_hyphen": _pair(_mid(kid, "\u00ad")),
+        "04_bom": _pair(_mid(kid, "\ufeff")),
+        "05_word_joiner": _pair(_mid(kid, "\u2060")),
+        "06_tag_chars": _pair(_mid(kid, "\U000e0041")),
+        "07_esc_sgr_reset": _pair(_mid(kid, "\x1b[0m")),
+        "08_backspace": _pair(_mid(kid, "X\b")),
+        "09_cr_overwrite": (f"aws_access_key_id = AKIAXXXXXXXXXXXXXXXX\r"
+                            f"aws_access_key_id = {kid}\naws_secret_access_key = {sec}\n"),
+        "10_nul": _pair(_mid(kid, "\x00")),
+        "11_rlo_reversed": _pair("\u202e" + kid[::-1] + "\u202c"),
+        "12_secret_zwsp": _pair(kid, _mid(sec, "\u200b", 20)),
+        "13_cyrillic_A": _pair("\u0410" + kid[1:]),
+        "14_fullwidth_digit": _pair(kid.replace("7", "\uff17")),
+        "15_concat": f'KID = "AKIAIOSF" + "ODNN7EXAMPLE"\nSEC = "{sec[:20]}" + "{sec[20:]}"\n',
+        "16_line_continuation": f'KID = "AKIAIOSF\\\nODNN7EXAMPLE"\nSEC = "{sec}"\n',
+        "17_reversed_literal": f'KID = "{kid[::-1]}"[::-1]\nSEC = "{sec}"\n',
+        "18_py_hex_escapes": ('KID = "' + "".join(f"\\x{ord(c):02x}" for c in kid)
+                              + f'"\nSEC = "{sec}"\n'),
+        "19_base64_whole": base64.b64encode(_pair(kid).encode()).decode() + "\n",
+        "20_base64_kid_only": (f"aws_access_key_id_b64 = {base64.b64encode(kid.encode()).decode()}\n"
+                               f"aws_secret_access_key = {sec}\n"),
+        "21_url_encoded": _pair(urllib.parse.quote(kid, safe="").replace("A", "%41")),
+        "22_split_lines": (f"aws_access_key_id = AKIAIOSF\n  ODNN7EXAMPLE\n"
+                           f"aws_secret_access_key = {sec}\n"),
+        "23_kid_only": f"aws_access_key_id = {kid}\n",
+        "24_utf16le": _pair(kid).encode("utf-16-le"),
+    }
+
+
+# variant -> (caught before #157, caught now, hidden characters named in the rule)
+# "Before" is the regex engine alone (trufflehog_mode = off). The misses that
+# remain are the issue's non-goals: homoglyphs and width variants, code-level
+# reassembly, and encodings.
+_EVASION_EXPECTED = {
+    "00_baseline": (True, True, ""),
+    "01_zwsp": (False, True, "U+200B ZERO WIDTH SPACE"),
+    "02_zwj": (False, True, "U+200D ZERO WIDTH JOINER"),
+    "03_soft_hyphen": (False, True, "U+00AD SOFT HYPHEN"),
+    "04_bom": (False, True, "U+FEFF ZERO WIDTH NO-BREAK SPACE"),
+    "05_word_joiner": (False, True, "U+2060 WORD JOINER"),
+    "06_tag_chars": (False, True, "U+E0041 TAG LATIN CAPITAL LETTER A"),
+    "07_esc_sgr_reset": (False, True, "ANSI escape sequence"),
+    "08_backspace": (False, True, "U+0008 BACKSPACE"),
+    "09_cr_overwrite": (True, True, ""),
+    "10_nul": (False, True, "U+0000 NUL"),
+    "11_rlo_reversed": (False, True,
+                        "U+202E RIGHT-TO-LEFT OVERRIDE, U+202C POP DIRECTIONAL FORMATTING"),
+    "12_secret_zwsp": (True, True, ""),
+    "13_cyrillic_A": (False, False, None),
+    "14_fullwidth_digit": (False, False, None),
+    "15_concat": (False, False, None),
+    "16_line_continuation": (False, False, None),
+    "17_reversed_literal": (False, False, None),
+    "18_py_hex_escapes": (False, False, None),
+    "19_base64_whole": (False, False, None),
+    "20_base64_kid_only": (False, False, None),
+    "21_url_encoded": (False, False, None),
+    "22_split_lines": (False, False, None),
+    "23_kid_only": (True, True, ""),
+    "24_utf16le": (False, True, ""),
+}
+
+
+def _write_variant(dir_path, name, body):
+    path = os.path.join(dir_path, f"{name}.txt")
+    if isinstance(body, bytes):
+        with open(path, "wb") as f:
+            f.write(body)
+    else:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(body)
+    return path
+
+
+def _secrets(findings):
+    return [f for f in findings if f.category == FindingCategory.SECRET]
+
+
+def _scan_text(tmp_path, content, name="f.txt", overrides=None):
+    path = tmp_path / name
+    if isinstance(content, bytes):
+        path.write_bytes(content)
+    else:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+    return make_scanner(overrides).scan(str(tmp_path))
+
+
+class TestEvasionVariants:
+    def test_table_covers_every_variant(self):
+        assert set(_evasion_variants()) == set(_EVASION_EXPECTED)
+
+    @pytest.mark.parametrize("name", sorted(_EVASION_EXPECTED))
+    def test_variant(self, tmp_path, name):
+        _write_variant(str(tmp_path), name, _evasion_variants()[name])
+        _, caught, hidden = _EVASION_EXPECTED[name]
+        secrets = _secrets(make_scanner().scan(str(tmp_path)))
+        if not caught:
+            assert secrets == []
+            return
+        assert len(secrets) == 1
+        f = secrets[0]
+        assert (f.severity, f.line_number, f.match) == (Severity.CRITICAL, 1, "[redacted]")
+        assert f.hidden == hidden
+        if hidden:
+            assert f.rule == f"AWS Access Key ID (obfuscated with {hidden})"
+        else:
+            # Hits the raw regex already made keep their plain rule
+            assert f.rule == "AWS Access Key ID"
+
+    def test_whole_set_in_one_git_repo(self, tmp_path):
+        make_git_repo(str(tmp_path))
+        for name, body in _evasion_variants().items():
+            _write_variant(str(tmp_path), name, body)
+        git_add_commit(str(tmp_path), "variants")
+        secrets = _secrets(make_scanner().scan(str(tmp_path)))
+        caught = {f.file_path[:-len(".txt")] for f in secrets}
+        assert caught == {n for n, (_, now, _) in _EVASION_EXPECTED.items() if now}
+
+
+class TestNormalizeLine:
+    @pytest.mark.parametrize("line", [
+        "plain ascii\n",
+        "windows line\r\n",
+        "tab\tseparated\n",
+        "no newline at end",
+        "caf\u00e9 na\u00efve \u65e5\u672c\u8a9e\n",
+        "non\u00a0breaking space\n",   # not printable, but nothing hidden
+        "line\u2028separator\n",
+    ])
+    def test_nothing_hidden(self, line):
+        from gh_safe_repo.security_scanner import _normalize_line
+        assert _normalize_line(line) is None
+
+    def test_backspace_is_applied_not_just_removed(self):
+        from gh_safe_repo.security_scanner import _normalize_line
+        (stripped, rendered), hidden = _normalize_line("abX\bcd\n")
+        assert stripped == "abXcd"
+        assert rendered == "abcd"
+        assert hidden == "U+0008 BACKSPACE"
+
+    def test_carriage_return_overwrites_from_column_zero(self):
+        from gh_safe_repo.security_scanner import _normalize_line
+        (stripped, rendered), _ = _normalize_line("xxxxxxyz\rabc\r\n")
+        assert stripped == "xxxxxxyzabc"
+        assert rendered == "abcxxxyz"
+
+    def test_escape_sequences_removed(self):
+        from gh_safe_repo.security_scanner import _normalize_line
+        line = "a\x1b[31mb\x1b]0;title\x07c\x1b(Bd\x9b1me\n"
+        (stripped, rendered), hidden = _normalize_line(line)
+        assert stripped == rendered == "abcde"
+        assert hidden == "ANSI escape sequence"
+
+    def test_rlo_span_rendered_reversed(self):
+        from gh_safe_repo.security_scanner import _normalize_line
+        (stripped, rendered), _ = _normalize_line("x \u202ecba\u202c y\n")
+        assert stripped == "x cba y"
+        assert rendered == "x abc y"
+
+    def test_hidden_list_is_capped(self):
+        from gh_safe_repo.security_scanner import _normalize_line
+        _, hidden = _normalize_line("a\u200bb\u200cc\u200dd\u2060e\ufefff\n")
+        assert hidden.count("U+") == 3 and hidden.endswith(", ...")
+
+
+class TestNormalizationFindings:
+    def test_match_only_on_screen_is_caught(self, tmp_path):
+        # Neither the bytes nor the stripped text hold the key; a terminal
+        # shows it once the CR has moved the cursor back
+        line = "key = xxxxxxxxODNN7EXAMPLE\rkey = AKIAIOSF\n"
+        secrets = _secrets(_scan_text(tmp_path, line))
+        assert [f.hidden for f in secrets] == ["U+000D CARRIAGE RETURN"]
+
+    def test_overwrite_cannot_erase_a_key(self, tmp_path):
+        # The rendered form is blanked by the CR; the stripped form keeps it
+        line = _mid(EXAMPLE_KID, ZWSP) + "\r" + " " * 30 + "\n"
+        secrets = _secrets(_scan_text(tmp_path, line))
+        assert len(secrets) == 1 and secrets[0].severity == Severity.CRITICAL
+
+    def test_warning_pattern_keeps_warning_severity(self, tmp_path):
+        # A password value may hold anything, so this is a raw match ...
+        line = f"password = 'abcdefgh{ZWSP}ijkl'\n"
+        assert [f.hidden for f in _secrets(_scan_text(tmp_path, line))] == [""]
+        # ... while a hidden character in the key name is not
+        line = f"api{ZWSP}_key = 'abcdefghijklmnopqrst'\n"
+        secrets = _secrets(_scan_text(tmp_path, line, name="g.txt"))
+        assert [(f.severity, f.rule) for f in secrets if f.file_path == "g.txt"] == [
+            (Severity.WARNING, "Generic API key (obfuscated with U+200B ZERO WIDTH SPACE)"),
+        ]
+
+    def test_banned_string_split_by_hidden_character(self, tmp_path):
+        findings = _scan_text(tmp_path, "by Ac\u00adme Corp\n",
+                              overrides={("pre_flight_scan", "banned_strings"): "acme"})
+        banned = [f for f in findings if f.category == FindingCategory.BANNED_STRING]
+        assert [(f.rule, f.match) for f in banned] == [
+            ("Banned string: acme (obfuscated with U+00AD SOFT HYPHEN)", "[redacted]"),
+        ]
+
+    def test_crlf_file_line_numbers_and_plain_rule(self, tmp_path):
+        content = "a\r\nb\r\nkey = " + EXAMPLE_KID + "\r\n"
+        secrets = _secrets(_scan_text(tmp_path, content))
+        assert [(f.line_number, f.rule, f.hidden) for f in secrets] == [
+            (3, "AWS Access Key ID", ""),
+        ]
+
+    def test_lone_cr_does_not_start_a_line(self, tmp_path):
+        # Line numbers follow `sed -n` and git, which count "\n" only
+        content = "a\rb\nkey = " + EXAMPLE_KID + "\n"
+        secrets = _secrets(_scan_text(tmp_path, content))
+        assert [f.line_number for f in secrets] == [2]
+
+    def test_report_names_hidden_characters_and_hint_reveals_them(self, tmp_path):
+        secrets = _secrets(_scan_text(tmp_path, _pair(_mid(EXAMPLE_KID, ZWSP))))
+        out = format_findings(secrets)
+        assert "AWS Access Key ID (obfuscated with U+200B ZERO WIDTH SPACE)" in out
+        assert "View with: sed -n '1,5p' f.txt | cat -v" in out
+        assert EXAMPLE_KID not in out
+        assert out.isascii()
+
+    def test_plain_hit_hint_unchanged(self, tmp_path):
+        out = format_findings(_secrets(_scan_text(tmp_path, _pair(EXAMPLE_KID))))
+        assert out.endswith("View with: sed -n '1,5p' f.txt")
+
+    def test_json_keeps_match_redacted(self, tmp_path):
+        from gh_safe_repo.commands._common import format_findings_json
+        secrets = _secrets(_scan_text(tmp_path, _pair(_mid(EXAMPLE_KID, "\x1b[0m"))))
+        doc = json.loads(format_findings_json(secrets))
+        (entry,) = doc["findings"]
+        assert entry["match"] == "[redacted]"
+        assert entry["rule"] == "AWS Access Key ID (obfuscated with ANSI escape sequence)"
+        assert set(entry) == {
+            "severity", "category", "file_path", "line_number", "rule", "match",
+            "commit", "timestamp",
+        }
+
+    def test_emails_and_todos_use_the_raw_line(self, tmp_path):
+        findings = _scan_text(tmp_path, f"TO{ZWSP}DO ex{ZWSP}ample@example.com\n")
+        assert [f.match for f in findings if f.category == FindingCategory.TODO] == []
+        assert [f.match for f in findings if f.category == FindingCategory.EMAIL] == [
+            "ample@example.com",
+        ]
+
+
+class TestNormalizationFalsePositives:
+    """Stripping Cf characters must not invent findings in ordinary text."""
+
+    TEXTS = {
+        # family emoji (ZWJ sequence), subdivision flag (tag sequence),
+        # skin tone modifier, keycap with variation selector
+        "emoji.md": ("Team: \U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466 "
+                     "\U0001F3F4\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F "
+                     "\U0001F44D\U0001F3FD 1\ufe0f\u20e3\n"),
+        # Persian with ZERO WIDTH NON-JOINER; Arabic with bidi marks and isolates
+        "fa.md": "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645 "
+                 "\u06a9\u062a\u0627\u0628\u200c\u0647\u0627\n",
+        "ar.md": "\u200f\u0645\u0631\u062d\u0628\u0627\u200e ABC "
+                 "\u2067\u0639\u0631\u0628\u064a\u2069\n",
+        "crlf.txt": "first\r\nsecond line with token words\r\nthird\r\n",
+        "bom.txt": "\ufeffBOM at the start\nsecond\n",
+        "soft.txt": "hyphen\u00adation and AKIA\u00ad words\n",
+        "log.txt": "\x1b[32mOK\x1b[0m build passed\r\n\x1b[31mFAIL\x1b[0m 3 tests\n",
+        "progress.txt": "  10%\r  50%\r 100%\n",
+    }
+
+    def test_no_secret_or_banned_findings(self, tmp_path):
+        for name, text in self.TEXTS.items():
+            with open(tmp_path / name, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+        findings = make_scanner({
+            ("pre_flight_scan", "banned_strings"): "secretproject",
+        }).scan(str(tmp_path))
+        assert [f for f in findings if f.category in
+                (FindingCategory.SECRET, FindingCategory.BANNED_STRING)] == []
+
+    def test_crlf_and_i18n_lines_take_the_fast_path(self):
+        from gh_safe_repo.security_scanner import _normalize_line
+        assert _normalize_line(self.TEXTS["crlf.txt"].split("\n")[0] + "\n") is None
+        assert _normalize_line("\u0633\u0644\u0627\u0645 \u062f\u0646\u06cc\u0627\n") is None
+
+
+class TestTextDecoding:
+    LINE = f"key = {EXAMPLE_KID}\n"
+
+    @pytest.mark.parametrize("codec", ["utf-16", "utf-16-le", "utf-16-be", "utf-32"])
+    def test_utf16_and_utf32_are_scanned(self, tmp_path, codec):
+        # "utf-16"/"utf-32" write a BOM; the -le/-be forms do not
+        content = ("first\r\n" + self.LINE).encode(codec)
+        secrets = _secrets(_scan_text(tmp_path, content))
+        assert [(f.line_number, f.rule) for f in secrets] == [(2, "AWS Access Key ID")]
+
+    def test_utf16_emails_and_todos(self, tmp_path):
+        findings = _scan_text(tmp_path, "# TODO mail example@example.com\n".encode("utf-16"))
+        cats = {f.category for f in findings}
+        assert {FindingCategory.EMAIL, FindingCategory.TODO} <= cats
+
+    def test_utf8_bom_is_not_part_of_line_one(self, tmp_path):
+        from gh_safe_repo.security_scanner import _read_text
+        path = tmp_path / "b.txt"
+        path.write_bytes(codecs_bom_utf8() + self.LINE.encode())
+        assert _read_text(str(path)) == self.LINE
+
+    @pytest.mark.parametrize("codec", ["utf-8-sig", "utf-16"])
+    def test_escape_heavy_log_with_bom_is_text(self, tmp_path, codec):
+        content = ("\x1b[1m\x1b[31mE\x1b[0m\x1b[2K\n" * 50 + self.LINE).encode(codec)
+        assert len(_secrets(_scan_text(tmp_path, content))) == 1
+
+    def test_stray_nul_text_is_scanned(self, tmp_path):
+        content = ("a\x00b\n" + self.LINE).encode()
+        assert len(_secrets(_scan_text(tmp_path, content))) == 1
+
+    @pytest.mark.parametrize("content", [
+        b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8 + b"key = " + EXAMPLE_KID.encode() + b"\n",
+        b"\x00\x01" + ("key = " + EXAMPLE_KID + "\n").encode(),       # other C0 control
+        b"key = " + EXAMPLE_KID.encode() + b"\n" + b"\x00" * 64,       # too many NULs
+        b"\x00key = " + EXAMPLE_KID.encode() + b"\xc3\x28\n",          # invalid UTF-8
+        b"\xff\xfe" + b"\x00\x00\x01\x00" * 40,                         # UTF-16 BOM, then controls
+        bytes(b for c in range(1, 32) for b in (c, 0)) * 4,           # UTF-16 LE shape, controls
+    ], ids=["elf", "c0", "many-nuls", "bad-utf8", "bom-controls", "utf16-controls"])
+    def test_binaries_stay_binary(self, tmp_path, content):
+        from gh_safe_repo.security_scanner import _read_text
+        path = tmp_path / "blob"
+        path.write_bytes(content)
+        assert _read_text(str(path)) is None
+        assert _secrets(make_scanner().scan(str(tmp_path))) == []
+
+    def test_large_utf16_file_is_reported_not_scanned(self, tmp_path):
+        findings = _scan_text(tmp_path, (self.LINE * 200).encode("utf-16"),
+                              overrides={("pre_flight_scan", "max_file_size_mb"): "0.001"})
+        assert [f.category for f in findings] == [FindingCategory.LARGE_FILE]
+
+    def test_binary_extension_skips_utf16(self, tmp_path):
+        findings = _scan_text(tmp_path, self.LINE.encode("utf-16"), name="data.bin")
+        assert _secrets(findings) == []
+
+    def test_excluded_utf16_file_skipped(self, tmp_path):
+        findings = _scan_text(tmp_path, self.LINE.encode("utf-16"), name="w.txt",
+                              overrides={("pre_flight_scan", "scan_exclude_paths"): r"^w\.txt$"})
+        assert _secrets(findings) == []
+
+
+def codecs_bom_utf8():
+    import codecs
+    return codecs.BOM_UTF8

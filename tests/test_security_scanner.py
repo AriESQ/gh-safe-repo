@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -1695,3 +1696,158 @@ class TestRunTeeingStderr:
             SecurityScanner._run_teeing_stderr(["gh-safe-repo-no-such-binary"])
         if before is not None:
             assert len(os.listdir("/dev/fd")) == before
+
+
+# --- truffleHog status line (#10) ---
+
+from gh_safe_repo import security_scanner as scanner_module  # noqa: E402
+from gh_safe_repo.security_scanner import _TruffleHogStatus  # noqa: E402
+
+CLEAR = "\r\033[K"
+
+
+def _fd_count():
+    return len(os.listdir("/dev/fd")) if os.path.isdir("/dev/fd") else None
+
+
+class TestTruffleHogStatus:
+    """The TTY-only status line drawn while truffleHog runs."""
+
+    def _run(self, scanner, discovery, stderr_text=""):
+        scanner._discovery = discovery
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch.object(SecurityScanner, "_run_teeing_stderr",
+                          wraps=SecurityScanner._run_teeing_stderr) as tee, \
+             mock_popen_with_stderr(stderr_text):
+            scanner._try_trufflehog(tmpdir)
+        return tee.call_args.args[1]
+
+    def test_no_status_when_stderr_not_tty(self, capsys):
+        status = self._run(make_scanner(), {"method": "native", "version": "3.99.8"})
+        assert status is None
+        assert CLEAR not in capsys.readouterr().err
+
+    def test_no_status_in_json_mode(self, capsys):
+        with patch("sys.stderr.isatty", return_value=True):
+            scanner = SecurityScanner(FakeConfig(), progress=False)
+        status = self._run(scanner, {"method": "native", "version": "3.99.8"})
+        assert status is None
+        assert CLEAR not in capsys.readouterr().err
+
+    def test_container_status_names_runtime_and_is_cleared(self, capsys):
+        scanner = make_scanner()
+        scanner._progress = True
+        status = self._run(
+            scanner,
+            {"method": "container", "runtime": "podman", "runtime_path": "/x/podman"},
+            "relayed-line\n",
+        )
+        assert isinstance(status, _TruffleHogStatus)
+        err = capsys.readouterr().err
+        assert "truffleHog via podman: starting container... 0:00" in err
+        # The relayed line itself is intact and starts on a cleared line.
+        assert CLEAR + "relayed-line\n" in err
+        assert err.endswith(CLEAR)
+
+    def test_echo_clears_line_before_and_redraws_after(self, capsys):
+        status = _TruffleHogStatus("truffleHog", "starting", interval=3600)
+        status.start()
+        status.echo("hello\n", "hello\n")
+        status.stop()
+        err = capsys.readouterr().err
+        assert err == (
+            CLEAR + "truffleHog: starting... 0:00"
+            + CLEAR + "hello\n"
+            + CLEAR + "truffleHog: starting... 0:00"
+            + CLEAR
+        )
+
+    def test_no_redraw_after_partial_line(self, capsys):
+        status = _TruffleHogStatus("truffleHog", "starting", interval=3600)
+        status.start()
+        status.echo("partial", "partial")
+        status.stop()
+        err = capsys.readouterr().err
+        # Nothing is drawn, or cleared, after the unterminated chunk.
+        assert err.endswith(CLEAR + "partial")
+
+    def test_phase_follows_stderr_lines(self, capsys):
+        status = _TruffleHogStatus("truffleHog via podman", "starting container",
+                                   interval=3600)
+        status.start()
+        line = "Trying to pull ghcr.io/trufflesecurity/trufflehog:latest...\n"
+        status.echo(line, line)
+        assert status._phase == _TruffleHogStatus.PULLING
+        running = json.dumps({"level": "info-0", "msg": "running source"},
+                             separators=(",", ":"))
+        # Split across two chunks: the phase changes on the complete line.
+        status.echo(running[:10], running[:10])
+        assert status._phase == _TruffleHogStatus.PULLING
+        status.echo(running[10:] + "\n", running[10:] + "\n")
+        assert status._phase == _TruffleHogStatus.SCANNING
+        finished = '{"level":"info-0","msg":"finished scanning","chunks":1}\n'
+        status.echo(finished, finished)
+        status.stop()
+        assert status._phase == _TruffleHogStatus.FINISHING
+        err = capsys.readouterr().err
+        assert "truffleHog via podman: pulling image..." in err
+        assert "truffleHog via podman: scanning..." in err
+
+    def test_elapsed_time_is_minutes_and_seconds(self, capsys):
+        status = _TruffleHogStatus("truffleHog", "scanning", interval=3600)
+        with patch.object(scanner_module, "time") as fake_time:
+            fake_time.monotonic.side_effect = [100.0, 100.4, 165.9]
+            status.start()                 # start + first draw
+            status.echo("x\n", "x\n")      # redraw at 65.9s
+            status.stop()
+        err = capsys.readouterr().err
+        assert "truffleHog: scanning... 0:00" in err
+        assert "truffleHog: scanning... 1:05" in err
+
+    def test_line_is_truncated_to_terminal_width(self, capsys):
+        status = _TruffleHogStatus("truffleHog", "x" * 200, interval=3600)
+        with patch.object(scanner_module.shutil, "get_terminal_size",
+                          return_value=os.terminal_size((40, 20))):
+            status.start()
+            status.stop()
+        drawn = capsys.readouterr().err.split(CLEAR)[1]
+        assert len(drawn) == 39
+
+    def test_ticker_redraws_while_child_is_silent(self, capsys):
+        # A real child that prints nothing for a while (an image pull or a
+        # large repo): the ticker keeps the line alive (#10).
+        status = _TruffleHogStatus("truffleHog", "starting", interval=0.05)
+        code = "import time; time.sleep(0.4)"
+        SecurityScanner._run_teeing_stderr([sys.executable, "-c", code], status)
+        err = capsys.readouterr().err
+        assert err.count("truffleHog: starting...") >= 3
+        assert err.endswith(CLEAR)
+
+    def test_real_child_relay_keeps_raw_copy_and_leaks_nothing(self, capsys):
+        threads_before = threading.active_count()
+        fds_before = _fd_count()
+        status = _TruffleHogStatus("truffleHog", "starting", interval=0.01)
+        code = ("import sys, time; sys.stderr.write('one\\x1b[31m\\n'); "
+                "sys.stderr.flush(); time.sleep(0.1); "
+                "sys.stderr.write('two\\n'); sys.stdout.write('out')")
+        stdout, stderr, rc = SecurityScanner._run_teeing_stderr(
+            [sys.executable, "-c", code], status
+        )
+        assert (stdout, stderr, rc) == ("out", "one\x1b[31m\ntwo\n", 0)
+        err = capsys.readouterr().err
+        assert "\x1b[31m" not in err          # relay still escaped (#125)
+        assert CLEAR + "one\\x1b[31m\n" in err
+        assert CLEAR + "two\n" in err
+        assert err.endswith(CLEAR)
+        assert threading.active_count() == threads_before
+        if fds_before is not None:
+            assert _fd_count() == fds_before
+
+    def test_missing_binary_starts_no_status(self, capsys):
+        threads_before = threading.active_count()
+        status = _TruffleHogStatus("truffleHog", "starting")
+        with pytest.raises(FileNotFoundError):
+            SecurityScanner._run_teeing_stderr(["gh-safe-repo-no-such-binary"], status)
+        assert status._thread is None
+        assert threading.active_count() == threads_before
+        assert capsys.readouterr().err == ""

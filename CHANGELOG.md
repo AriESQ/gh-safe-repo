@@ -9,6 +9,16 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- While truffleHog runs, a one-line status on stderr shows what it is doing
+  and for how long, for example `truffleHog via podman: pulling image... 0:42`
+  (phases: starting / starting container, pulling image, scanning,
+  finishing). A first container run that pulls the image, or a large
+  repository, no longer looks hung: since 0.14.0 podman draws no pull
+  progress bars of its own. Shown only when stderr is a terminal, never with
+  `--json`, like the file-scan progress line. truffleHog's own log lines are
+  still relayed unchanged (#10).
+
 ## [0.14.0] - 2026-11-25
 
 ### Changed

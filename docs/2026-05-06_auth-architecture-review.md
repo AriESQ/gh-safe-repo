@@ -314,6 +314,22 @@ alignment.
 
 ### P9 — Multiple `gh auth` tokens for distinct accounts (multi-keyring)
 
+> **Correction (2026-11-27, #121).** The sample `gh auth status` below,
+> with a different "Git operations protocol" per account, cannot happen.
+> `gh` stores `git_protocol` per host (`hosts.github.com.git_protocol`):
+> `gh auth login -p` writes it at host level, `gh auth status` prints that
+> one host value next to every account, and `gh auth switch` does not
+> change it. So all accounts on a host share one protocol, and
+> `discover_transport()` already reads the right value; there is nothing
+> per-account to resolve. The real gap was that nothing checked that the
+> SSH key's account is the token's account: the `ls-remote` preflight
+> passes for any authenticated key. #121 replaced the SSH preflight with an
+> `ssh -T` identity check against the API user, added the `gh auth switch`
+> / `GH_TOKEN` hints to the owner-mismatch error, and names the acting user
+> in the `fix`/`audit` header. On HTTPS, `gh auth git-credential` follows
+> `GH_TOKEN`; other helpers do not, and are not checked. See
+> `docs/LEARNINGS.md`, "SSH Key Account vs. Token Account (#121)".
+
 **Setup**
 
 A single workstation has two GitHub accounts authenticated via `gh auth login`,

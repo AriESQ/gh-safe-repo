@@ -139,6 +139,35 @@ class TestBuildContext:
 
     @patch("gh_safe_repo.commands._common.GitHubClient")
     @patch("gh_safe_repo.commands._common.ConfigManager")
+    def test_owner_mismatch_hints_both_account_switches(self, MockConfig, MockClient, capsys):
+        """#121: name `gh auth switch -u` and the per-command GH_TOKEN override."""
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "alice"
+        MockClient.return_value = mock_client
+        MockConfig.return_value = MagicMock()
+
+        with pytest.raises(SystemExit):
+            build_context(self._make_args(), expected_owner="bob")
+        err = capsys.readouterr().err
+        assert "Owner 'bob' does not match authenticated user 'alice'" in err
+        assert "gh auth switch -u bob" in err
+        assert "GH_TOKEN=$(gh auth token --user bob) gh-safe-repo" in err
+
+    @patch("gh_safe_repo.commands._common.GitHubClient")
+    @patch("gh_safe_repo.commands._common.ConfigManager")
+    def test_context_carries_api_user(self, MockConfig, MockClient):
+        mock_client = MagicMock()
+        mock_client.get_owner.return_value = "alice"
+        mock_client.get_plan_name.return_value = "free"
+        MockClient.return_value = mock_client
+        MockConfig.return_value = MagicMock()
+
+        ctx = build_context(self._make_args(), expected_owner="acme",
+                            require_owner_match=False)
+        assert ctx.user == "alice"
+
+    @patch("gh_safe_repo.commands._common.GitHubClient")
+    @patch("gh_safe_repo.commands._common.ConfigManager")
     def test_owner_mismatch_allowed_when_not_required(self, MockConfig, MockClient):
         """With require_owner_match=False, different owners should be accepted."""
         mock_client = MagicMock()
@@ -259,12 +288,35 @@ class TestCreateFlagValidation:
                  patch("gh_safe_repo.commands.create.TagProtectionPlugin"), \
                  patch("builtins.input", return_value=answer or ""):
                 mock_ctx.return_value = MagicMock(
-                    client=mock_client, owner="alice", plan_name="free",
-                    is_paid_plan=False, config=make_config(),
+                    client=mock_client, owner="alice", user="alice",
+                    plan_name="free", is_paid_plan=False, config=make_config(),
                 )
                 with pytest.raises(SystemExit) as exc_info:
                     main()
         return exc_info.value.code, mock_client, MockRepo
+
+    def test_preflight_checks_against_api_user(self, tmp_path):
+        """#121: the SSH identity check compares with the token's account."""
+        mock_transport = MagicMock()
+        self._run_local_create(tmp_path, mock_transport, extra_args=["--yes"])
+        mock_transport.preflight.assert_called_once_with(expected_user="alice")
+
+    def test_ssh_identity_mismatch_aborts_before_repo_creation(self, tmp_path, capsys):
+        """A key for another account fails at preflight: exit 1, no repo."""
+        transport = GitTransport(protocol="ssh", source_dir=str(tmp_path))
+        with patch("gh_safe_repo.git_transport.GitTransport.run", return_value=MagicMock(
+            returncode=1, stdout="",
+            stderr="Hi bob! You've successfully authenticated, but GitHub does "
+                   "not provide shell access.",
+        )):
+            code, mock_client, MockRepo = self._run_local_create(
+                tmp_path, transport, extra_args=["--yes"],
+            )
+        assert code == 1
+        MockRepo.return_value.apply.assert_not_called()
+        mock_client.push_local.assert_not_called()
+        err = capsys.readouterr().err
+        assert "as 'bob'" in err and "for 'alice'" in err
 
     def test_credential_failure_aborts_before_repo_creation(self, tmp_path):
         """When pushing and git creds are missing, the run must fail
@@ -1583,7 +1635,8 @@ class TestAudit:
 
     REPO = TestFixVerification.REPO
 
-    def _run(self, plan, argv_extra=(), capsys=None):
+    def _run(self, plan, argv_extra=(), capsys=None, user="alice", repo=None,
+             target="alice/demo"):
         names = ["RepositoryPlugin", "ActionsPlugin", "BranchProtectionPlugin",
                  "SecurityPlugin", "TagProtectionPlugin", "ReleasesPlugin"]
         patches = [patch(f"gh_safe_repo.commands.fix.{n}") for n in names]
@@ -1596,13 +1649,13 @@ class TestAudit:
                 M.return_value = inst
             mocks["SecurityPlugin"].return_value.plan.return_value = plan
             client = MagicMock()
-            client.get_repo_data.return_value = dict(self.REPO)
-            argv = ["gh-safe-repo", "audit", "alice/demo", *argv_extra]
+            client.get_repo_data.return_value = dict(repo or self.REPO)
+            argv = ["gh-safe-repo", "audit", target, *argv_extra]
             with patch("sys.argv", argv), \
                  patch("gh_safe_repo.commands.fix.build_context") as ctx, \
                  patch("builtins.input") as prompt:
                 ctx.return_value = MagicMock(
-                    client=client, owner="alice", plan_name="free",
+                    client=client, owner=user, user=user, plan_name="free",
                     is_paid_plan=False, config=make_config(),
                 )
                 with pytest.raises(SystemExit) as exc_info:
@@ -1642,6 +1695,34 @@ class TestAudit:
         assert code == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["summary"] == {"skip": 1}
+
+    # -- acting user in the header (#121) ----------------------------------
+
+    ORG_REPO = {
+        "id": 2, "full_name": "acme/widgets", "name": "widgets",
+        "owner": {"login": "acme", "type": "Organization"},
+        "private": True, "default_branch": "main",
+        "permissions": {"admin": True},
+    }
+
+    def test_header_names_acting_user_when_not_owner(self, capsys):
+        self._run(TestFixVerification._ok(TestFixVerification()),
+                  user="alice", repo=self.ORG_REPO, target="acme/widgets")
+        assert "Auditing acme/widgets as alice..." in capsys.readouterr().out
+
+    def test_header_omits_acting_user_for_own_repo_any_case(self, capsys):
+        self._run(TestFixVerification._ok(TestFixVerification()), user="ALICE")
+        out = capsys.readouterr().out
+        assert "Auditing alice/demo..." in out
+        assert " as " not in out.split("Auditing", 1)[1].splitlines()[0]
+
+    def test_header_acting_user_stays_off_json_stdout(self, capsys):
+        self._run(TestFixVerification._ok(TestFixVerification()), ["--json"],
+                  user="alice", repo=self.ORG_REPO, target="acme/widgets")
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["summary"] == {"skip": 1}
+        assert "Auditing acme/widgets as alice..." in captured.err
 
     def test_fix_dry_run_still_exits_0_on_drift(self, capsys):
         """`fix --dry-run` keeps the uniform dry-run contract (exit 0)."""

@@ -604,9 +604,11 @@ def run(args):
     # can't leave an empty repo behind. Run it after the scan and the prompt,
     # not before: a security-key touch proves only that the key answered then,
     # so the gap to the real push should be as short as possible (#79).
+    # Over SSH it also checks that the key's account is the token's (#121);
+    # create only targets the authenticated user, so that is ctx.user.
     if args.local_path or args.from_repo:
         try:
-            client.transport.preflight()
+            client.transport.preflight(expected_user=ctx.user)
         except AuthError as e:
             error(str(e))
             sys.exit(1)

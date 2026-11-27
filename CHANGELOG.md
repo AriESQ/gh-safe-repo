@@ -9,7 +9,30 @@ since the initial release.
 
 ## [Unreleased]
 
+### Added
+- `push`/`copy` over SSH now check which account the SSH key belongs to
+  before creating the repo (#121). The credential pre-flight runs `ssh -T
+  git@github.com` through the same ssh command the push uses and compares
+  the `Hi <login>!` answer, case-insensitively, with the API token's
+  account. A key for another account (or a deploy key) exits `1` with
+  nothing created, and the error lists the fixes: a per-directory
+  `core.sshCommand` via `includeIf`, a one-run `GIT_SSH_COMMAND`, an
+  `IdentityFile` in `~/.ssh/config`, or HTTPS. This replaces the SSH `git
+  ls-remote` probe, so a hardware key still needs one touch, and a missed
+  touch is now retried once here too. If the answer can't be read, a
+  warning says so and the previous `ls-remote` check runs instead. HTTPS is
+  not checked.
+- The owner-mismatch error from `new`/`push`/`copy` now suggests `gh auth
+  switch -u <owner>` and `GH_TOKEN=$(gh auth token --user <owner>)
+  gh-safe-repo ...`.
+- `fix`/`audit` name the acting account in the header when it is not the
+  repo's owner: `Auditing acme/widgets as alice...`. `--json` output is
+  unchanged (the header goes to stderr there, as before).
+
 ### Fixed
+- A `GIT_SSH_COMMAND` in the environment now wins over `core.sshCommand`,
+  as it does in git. Before, the discovered `core.sshCommand` overwrote it
+  for the push.
 - The closing "Done" banner's top and bottom borders were 2 and 1 columns shorter than its content rows, so the right edge did not line up.
 
 ## [0.15.1] - 2026-11-27

@@ -22,6 +22,7 @@ from ._common import (
     _YELLOW,
     _c,
     _resolve_branches,
+    acting_user_note,
     add_common_args,
     add_mutation_args,
     build_context,
@@ -197,7 +198,11 @@ def run(args, audit=False):
     if canonical_owner and canonical_name:
         owner, repo_name = canonical_owner, canonical_name
 
-    _info(f"\nAuditing {_BOLD}{safe_display(f'{owner}/{repo_name}')}{_RESET}...")
+    # Name the acting account when it is not the owner (an org, or a repo the
+    # active gh account collaborates on), so a wrong-account run is visible
+    # without --debug (#121).
+    acting = safe_display(acting_user_note(owner, ctx.user))
+    _info(f"\nAuditing {_BOLD}{safe_display(f'{owner}/{repo_name}')}{_RESET}{acting}...")
 
     # Verify the authenticated user has admin access (required to change settings)
     if not repo_data.get("permissions", {}).get("admin", False):

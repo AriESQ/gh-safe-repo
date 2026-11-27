@@ -599,6 +599,76 @@ cause:
   discovered `core.sshCommand` (or "not set") to publickey failures; a
   missed-touch hint takes priority when both apply.
 
+## SSH Key Account vs. Token Account (#121)
+
+Persona P9 (two accounts under one `GH_CONFIG_DIR`) was first written up as
+"the git protocol follows the active account". It doesn't, because there is
+no per-account protocol:
+
+- **`git_protocol` is per host.** gh's Go source (`internal/config/config.go`,
+  `completeLogin`) writes `hosts.github.com.git_protocol` at host level on
+  `gh auth login -p`; `gh auth status` prints that one value next to every
+  account on the host; `gh auth switch` does not touch it. The review doc's
+  sample status with `ssh` for one account and `https` for the other is
+  impossible (correction note added to its P9 section).
+  `_gh_get_protocol()` was already right.
+- **`gh auth git-credential` honours `GH_TOKEN`.** The helper asks
+  `AuthConfig.ActiveToken`, which returns an env token first, so on HTTPS
+  `GH_TOKEN=$(gh auth token --user acct-b) gh-safe-repo push ...` makes the
+  API *and* the push use `acct-b`, provided the env reaches git (it does:
+  `transport.env()` starts from `os.environ`). osxkeychain and GCM return
+  whatever they stored, so HTTPS is still unchecked. The token-in-URL path
+  always uses the API token.
+
+The real gap was SSH: the push uses whichever key ssh picks, and the old
+`git ls-remote` probe against a nonexistent repo passes for any key that
+authenticates, since "Repository not found" comes back either way. The repo
+was then created as the token's account and the push failed (or, worse,
+succeeded as the other account if it had write access).
+
+What `preflight(expected_user=...)` does over SSH now:
+
+- **Replace, not add.** `ssh -T git@github.com` both authenticates and
+  names the account (`Hi <login>! You've successfully authenticated...`,
+  exit 1 by design; `Hi owner/repo!` for a deploy key). Running it instead
+  of `ls-remote` keeps one connection, so one `*-SK` touch. It is safe to
+  replace because a key that authenticates as the token's account can push
+  to a repo that account is about to create; the only thing `ls-remote`
+  proved beyond that was "the git transport works", and the push itself
+  runs through `run_remote()` with its own retry and recovery text.
+- **Same ssh command as git.** git runs `GIT_SSH_COMMAND` through the shell
+  as `sh -c '<cmd> "$@"' '<cmd>' <args>`; `ssh_probe_command()` does the
+  same with `-T git@<host>`, using `transport.env()`, so `core.sshCommand`
+  from `source_dir` applies. A bare `GIT_SSH` (plink, wrappers) has its own
+  argv rules, so no probe is attempted there.
+- **`GIT_SSH_COMMAND` precedence fixed on the way.** git prefers the env
+  var over `core.sshCommand`; `discover_transport()` used to read only the
+  config and then `env()` overwrote the env var with it. Now the env var
+  wins, which also makes the one-run `GIT_SSH_COMMAND=... gh-safe-repo`
+  remediation actually work.
+- **Missed touch retried once** (same rule as `run_remote()`, #79). The old
+  `ls-remote` preflight never retried.
+- **Unreadable answer → warn and fall back to `ls-remote`.** A banner from
+  a jump host, a wrapper, `ssh` not on PATH or `GIT_SSH`: we can't tell the
+  account, but failing the run would break setups that worked before #121.
+  Continuing with no check at all would be weaker than before. Falling back
+  keeps the pre-#121 guarantee, costs a second touch only on this rare
+  path, and the warning names the account the key should belong to.
+  Recognizable failures (publickey, host key, timeout) still raise the same
+  AuthErrors as before, via the shared `_raise_ssh_failure()`.
+- **Compared with the API user, not the target owner.** `create` only
+  targets the authenticated user anyway (owner check), so `ctx.user` (new
+  `CLIContext` field) is the comparison. Case-insensitive: logins are.
+
+Also in #121: the owner-mismatch error now prints `gh auth switch -u
+<owner>` and `GH_TOKEN=$(gh auth token --user <owner>) gh-safe-repo ...`
+(note `GITHUB_TOKEN` still wins in `GitHubClient`), and `fix`/`audit` print
+`Auditing <owner>/<repo> as <user>...` when the token's account is not the
+owner. That line goes through `info()`, so `--json` stdout is unchanged.
+
+Not verified live: the exact `Hi` text under a second real account with a
+distinct key, and the deploy-key wording. Unit tests mock `ssh -T`.
+
 ## Three-Way Merge for `fix` / `audit` (PRESERVE, `--all`)
 
 Implements the design in `docs/2026-03-28-user-stories.md` ("Architectural

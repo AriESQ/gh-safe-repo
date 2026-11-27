@@ -42,12 +42,18 @@ def _c(code, text):
 
 @dataclass
 class CLIContext:
-    """Centralises auth + config + owner + plan detection for create/fix."""
+    """Centralises auth + config + owner + plan detection for create/fix.
+
+    `owner` and `user` are both the API token's login. `user` names that
+    role explicitly (the acting account, #121); `owner` is kept because
+    `create` uses it as the canonical-cased repo owner.
+    """
     client: GitHubClient
     owner: str
     plan_name: str
     is_paid_plan: bool
     config: ConfigManager
+    user: str = ""
 
 
 def parse_repo_arg(arg):
@@ -105,9 +111,7 @@ def build_context(args, expected_owner, require_owner_match=True):
         sys.exit(1)
 
     if require_owner_match and actual_owner.lower() != expected_owner.lower():
-        error(
-            f"Owner '{expected_owner}' does not match authenticated user '{actual_owner}'"
-        )
+        error(owner_mismatch_message(expected_owner, actual_owner))
         sys.exit(1)
 
     # Detect plan level
@@ -125,7 +129,28 @@ def build_context(args, expected_owner, require_owner_match=True):
         plan_name=plan_name,
         is_paid_plan=is_paid_plan,
         config=config,
+        user=actual_owner,
     )
+
+
+def owner_mismatch_message(expected_owner, actual_owner):
+    """The `new`/`push`/`copy` owner-check error, with both ways to switch (#121)."""
+    return (
+        f"Owner '{expected_owner}' does not match authenticated user '{actual_owner}'.\n"
+        f"  If '{expected_owner}' is another account logged in to gh, either:\n"
+        f"  - make it the active account: gh auth switch -u {expected_owner}\n"
+        f"  - or use its token for one run: "
+        f"GH_TOKEN=$(gh auth token --user {expected_owner}) gh-safe-repo ...\n"
+        "  Over SSH the push uses your SSH key, not the token; the pre-flight "
+        "checks that the key belongs to the same account."
+    )
+
+
+def acting_user_note(target_owner, user):
+    """`as <user>` for the fix/audit header when the token's account is not the owner."""
+    if user and target_owner and user.lower() != target_owner.lower():
+        return f" as {user}"
+    return ""
 
 
 def add_common_args(parser, *, json_flag=True, json_help=None, global_defaults=False):

@@ -508,8 +508,9 @@ def _print_banner(title, inner, colour, file=None):
     # Banner lines can name a local branch or path: sanitize before measuring.
     inner = "\n".join(safe_display(line) for line in inner.split("\n"))
     width = max(len(line) for line in inner.splitlines()) + 2
-    top    = f"╭─ {title} " + "─" * (width - len(title) - 3) + "╮"
-    bottom = "╰" + "─" * (width + 1) + "╯"
+    # Content rows are "│ " + width + " │" = width + 4 columns; match them.
+    top    = f"╭─ {title} " + "─" * (width - len(title) - 1) + "╮"
+    bottom = "╰" + "─" * (width + 2) + "╯"
     print(f"\n{colour}{top}{_RESET}", file=out)
     for line in inner.splitlines():
         print(f"{colour}│{_RESET} {line.ljust(width)} {colour}│{_RESET}", file=out)

@@ -33,6 +33,7 @@ since the initial release.
 - A `GIT_SSH_COMMAND` in the environment now wins over `core.sshCommand`,
   as it does in git. Before, the discovered `core.sshCommand` overwrote it
   for the push.
+- The closing "Done" banner's top and bottom borders were 2 and 1 columns shorter than its content rows, so the right edge did not line up.
 
 ## [0.15.1] - 2026-11-27
 

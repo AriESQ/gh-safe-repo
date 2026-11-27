@@ -255,19 +255,26 @@ class GitHubClient:
         except (APIError, ValueError):
             return None
 
-    def copy_repo(self, owner, source_repo, dest_repo, default_branch=None):
+    def copy_repo(self, *, source_owner, source_repo, dest_owner, dest_repo,
+                  default_branch=None):
         """
-        Mirror-clone source_repo and push all refs to dest_repo.
-        Both repos must belong to owner.
-        Uses the user's git credentials via self.transport.
+        Mirror-clone source_owner/source_repo and push all refs to
+        dest_owner/dest_repo. Uses the user's git credentials via
+        self.transport.
+
+        The owners are separate keyword-only arguments on purpose (#168):
+        `copy some-org/src me/dst` once pushed to some-org/dst, and a
+        mirror push to a repo the user can write overwrites and deletes
+        its refs. Pass the canonical login (ctx.owner) as dest_owner;
+        git push URLs are case-sensitive.
 
         default_branch (the source's) is then set on dest_repo: a mirror
         push does not carry HEAD, so GitHub would otherwise pick its own
         default (#77 verifies it).
         """
         transport = self._require_transport()
-        source_url = transport.remote_url(owner, source_repo)
-        dest_url = transport.remote_url(owner, dest_repo)
+        source_url = transport.remote_url(source_owner, source_repo)
+        dest_url = transport.remote_url(dest_owner, dest_repo)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mirror_path = os.path.join(tmpdir, "mirror")
@@ -291,7 +298,7 @@ class GitHubClient:
                 ))
 
         if default_branch:
-            self.call_api("PATCH", self.repo_path(owner, dest_repo),
+            self.call_api("PATCH", self.repo_path(dest_owner, dest_repo),
                           {"default_branch": default_branch})
 
     def push_local(self, local_path: str, owner: str, dest_repo: str,

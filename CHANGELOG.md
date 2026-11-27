@@ -9,6 +9,16 @@ since the initial release.
 
 ## [Unreleased]
 
+### Fixed
+- `copy <src-owner>/<src> <dest-owner>/<dest>` with two different owners
+  created `<dest-owner>/<dest>` but then mirror-pushed to
+  `<src-owner>/<dest>` and set the default branch there (#168). If that repo
+  existed and you could write to it, `git push --mirror` overwrote and
+  deleted its branches and tags to match the source: data loss in a repo you
+  never named. Otherwise the push failed and the new repo was left empty. The
+  push and the default-branch update now go to the destination owner, using
+  the authenticated login's exact casing. Same-owner copies were not affected.
+
 ### Internal
 - `.github/gh-safe-repo.ini` records where this repository is deliberately
   stricter than the defaults (`[actions] verified_allowed = false`), so

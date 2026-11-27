@@ -1315,3 +1315,21 @@ retry. Still untested: `enforced_by_owner: true` (needs an org, #9).
 Unverified until a real tag push: the reusable-workflow call under this
 repo's Actions policy, the artifact round trip, `gh release view`'s
 "release not found" text on the runner's gh, and `isImmutable` in its JSON.
+
+## `copy` Pushed to the Source Owner (#168)
+
+- `GitHubClient.copy_repo` took one `owner` for both sides ("both repos must
+  belong to owner"), so `copy some-org/src me/dst` created `me/dst` and then
+  ran `git push --mirror` at `some-org/dst`, plus the default-branch `PATCH`.
+  A mirror push to a writable repo deletes every ref the source lacks, so
+  this could destroy an unrelated repo.
+- Tests missed it because every `copy` test used one owner, or mocked
+  `copy_repo` away entirely. The fix makes the owners keyword-only
+  (`source_owner=`, `dest_owner=`), so a positional call raises `TypeError`
+  rather than silently mixing them up. The regression tests in
+  `tests/test_cli.py` run the real `copy_repo` through `main()`, mocking only
+  git subprocesses and the API.
+- `dest_owner` is `ctx.owner` (the canonical login), as for `push` since
+  4c657fc: git push URLs are case-sensitive. The source owner keeps the
+  user's spelling. A clone reaches the repo either way, and the pre-flight scan,
+  source reads and `mirrored_ref_probes` all read the source owner.

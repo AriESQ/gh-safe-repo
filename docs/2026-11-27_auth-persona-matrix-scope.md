@@ -140,7 +140,7 @@ P7 (GHES), P8 (identity vs auth split, folded into #121), P11 (Windows), P13 (1P
 
 Source was not changed. Each finding that has an executable form is a strict `xfail` in `test_auth_personas.py`, so it flips to a failure once fixed.
 
-**F1. `copy` pushes to the source owner, not the destination (high).**
+**F1. `copy` pushes to the source owner, not the destination (high).** *Fixed in v0.15.1 (#168). The test below is now a plain regression test. The same release also replaced `--mirror` with a bare clone plus a refspec push (#171), so "mirror" in this section describes the old code.*
 - `create.py:649` calls `client.copy_repo(from_owner, from_repo, repo_name, …)`. `GitHubClient.copy_repo(owner, source_repo, dest_repo)` (`github_client.py:258`) builds *both* URLs and the follow-up `PATCH default_branch` from `owner`. The docstring even says "Both repos must belong to owner", but `copy`'s help says the source can be "any public repo, or one you can read".
 - **Other owner** (`copy bob/src alice/dst`): `alice/dst` is created and configured, then the mirror is pushed to `bob/dst` and `bob/dst`'s default branch is PATCHed.
   - If `bob/dst` doesn't exist, the push fails, the user gets the "repo created but empty" recovery text, and that text points at the *correct* destination.
@@ -229,8 +229,8 @@ Nothing in the current suite needs the account. CI stays token-free.
 
 ## Next steps when this is picked up
 
-1. File or fix F1 (it can damage another repo) and F6 (cheap); each strict xfail flips when fixed.
-2. Add P9 personas once #121 merges (see the P9 placeholder above).
+1. Fix F6 (cheap); its strict xfail flips when fixed. F1 is done (#168, v0.15.1).
+2. Add P9 personas once #121 (PR #173) merges. Its SSH pre-flight becomes `ssh -T git@github.com` instead of `ls-remote`, so `FakeWorld` needs an `ssh -T` handler (`Hi <login>!`) before the SSH personas pass on top of it.
 3. Decide F4 and F8 wording; add `Likely cause:` for SAML (F5) and the workflow-scope rejection.
 4. Correct the review doc (§1a token order, P5 trace, P6 "identical to P4", P4 "no gh installed") and the LEARNINGS P6 claim.
 5. Build the live tier once the test account exists.

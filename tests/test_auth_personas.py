@@ -449,9 +449,6 @@ class TestInvariants:
     pytest.param("alice", "bob/src", id="other-owner"),
     pytest.param("AliceDev", "alicedev/src", id="owner-casing"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "finding F1: copy_repo() builds the destination URL from the SOURCE owner "
-    "(create.py passes from_owner), so the mirror goes to <src-owner>/<dst>"))
 def test_copy_pushes_to_destination_owner(run, login, source):
     p = dataclasses.replace(P2, login=login, gh_token="gho_x",
                             repos={source: {}})

@@ -9,6 +9,8 @@ since the initial release.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-27
+
 ### Fixed
 - `copy <src-owner>/<src> <dest-owner>/<dest>` with two different owners
   created `<dest-owner>/<dest>` but then mirror-pushed to

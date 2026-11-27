@@ -646,7 +646,9 @@ def run(args):
             # A mirror push carries no HEAD: set the source's default branch
             # explicitly, and protect that branch rather than the name the
             # empty repo was created with.
-            client.copy_repo(from_owner, from_repo, repo_name,
+            # Push to the canonical destination owner, not the source's (#168).
+            client.copy_repo(source_owner=from_owner, source_repo=from_repo,
+                             dest_owner=owner, dest_repo=repo_name,
                              default_branch=source_default_branch)
             if source_default_branch:
                 bp_plugin.branches = [source_default_branch]

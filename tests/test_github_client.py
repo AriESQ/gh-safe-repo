@@ -152,7 +152,8 @@ class TestCopyRepo:
         client = self._make_client()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
-            client.copy_repo("alice", "private-repo", "public-repo")
+            client.copy_repo(source_owner="alice", source_repo="private-repo",
+                             dest_owner="alice", dest_repo="public-repo")
 
         # First subprocess.run call should be git clone --mirror
         clone_call = mock_run.call_args_list[0]
@@ -168,7 +169,8 @@ class TestCopyRepo:
         client = self._make_client()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
-            client.copy_repo("alice", "private-repo", "public-repo")
+            client.copy_repo(source_owner="alice", source_repo="private-repo",
+                             dest_owner="alice", dest_repo="public-repo")
 
         # Last subprocess.run call should be git push --mirror
         push_call = mock_run.call_args_list[-1]
@@ -181,7 +183,8 @@ class TestCopyRepo:
         client = self._make_client()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
-            client.copy_repo("alice", "private-repo", "public-repo")
+            client.copy_repo(source_owner="alice", source_repo="private-repo",
+                             dest_owner="alice", dest_repo="public-repo")
 
         # Middle call should be git remote set-url --push with dest URL
         set_url_call = mock_run.call_args_list[1]
@@ -196,7 +199,8 @@ class TestCopyRepo:
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = clone_error
             with pytest.raises(APIError) as exc_info:
-                client.copy_repo("alice", "private-repo", "public-repo")
+                client.copy_repo(source_owner="alice", source_repo="private-repo",
+                             dest_owner="alice", dest_repo="public-repo")
         assert "clone" in str(exc_info.value).lower()
 
     def test_copy_repo_sets_source_default_branch(self):
@@ -204,7 +208,8 @@ class TestCopyRepo:
         client = self._make_client()
         with patch("subprocess.run", return_value=make_completed_process()), \
              patch.object(client, "call_api", return_value=(200, "{}")) as mock_api:
-            client.copy_repo("alice", "src", "dest", default_branch="develop")
+            client.copy_repo(source_owner="alice", source_repo="src",
+                             dest_owner="alice", dest_repo="dest", default_branch="develop")
         mock_api.assert_called_once_with(
             "PATCH", "/repos/alice/dest", {"default_branch": "develop"}
         )
@@ -213,7 +218,8 @@ class TestCopyRepo:
         client = self._make_client()
         with patch("subprocess.run", return_value=make_completed_process()), \
              patch.object(client, "call_api") as mock_api:
-            client.copy_repo("alice", "src", "dest")
+            client.copy_repo(source_owner="alice", source_repo="src",
+                             dest_owner="alice", dest_repo="dest")
         mock_api.assert_not_called()
 
     def test_copy_repo_raises_api_error_on_push_failure(self):
@@ -225,7 +231,8 @@ class TestCopyRepo:
             # clone and set-url succeed, push fails
             mock_run.side_effect = [success, success, push_error]
             with pytest.raises(APIError) as exc_info:
-                client.copy_repo("alice", "private-repo", "public-repo")
+                client.copy_repo(source_owner="alice", source_repo="private-repo",
+                             dest_owner="alice", dest_repo="public-repo")
         assert "push" in str(exc_info.value).lower()
 
 
@@ -470,6 +477,57 @@ class TestCloneForScan:
         assert "clone" in str(exc_info.value).lower()
 
 
+class TestCopyRepoDistinctOwners:
+    """#168: the destination owner, not the source's, gets the push and PATCH."""
+
+    def _run(self, source_owner, dest_owner, protocol="https"):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_completed_process(stdout="ghp_token\n")
+            client = GitHubClient()
+        client._token = "ghp_testtoken"
+        client.transport = make_transport(protocol=protocol)
+        with patch("subprocess.run", return_value=make_completed_process()) as mock_run, \
+             patch.object(client, "call_api", return_value=(200, "{}")) as mock_api:
+            client.copy_repo(source_owner=source_owner, source_repo="src",
+                             dest_owner=dest_owner, dest_repo="dst",
+                             default_branch="main")
+        cmds = [c.args[0] for c in mock_run.call_args_list]
+        return cmds, mock_api
+
+    def test_clone_from_source_push_to_dest(self):
+        cmds, mock_api = self._run("some-org", "me")
+        clone = next(c for c in cmds if "clone" in c)
+        set_url = next(c for c in cmds if "set-url" in c)
+        assert "https://github.com/some-org/src.git" in clone
+        assert set_url[-1] == "https://github.com/me/dst.git"
+        assert not any("some-org/dst" in str(a) for c in cmds for a in c)
+        mock_api.assert_called_once_with(
+            "PATCH", "/repos/me/dst", {"default_branch": "main"}
+        )
+
+    def test_ssh_urls_use_distinct_owners(self):
+        cmds, _ = self._run("some-org", "me", protocol="ssh")
+        clone = next(c for c in cmds if "clone" in c)
+        set_url = next(c for c in cmds if "set-url" in c)
+        assert "git@github.com:some-org/src.git" in clone
+        assert set_url[-1] == "git@github.com:me/dst.git"
+
+    def test_case_differing_owner_uses_dest_casing(self):
+        cmds, mock_api = self._run("alice", "Alice")
+        clone = next(c for c in cmds if "clone" in c)
+        set_url = next(c for c in cmds if "set-url" in c)
+        assert "https://github.com/alice/src.git" in clone
+        assert set_url[-1] == "https://github.com/Alice/dst.git"
+        mock_api.assert_called_once_with(
+            "PATCH", "/repos/Alice/dst", {"default_branch": "main"}
+        )
+
+    def test_owners_are_keyword_only(self):
+        client = GitHubClient.__new__(GitHubClient)
+        with pytest.raises(TypeError):
+            client.copy_repo("alice", "src", "dst")
+
+
 class TestCopyRepoUrlConstruction:
     """SSH transport produces git@github.com URLs and never injects the token."""
 
@@ -481,7 +539,8 @@ class TestCopyRepoUrlConstruction:
         client.transport = make_transport(protocol="ssh")
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
-            client.copy_repo("alice", "src", "dst")
+            client.copy_repo(source_owner="alice", source_repo="src",
+                             dest_owner="alice", dest_repo="dst")
         urls_in_calls = [
             str(arg) for call_ in mock_run.call_args_list for arg in call_.args[0]
             if str(arg).startswith(("git@github.com:", "https://github.com/"))

@@ -12,7 +12,7 @@ import pytest
 
 from gh_safe_repo.git_transport import GitTransport
 
-from gh_safe_repo.github_client import LocalWiring
+from gh_safe_repo.github_client import GitHubClient, LocalWiring
 
 from gh_safe_repo.errors import APIError, AuthError
 from gh_safe_repo.commands._common import (
@@ -2450,8 +2450,9 @@ class TestCreateVerification:
         assert "✓ code/branches" in out and "✓ code/tags" in out
         assert "✓ repo/default_branch" in out
         # The source's default branch is set explicitly after the mirror.
-        client.copy_repo.assert_called_once_with("alice", "src", "demo",
-                                                 default_branch="main")
+        client.copy_repo.assert_called_once_with(
+            source_owner="alice", source_repo="src",
+            dest_owner="alice", dest_repo="demo", default_branch="main")
 
     def test_from_missing_ref_exits_1(self, capsys):
         refs = {("src", "heads"): {"main": "a1", "dev": "b2"},
@@ -2468,6 +2469,61 @@ class TestCreateVerification:
         code, out, _ = self._run_from_refs(capsys, {}, repo={"default_branch": "dev"})
         assert code == 3
         assert "gh repo edit alice/demo --default-branch main" in out
+
+    def _run_copy_real_client_method(self, capsys, source):
+        """`copy <source> alice/demo` through main() with the real
+        GitHubClient.copy_repo bound to the mock client: only git
+        subprocesses and the API are mocked (#168)."""
+        client = self._client()
+        transport = GitTransport(protocol="https", source_dir="/tmp/x",
+                                 ssh_command=None, has_credential_helper=True)
+        client.copy_repo.side_effect = (
+            lambda *a, **kw: GitHubClient.copy_repo(client, *a, **kw)
+        )
+        client._require_transport.side_effect = lambda: client.transport
+        client.repo_path.side_effect = GitHubClient.repo_path
+        client.call_api.return_value = (200, "{}")
+        with patch("gh_safe_repo.git_transport.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")) as run:
+            code, _, client, _ = self._run(
+                repo_plan=self._repo_plan(), client=client,
+                source=("copy", source),
+                extra_patches=[
+                    patch("gh_safe_repo.commands.create.discover_transport",
+                          return_value=transport),
+                    patch.object(GitTransport, "preflight"),
+                    patch("gh_safe_repo.commands.create.run_preflight_scan",
+                          return_value=ScanDecision(proceed=True)),
+                ],
+            )
+        capsys.readouterr()
+        cmds = [c.args[0] for c in run.call_args_list]
+        clone = next(c for c in cmds if "clone" in c and "--mirror" in c)
+        set_url = next(c for c in cmds if "set-url" in c)
+        patches = [c for c in client.call_api.call_args_list
+                   if c.args[:1] == ("PATCH",)
+                   and c.args[2:3] == ({"default_branch": "main"},)]
+        return code, clone, set_url, patches, cmds
+
+    def test_copy_distinct_owners_pushes_to_destination(self, capsys):
+        """#168: `copy some-org/src alice/demo` must not push to some-org/demo."""
+        code, clone, set_url, patches, cmds = self._run_copy_real_client_method(
+            capsys, "some-org/src")
+        assert code == 0
+        assert "https://github.com/some-org/src.git" in clone
+        assert set_url[-1] == "https://github.com/alice/demo.git"
+        assert not any("some-org/demo" in str(a) for c in cmds for a in c)
+        assert [c.args[1] for c in patches] == ["/repos/alice/demo"]
+
+    def test_copy_case_differing_source_owner_pushes_canonical(self, capsys):
+        """The destination uses the canonical login (ctx.owner), not the
+        source owner's spelling."""
+        code, clone, set_url, patches, _ = self._run_copy_real_client_method(
+            capsys, "ALICE/src")
+        assert code == 0
+        assert "https://github.com/ALICE/src.git" in clone
+        assert set_url[-1] == "https://github.com/alice/demo.git"
+        assert [c.args[1] for c in patches] == ["/repos/alice/demo"]
 
 
 class TestConfirmationPromptUnattended:

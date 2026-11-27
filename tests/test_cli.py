@@ -437,8 +437,16 @@ class TestCreateFlagValidation:
             ["copy", "ariesq/src", "ariesq/my-repo"], "copy_repo", capsys,
         )
         assert code == 1
-        assert "git clone --mirror git@github.com:ariesq/src.git" in err
-        assert "push --mirror git@github.com:AriESQ/my-repo.git" in err
+        # #171: the printed recovery is the bare clone + one explicit-refspec
+        # push that copy itself runs; `--mirror` hits GitHub's hidden refs.
+        assert "  git clone --bare git@github.com:ariesq/src.git my-repo.git\n" in err
+        assert ("  git -C my-repo.git push git@github.com:AriESQ/my-repo.git "
+                "'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'\n") in err
+        assert "--mirror" not in err
+        assert "gh-safe-repo fix AriESQ/my-repo --yes" in err
+        # Some refs may have landed before the failure: never claim "empty".
+        assert "is empty" not in err
+        assert "may be empty or hold only some branches and tags" in err
 
     def test_from_scan_clone_publickey_names_ssh_config_dir(self, capsys):
         """#100: a `mirror` clone that fails with a plain publickey error says
@@ -2462,8 +2470,10 @@ class TestCreateVerification:
         code, out, _ = self._run_from_refs(capsys, refs)
         assert code == 1
         assert "✗ code/tags" in out
-        assert ("git clone --mirror git@github.com:alice/src.git demo.git && "
-                "git -C demo.git push --mirror git@github.com:alice/demo.git") in out
+        assert ("Copy it again: git clone --bare git@github.com:alice/src.git demo.git && "
+                "git -C demo.git push git@github.com:alice/demo.git "
+                "'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'") in out
+        assert "--mirror" not in out
 
     def test_from_wrong_default_branch_exits_3(self, capsys):
         code, out, _ = self._run_from_refs(capsys, {}, repo={"default_branch": "dev"})
@@ -2498,7 +2508,7 @@ class TestCreateVerification:
             )
         capsys.readouterr()
         cmds = [c.args[0] for c in run.call_args_list]
-        clone = next(c for c in cmds if "clone" in c and "--mirror" in c)
+        clone = next(c for c in cmds if "clone" in c and "--bare" in c)
         set_url = next(c for c in cmds if "set-url" in c)
         patches = [c for c in client.call_api.call_args_list
                    if c.args[:1] == ("PATCH",)
@@ -2905,7 +2915,7 @@ class TestCopyFromEmptySource:
         mocks["RepositoryPlugin"].return_value.apply.assert_not_called()
         client.copy_repo.assert_not_called()
         client.transport.preflight.assert_not_called()
-        assert "Code mirrored successfully" not in out
+        assert "Code copied successfully" not in out
 
     def test_unreadable_source_refs_do_not_block(self, capsys):
         """A failed read is not proof the source is empty."""

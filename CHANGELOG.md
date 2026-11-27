@@ -18,6 +18,23 @@ since the initial release.
   never named. Otherwise the push failed and the new repo was left empty. The
   push and the default-branch update now go to the destination owner, using
   the authenticated login's exact casing. Same-owner copies were not affected.
+- `copy` failed on any source repo with pull requests (#171). It cloned with
+  `git clone --mirror` and pushed with `git push --mirror`, which also sent
+  GitHub's read-only `refs/pull/*`; GitHub rejected them (`deny updating a
+  hidden ref`), so the run exited `1` after the branches and tags had
+  landed, skipping branch/tag protection and verification. `copy` now
+  clones with `git clone --bare` (no pull refs, and no download of their
+  objects) and pushes every branch and tag in one `git push` with
+  `refs/heads/*:refs/heads/*` and `refs/tags/*:refs/tags/*`, never
+  `--mirror`. Pull requests are not copied. The plan row now reads
+  `Copy all branches and tags from <src>` and the success line
+  `Code copied successfully.`
+- After a failed code push, `push` and `copy` no longer say the new repo
+  "is empty": a push can land some refs before failing. The message says it
+  may be empty or hold only some branches and tags. `copy`'s printed
+  recovery commands (and the `code/branches`/`code/tags` remediation) are
+  now the bare clone and explicit-refspec push, which work; the old
+  `--mirror` commands failed the same way.
 
 ### Internal
 - `.github/gh-safe-repo.ini` records where this repository is deliberately

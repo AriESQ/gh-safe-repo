@@ -44,7 +44,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 **`ChangeCategory.SCAN` is needed for plan output, not just for completeness.** The `print_plan()` table uses `change.category.value` as a display column. Without the SCAN category, the plan entry for the pre-flight scan would need to be forced into an existing category (e.g., FILE), which would be misleading. The new category makes the plan output self-describing.
 
-**`clone_for_scan` uses a full clone (no `--depth`), unlike `copy_repo` which uses `--mirror`.** truffleHog's `git` subcommand must walk the full commit graph to find secrets that were introduced and later deleted — a shallow clone would miss them entirely. `copy_repo` uses `--mirror` to faithfully replicate all refs and history. The two methods are intentionally separate with different clone strategies.
+**`clone_for_scan` uses a full clone (no `--depth`), unlike `copy_repo` which uses `--bare`.** truffleHog's `git` subcommand must walk the full commit graph to find secrets that were introduced and later deleted — a shallow clone would miss them entirely. `copy_repo` originally used `--mirror` to replicate all refs; since #171 it uses `--bare` (every branch and tag, no `refs/pull/*`). The two methods are intentionally separate with different clone strategies.
 
 ## Phase 4
 
@@ -90,7 +90,7 @@ Technical notes accumulated during development. Moved from CLAUDE.md to keep the
 
 ## `--local` Source Flag (historical; now `publish`)
 
-**`push_local()` uses `git clone <local_path>` not `--mirror` for git repos.** `copy_repo()` uses `--mirror` because all refs (including remotes) must be preserved. `push_local()` uses a regular clone so the working copy has a clean ref structure; then `push --all --tags` pushes all local branches and tags to the new remote.
+**`push_local()` uses `git clone <local_path>` not `--mirror` for git repos.** `copy_repo()` used `--mirror` at the time (replaced by `--bare` plus explicit refspecs in #171, because a mirror also carries GitHub's unpushable `refs/pull/*`). `push_local()` uses a regular clone so the working copy has a clean ref structure; then `push --all --tags` pushes all local branches and tags to the new remote.
 
 **`git diff --cached --quiet` distinguishes empty from non-empty staged trees.** For plain directories (no `.git`), after `git init` + `git add -A`, exit code 0 means nothing was staged (empty directory) and we return early.
 
@@ -492,8 +492,9 @@ object; the peeled commit is only reachable through a second `GET
 git/tags/{sha}`. Locally, `for-each-ref --format=%(objectname)` gives the
 same tag object SHA (`%(*objectname)` would give the peeled commit). Both
 sides therefore use the ref's own target, and lightweight tags (`type:
-"commit"`) compare equal the same way. `--mirror` copies tag objects
-verbatim, so source and destination tag SHAs match too.
+"commit"`) compare equal the same way. A git push copies tag objects
+verbatim (`--mirror` then, `refs/tags/*:refs/tags/*` since #171), so source
+and destination tag SHAs match too.
 
 **`refname:short` is ambiguous.** When a branch and a tag share a name,
 `%(refname:short)` renders the branch as `heads/<name>`, which then became
@@ -510,8 +511,8 @@ endpoints answer 409 "Git Repository is empty" rather than `[]`;
 `matching_refs()` maps that to `{}` so it reads as "nothing pushed" (a
 mismatch), not as "could not read" (unknown).
 
-**A mirror push has no default branch.** `push --mirror` sends refs, not
-`HEAD`, so GitHub picked its own default for a `--from` repo, and branch
+**A mirror push has no default branch.** `push --mirror` (and the
+explicit-refspec push that replaced it in #171) sends refs, not `HEAD`, so GitHub picked its own default for a `--from` repo, and branch
 protection went to the name the empty repo was created with. `copy_repo()`
 now PATCHes the source's `default_branch` afterwards (as `push_local` does
 for `--local`), protection targets it, and `repo/default_branch` checks it
@@ -1333,3 +1334,31 @@ repo's Actions policy, the artifact round trip, `gh release view`'s
   4c657fc: git push URLs are case-sensitive. The source owner keeps the
   user's spelling. A clone reaches the repo either way, and the pre-flight scan,
   source reads and `mirrored_ref_probes` all read the source owner.
+
+## `copy` Failed on Repos With Pull Requests (#171)
+
+- `git clone --mirror` fetches `+refs/*:refs/*`, which on GitHub includes
+  the read-only `refs/pull/<n>/head` and `refs/pull/<n>/merge`. `git push
+  --mirror` then sends them, GitHub answers `! [remote rejected] ... (deny
+  updating a hidden ref)` for each, and git exits non-zero after the
+  branches and tags have already landed. Seen live with
+  `copy octocat/Hello-World <me>/<dest> --yes`. Any source with a PR hits it.
+- Checked locally (git 2.56, `file://` source holding `refs/pull/1/head` and
+  `refs/pull/1/merge` on a commit reachable from nothing else): `git clone
+  --bare` copies `refs/heads/*` and `refs/tags/*` (annotated tags keep their
+  tag object, lightweight tags their commit) and neither the pull refs nor
+  the PR-only commit's objects. A mirror clone of the same source has both
+  pull refs. So the bare clone also avoids downloading every PR's objects.
+- `copy_repo` now runs `clone --bare` and one `git push origin
+  'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'` (`COPY_REFSPECS`):
+  one connection, one security-key touch, and no `--mirror` prune
+  semantics, so #168's delete-extra-refs risk is gone too. The destination
+  is new, so there is nothing to prune.
+- `mirrored_ref_probes` already compared `heads` and `tags` only (via
+  `matching_refs`), so verification needed no change.
+- A failed single push can still be partial, so `_abort_on_push_failure` no
+  longer says the repo "is empty". The printed recovery (and the
+  `code/*` remediation) is the same bare clone and refspec push; the old
+  `--mirror` recovery failed exactly like the original run.
+- `tests/test_github_client.py` runs the real `copy_repo` against local repos
+  with pull refs, patching only `GitTransport.remote_url` to return paths.

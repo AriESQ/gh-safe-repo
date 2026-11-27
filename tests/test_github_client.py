@@ -148,36 +148,86 @@ class TestCopyRepo:
             client.transport = make_transport()
             return client
 
-    def test_copy_repo_calls_git_clone_mirror(self):
+    def test_copy_repo_calls_git_clone_bare(self):
         client = self._make_client()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
             client.copy_repo(source_owner="alice", source_repo="private-repo",
                              dest_owner="alice", dest_repo="public-repo")
 
-        # First subprocess.run call should be git clone --mirror
+        # First subprocess.run call: git clone --bare (not --mirror, which
+        # also fetches GitHub's refs/pull/*, #171)
         clone_call = mock_run.call_args_list[0]
         cmd = clone_call.args[0]
         assert cmd[0] == "git"
-        assert "--mirror" in cmd
+        assert cmd[1:3] == ["clone", "--bare"]
+        assert "--mirror" not in cmd
         assert any("private-repo.git" in arg for arg in cmd)
         # Never inject the OAuth token into git URLs — use the user's git creds.
         assert not any("x-access-token" in arg for arg in cmd)
         assert not any("ghp_testtoken" in arg for arg in cmd)
 
-    def test_copy_repo_calls_git_push_mirror(self):
+    def test_copy_repo_pushes_heads_and_tags_in_one_push(self):
+        """#171: one push, explicit refspecs for both namespaces, no --mirror
+        (a mirror push sends refs/pull/*, which GitHub rejects as hidden)."""
         client = self._make_client()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_completed_process()
             client.copy_repo(source_owner="alice", source_repo="private-repo",
                              dest_owner="alice", dest_repo="public-repo")
 
-        # Last subprocess.run call should be git push --mirror
-        push_call = mock_run.call_args_list[-1]
-        cmd = push_call.args[0]
-        assert cmd[0] == "git"
-        assert "--mirror" in cmd
-        assert "push" in cmd
+        cmds = [c.args[0] for c in mock_run.call_args_list]
+        pushes = [c for c in cmds if "push" in c]
+        assert len(pushes) == 1
+        assert pushes[0][-3:] == [
+            "origin", "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*",
+        ]
+        assert not any("--mirror" in c for c in cmds)
+
+    def test_copy_repo_copies_heads_and_tags_but_not_pull_refs(self, tmp_path):
+        """#171 against real git: a source with refs/pull/1/{head,merge}
+        lands on the destination with every branch and both tag kinds, and
+        no refs/pull. Only the URLs are redirected to local paths."""
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+        def git(*args):
+            return subprocess.run(["git", *args], check=True, env=env,
+                                  capture_output=True, text=True).stdout
+
+        src, dest = str(tmp_path / "src"), str(tmp_path / "dest.git")
+        git("init", "-q", "-b", "main", src)
+        git("-C", src, "commit", "-q", "--allow-empty", "-m", "one")
+        git("-C", src, "branch", "feature")
+        git("-C", src, "tag", "light")
+        git("-C", src, "tag", "-a", "ann", "-m", "annotated")
+        # A PR commit reachable only from refs/pull, like GitHub's.
+        git("-C", src, "commit", "-q", "--allow-empty", "-m", "pr")
+        git("-C", src, "update-ref", "refs/pull/1/head", "HEAD")
+        git("-C", src, "update-ref", "refs/pull/1/merge", "HEAD")
+        git("-C", src, "reset", "-q", "--hard", "HEAD~1")
+        git("init", "-q", "--bare", dest)
+
+        def refs(path):
+            out = git("-C", path, "for-each-ref", "--format=%(refname) %(objectname)")
+            return dict(line.split(" ") for line in out.splitlines())
+
+        client = self._make_client()
+        urls = {("alice", "src"): src, ("alice", "dest"): dest}
+        with patch.object(GitTransport, "remote_url",
+                          lambda self, o, r: urls[(o, r)]), \
+             patch.object(GitTransport, "env", lambda self: env):
+            client.copy_repo(source_owner="alice", source_repo="src",
+                             dest_owner="alice", dest_repo="dest")
+
+        expected = {k: v for k, v in refs(src).items()
+                    if not k.startswith("refs/pull/")}
+        assert set(expected) == {"refs/heads/feature", "refs/heads/main",
+                                 "refs/tags/ann", "refs/tags/light"}
+        # Same SHAs; the annotated tag keeps its tag object.
+        assert refs(dest) == expected
+        assert git("-C", dest, "cat-file", "-t", "refs/tags/ann").strip() == "tag"
 
     def test_copy_repo_sets_push_url_to_dest(self):
         client = self._make_client()

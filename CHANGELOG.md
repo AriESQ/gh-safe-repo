@@ -9,6 +9,12 @@ since the initial release.
 
 ## [Unreleased]
 
+### Internal
+- `.github/gh-safe-repo.ini` records where this repository is deliberately
+  stricter than the defaults (`[actions] verified_allowed = false`), so
+  `gh-safe-repo --config .github/gh-safe-repo.ini audit AriESQ/gh-safe-repo`
+  exits `0`. See "This repository's own policy" in the README.
+
 ## [0.15.0] - 2026-11-26
 
 ### Added

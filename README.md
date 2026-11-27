@@ -1240,6 +1240,23 @@ gh-safe-repo/
 └── tests/                    # See tests/README.md
 ```
 
+### This repository's own policy
+
+`.github/gh-safe-repo.ini` holds the settings where this repo is
+deliberately stricter than the defaults: today only
+`[actions] verified_allowed = false`, so only GitHub-owned actions run. Audit
+the repo with it:
+
+```bash
+gh-safe-repo --config .github/gh-safe-repo.ini audit AriESQ/gh-safe-repo
+```
+
+It exits `0` when the repo matches. Without `--config` the same audit exits
+`3` with `UPDATE actions verified_allowed False → True`, which is expected.
+The file is not at `./gh-safe-repo.ini` because that path is in the config
+lookup order: the test suite would read it, and it would override CI's
+`trufflehog_mode = off` config.
+
 ### Releasing
 
 The version bump and the tag stay local, so tags keep the maintainer's

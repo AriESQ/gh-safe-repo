@@ -183,18 +183,164 @@ class GitTransport:
 
     # ------------------------------------------------------------- preflight
 
-    def preflight(self) -> None:
+    def preflight(self, expected_user: Optional[str] = None) -> None:
         """Probe `<host>` with the same transport the next operation will use.
 
-        Runs `git ls-remote <preflight_url>` against a known-nonexistent
-        repo. GitHub returns "Repository not found" when authentication
-        succeeds but the repo doesn't exist — that's our success signal.
-        Permission/credential errors surface here instead of after the API
-        call has already created an empty repo on GitHub.
+        Over SSH with `expected_user` (the API token's login), this is the
+        identity probe (#121): `ssh -T git@<host>` through the push's own ssh
+        command, which proves the key authenticates *and* names the account
+        it authenticates as. A key for another account than the token's
+        raises AuthError before the repo is created. It replaces the
+        `ls-remote` probe instead of adding a second connection, because
+        every connection costs a touch on a FIDO (`*-SK`) key.
+
+        Otherwise (HTTPS, or no `expected_user`) it runs `git ls-remote
+        <preflight_url>` against a known-nonexistent repo. GitHub returns
+        "Repository not found" when authentication succeeds but the repo
+        doesn't exist — that's our success signal. HTTPS has no identity
+        probe: gh's credential helper follows GH_TOKEN, other helpers return
+        whatever account they stored.
 
         Raises AuthError with a protocol-specific remediation hint on
         recognizable failures; otherwise re-wraps unexpected errors.
         """
+        if self.protocol == "ssh" and expected_user:
+            login, detail = self.ssh_identity()
+            if login is not None:
+                self._check_ssh_identity(login, expected_user)
+                return
+            # An answer we can't read: never weaker than before #121. Warn,
+            # then run the plain access check (one more touch on a `*-SK`
+            # key, but only on this rare path).
+            print(safe_display(
+                "Warning: could not tell which GitHub account your SSH key "
+                f"authenticates as ({detail}). Falling back to a plain access "
+                f"check; make sure the key belongs to '{expected_user}'.",
+                multiline=True,
+            ), file=sys.stderr)
+        self._preflight_ls_remote()
+
+    def ssh_probe_command(self) -> Optional[list]:
+        """The `ssh -T git@<host>` argv that git would run for this transport.
+
+        git runs `GIT_SSH_COMMAND` (which `env()` sets from `core.sshCommand`)
+        through the shell as `sh -c '<cmd> "$@"' '<cmd>' <args>`; mirror that
+        so quoting, `~` and variable expansion behave the same. Returns None
+        when only `GIT_SSH` is set: it names a program (plink, a wrapper)
+        with its own argument conventions, so `-T` can't be assumed.
+        """
+        env = self.env()
+        target = f"git@{self.host}"
+        cmd = env.get("GIT_SSH_COMMAND")
+        if cmd:
+            return ["sh", "-c", f'{cmd} "$@"', cmd, "-T", target]
+        if env.get("GIT_SSH"):
+            return None
+        return ["ssh", "-T", target]
+
+    def ssh_identity(self):
+        """Ask the host which account the SSH key authenticates as.
+
+        Returns `(login, None)` for `Hi <login>! You've successfully
+        authenticated` (exit status 1, by GitHub's design), or `(None,
+        detail)` when the answer can't be read. A missed security-key touch
+        is retried once, like `run_remote()` (#79). Recognizable failures
+        (publickey, host key, timeout) raise AuthError the same way the
+        `ls-remote` probe does.
+        """
+        cmd = self.ssh_probe_command()
+        if cmd is None:
+            return None, "GIT_SSH is set, so the ssh command line is unknown"
+        timeout = PREFLIGHT_TIMEOUT["ssh"]
+        output = ""
+        for attempt in range(2):
+            try:
+                result = self.run(cmd, check=False, timeout=timeout, input="")
+            except FileNotFoundError as e:
+                return None, f"could not run ssh: {e}"
+            except subprocess.TimeoutExpired:
+                raise AuthError(
+                    f"ssh -T git@{self.host} timed out after {timeout}s. "
+                    + _SSH_TIMEOUT_CAUSE
+                )
+            output = "\n".join(
+                part.strip() for part in (result.stderr, result.stdout)
+                if isinstance(part, str) and part.strip()
+            )
+            match = _SSH_GREETING.search(output)
+            if match:
+                if self.debug:
+                    print(safe_display(f"[debug] SSH key authenticates as "
+                                       f"{match.group(1)}"), file=sys.stderr)
+                return match.group(1), None
+            if attempt == 0 and security_key_hint(output):
+                print("Your SSH security key did not confirm. "
+                      "Touch it when it blinks to retry...", file=sys.stderr)
+                continue
+            break
+        self._raise_ssh_failure(output, tool="ssh")
+        first = output.splitlines()[0] if output else "no output"
+        return None, f"exit {result.returncode}, ssh said: {first}"
+
+    def _check_ssh_identity(self, login: str, expected_user: str) -> None:
+        """Raise AuthError unless the SSH key's account is the API user."""
+        if "/" in login:
+            raise AuthError(
+                f"Your SSH key for {self.host} is a deploy key for {login}, "
+                f"so it cannot push to a new repository for "
+                f"'{expected_user}'. Nothing was created.\n"
+                + self._ssh_identity_remedies(expected_user)
+            )
+        if login.lower() == expected_user.lower():
+            return
+        raise AuthError(
+            f"Your SSH key authenticates to {self.host} as '{login}', but the "
+            f"API token is for '{expected_user}'. The repo would be created "
+            f"as '{expected_user}' and pushed as '{login}', so the push would "
+            "fail or run as the wrong account. Nothing was created.\n"
+            + self._ssh_identity_remedies(expected_user)
+            + f"\n  - Or, if '{login}' is the account you meant, switch the "
+            f"token to it: `gh auth switch -u {login}`."
+        )
+
+    def _ssh_identity_remedies(self, user: str) -> str:
+        found = f"`{self.ssh_command}`" if self.ssh_command else "not set"
+        return (
+            f"  Use the SSH key for '{user}' (core.sshCommand in "
+            f"{self.source_dir}: {found}):\n"
+            "  - per directory: set core.sshCommand (e.g. `ssh -i "
+            "~/.ssh/<key> -o IdentitiesOnly=yes`) in a git config that "
+            "includeIf loads for this directory;\n"
+            "  - for one run: GIT_SSH_COMMAND='ssh -i ~/.ssh/<key> -o "
+            "IdentitiesOnly=yes' gh-safe-repo ...;\n"
+            f"  - in ~/.ssh/config: IdentityFile under `Host {self.host}` "
+            f"(gh-safe-repo always connects to git@{self.host}, so a "
+            "separate Host alias is not used);\n"
+            "  - or push over HTTPS, where gh's credential helper follows "
+            "GH_TOKEN: `gh config set -h github.com git_protocol https` "
+            "then `gh auth setup-git`."
+        )
+
+    def _raise_ssh_failure(self, stderr: str, tool: str = "git") -> None:
+        """Raise the SSH AuthError for a recognizable failure, else return."""
+        lower = stderr.lower()
+        if "permission denied" in lower or "publickey" in lower:
+            raise AuthError(
+                "SSH authentication to "
+                f"git@{self.host} failed (Permission denied / publickey). "
+                "Add your SSH key to GitHub and load it into the agent, "
+                "or switch to HTTPS via `gh config set git_protocol https`.\n"
+                f"  {self.auth_hint(stderr)}\n"
+                f"  {tool} said: {stderr}"
+            )
+        if "host key verification failed" in lower:
+            raise AuthError(
+                f"Host key verification failed for {self.host}. "
+                "Run `ssh -T git@github.com` once to accept the host key.\n"
+                f"  {tool} said: {stderr}"
+            )
+
+    def _preflight_ls_remote(self) -> None:
         url = self.preflight_url()
         display_url = self.redact(url)
         timeout = PREFLIGHT_TIMEOUT.get(self.protocol, 15)
@@ -208,9 +354,7 @@ class GitTransport:
             raise AuthError(f"`git` not found on PATH: {e}")
         except subprocess.TimeoutExpired:
             if self.protocol == "ssh":
-                cause = ("If you use an SSH security key, it was probably "
-                         "waiting for a touch; otherwise check the network "
-                         "and your ssh-agent.")
+                cause = _SSH_TIMEOUT_CAUSE
             else:
                 cause = ("Network issue, or the credential helper is hanging "
                          "on a prompt.")
@@ -230,21 +374,7 @@ class GitTransport:
             return  # auth ok, repo just doesn't exist (expected)
 
         if self.protocol == "ssh":
-            if "permission denied" in lower or "publickey" in lower:
-                raise AuthError(
-                    "SSH authentication to "
-                    f"git@{self.host} failed (Permission denied / publickey). "
-                    "Add your SSH key to GitHub and load it into the agent, "
-                    "or switch to HTTPS via `gh config set git_protocol https`.\n"
-                    f"  {self.auth_hint(stderr)}\n"
-                    f"  git said: {stderr}"
-                )
-            if "host key verification failed" in lower:
-                raise AuthError(
-                    f"Host key verification failed for {self.host}. "
-                    "Run `ssh -T git@github.com` once to accept the host key.\n"
-                    f"  git said: {stderr}"
-                )
+            self._raise_ssh_failure(stderr)
         else:  # https
             if (
                 "could not read username" in lower
@@ -399,10 +529,13 @@ def discover_transport(
         )
 
     protocol = _gh_get_protocol(host)
-    ssh_command = (
-        _git_config_get(abs_source, "core.sshCommand")
-        if protocol == "ssh" else None
-    )
+    # git's own precedence: GIT_SSH_COMMAND in the environment beats
+    # core.sshCommand. Capturing it first keeps env() from overwriting a
+    # one-run override with the directory's config (#121).
+    env_ssh_command = os.environ.get("GIT_SSH_COMMAND") or None
+    ssh_command = None
+    if protocol == "ssh":
+        ssh_command = env_ssh_command or _git_config_get(abs_source, "core.sshCommand")
     helper = _has_credential_helper(abs_source) if protocol == "https" else False
 
     # `auto` falls back to token-in-URL only when the user has no credential
@@ -419,7 +552,10 @@ def discover_transport(
         cred = "token-in-URL" if use_token else "user credentials"
         print(f"[debug] git transport: {protocol} via {cred} (mode={mode})",
               file=sys.stderr)
-        if protocol == "ssh":
+        if protocol == "ssh" and env_ssh_command:
+            print(safe_display(f"[debug] ssh command from GIT_SSH_COMMAND: "
+                               f"{ssh_command}"), file=sys.stderr)
+        elif protocol == "ssh":
             print(safe_display(f"[debug] core.sshCommand from {abs_source}: "
                                f"{ssh_command or '(none)'}"), file=sys.stderr)
     return GitTransport(
@@ -432,6 +568,15 @@ def discover_transport(
         debug=debug,
     )
 
+
+_SSH_TIMEOUT_CAUSE = (
+    "If you use an SSH security key, it was probably waiting for a touch; "
+    "otherwise check the network and your ssh-agent."
+)
+
+# GitHub's answer to `ssh -T`: `Hi <login>!` for a user key, `Hi
+# <owner>/<repo>!` for a deploy key. Exit status is 1 either way.
+_SSH_GREETING = re.compile(r"\bHi ([^\s!]+)! You've successfully authenticated")
 
 _SK_SIGNING_FAILURE = re.compile(r"signing failed for \S*-SK\b", re.IGNORECASE)
 

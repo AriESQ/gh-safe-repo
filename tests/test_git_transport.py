@@ -545,6 +545,217 @@ class TestDiscoverTransport:
         assert os.path.isabs(t.source_dir)
 
 
+HI = ("Hi {}! You've successfully authenticated, but GitHub does not "
+      "provide shell access.")
+SK_MISS = ('sign_and_send_pubkey: signing failed for ED25519-SK "/k": invalid format\n'
+           "git@github.com: Permission denied (publickey).")
+
+
+def ssh_answer(stderr="", returncode=1, stdout=""):
+    return make_completed_process(stdout=stdout, stderr=stderr, returncode=returncode)
+
+
+class TestSshIdentityPreflight:
+    """#121: over SSH the preflight checks the key's account is the token's."""
+
+    def test_matching_login_passes_with_one_connection(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", return_value=ssh_answer(HI.format("alice"))) as m:
+            t.preflight(expected_user="alice")
+        # Replaces ls-remote: one ssh auth, so one touch on a *-SK key.
+        assert m.call_count == 1
+        assert m.call_args.args[0] == ["ssh", "-T", "git@github.com"]
+        assert m.call_args.kwargs["timeout"] == 45
+
+    def test_match_is_case_insensitive(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", return_value=ssh_answer(HI.format("AliCE"))):
+            t.preflight(expected_user="alice")
+
+    def test_mismatch_raises_with_remediation(self):
+        t = make_transport(protocol="ssh", source_dir="/work/b")
+        with patch("subprocess.run", return_value=ssh_answer(HI.format("acct-a"))):
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight(expected_user="acct-b")
+        msg = str(exc_info.value)
+        assert "as 'acct-a'" in msg and "for 'acct-b'" in msg
+        assert "Nothing was created" in msg
+        assert "includeIf" in msg and "core.sshCommand" in msg
+        assert "~/.ssh/config" in msg
+        assert "git_protocol https" in msg and "GH_TOKEN" in msg
+        assert "GIT_SSH_COMMAND=" in msg
+        assert "gh auth switch -u acct-a" in msg
+        assert "/work/b" in msg
+
+    def test_deploy_key_is_refused(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", return_value=ssh_answer(HI.format("alice/other"))):
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight(expected_user="alice")
+        assert "deploy key for alice/other" in str(exc_info.value)
+
+    def test_greeting_on_stdout_is_read_too(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run",
+                   return_value=ssh_answer(stdout=HI.format("alice"), stderr="")):
+            t.preflight(expected_user="alice")
+
+    def test_custom_ssh_command_runs_through_shell_like_git(self):
+        t = make_transport(protocol="ssh", ssh_command="ssh -i ~/.ssh/id_b -o IdentitiesOnly=yes")
+        with patch("subprocess.run", return_value=ssh_answer(HI.format("alice"))) as m:
+            t.preflight(expected_user="alice")
+        cmd = m.call_args.args[0]
+        assert cmd == [
+            "sh", "-c", 'ssh -i ~/.ssh/id_b -o IdentitiesOnly=yes "$@"',
+            "ssh -i ~/.ssh/id_b -o IdentitiesOnly=yes", "-T", "git@github.com",
+        ]
+        assert m.call_args.kwargs["env"]["GIT_SSH_COMMAND"] == (
+            "ssh -i ~/.ssh/id_b -o IdentitiesOnly=yes")
+
+    def test_inherited_git_ssh_command_is_used(self):
+        t = make_transport(protocol="ssh")
+        with patch.dict(os.environ, {"GIT_SSH_COMMAND": "ssh -i /k"}), \
+             patch("subprocess.run", return_value=ssh_answer(HI.format("alice"))) as m:
+            t.preflight(expected_user="alice")
+        assert m.call_args.args[0][:3] == ["sh", "-c", 'ssh -i /k "$@"']
+
+    def test_missed_touch_is_retried_once(self, capsys):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=[
+            ssh_answer(SK_MISS, returncode=255), ssh_answer(HI.format("alice")),
+        ]) as m:
+            t.preflight(expected_user="alice")
+        assert m.call_count == 2
+        assert "Touch it" in capsys.readouterr().err
+
+    def test_second_missed_touch_raises_touch_hint(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=[
+            ssh_answer(SK_MISS, returncode=255), ssh_answer(SK_MISS, returncode=255),
+        ]) as m:
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight(expected_user="alice")
+        assert m.call_count == 2
+        msg = str(exc_info.value)
+        assert "touch" in msg and "ssh said:" in msg
+
+    def test_publickey_failure_keeps_existing_message(self):
+        t = make_transport(protocol="ssh", source_dir="/tmp/elsewhere")
+        with patch("subprocess.run", return_value=ssh_answer(
+                "git@github.com: Permission denied (publickey).", returncode=255)) as m:
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight(expected_user="alice")
+        assert m.call_count == 1
+        msg = str(exc_info.value)
+        assert "Permission denied / publickey" in msg and "/tmp/elsewhere" in msg
+
+    def test_host_key_failure(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", return_value=ssh_answer(
+                "Host key verification failed.", returncode=255)):
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight(expected_user="alice")
+        assert "host key" in str(exc_info.value).lower()
+
+    def test_timeout_names_security_key(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ssh", 45)):
+            with pytest.raises(AuthError) as exc_info:
+                t.preflight(expected_user="alice")
+        msg = str(exc_info.value)
+        assert "ssh -T git@github.com timed out after 45s" in msg and "touch" in msg
+
+    def test_unparseable_output_warns_and_falls_back_to_ls_remote(self, capsys):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=[
+            ssh_answer("Welcome to the corporate bastion", returncode=0),
+            make_completed_process(returncode=128, stderr="ERROR: Repository not found."),
+        ]) as m:
+            t.preflight(expected_user="alice")  # does not raise
+        assert m.call_count == 2
+        assert m.call_args_list[1].args[0][:2] == ["git", "ls-remote"]
+        err = capsys.readouterr().err
+        assert "could not tell which GitHub account" in err
+        assert "corporate bastion" in err and "'alice'" in err
+
+    def test_unparseable_then_failing_ls_remote_still_raises(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=[
+            ssh_answer("", returncode=255),
+            make_completed_process(returncode=128, stderr="weird failure"),
+        ]):
+            with pytest.raises(AuthError, match="failed unexpectedly"):
+                t.preflight(expected_user="alice")
+
+    def test_ssh_not_found_falls_back(self, capsys):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=[
+            FileNotFoundError("ssh"),
+            make_completed_process(returncode=128, stderr="ERROR: Repository not found."),
+        ]) as m:
+            t.preflight(expected_user="alice")
+        assert m.call_count == 2
+        assert "could not run ssh" in capsys.readouterr().err
+
+    def test_git_ssh_program_falls_back_without_running_ssh(self, capsys):
+        t = make_transport(protocol="ssh")
+        env = {k: v for k, v in os.environ.items() if k != "GIT_SSH_COMMAND"}
+        env["GIT_SSH"] = "/usr/bin/plink"
+        with patch.dict(os.environ, env, clear=True), \
+             patch("subprocess.run", return_value=make_completed_process(
+                 returncode=128, stderr="ERROR: Repository not found.")) as m:
+            t.preflight(expected_user="alice")
+        assert m.call_count == 1
+        assert m.call_args.args[0][:2] == ["git", "ls-remote"]
+        assert "GIT_SSH is set" in capsys.readouterr().err
+
+    def test_hostile_ssh_output_is_sanitized_in_warning(self, capsys):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", side_effect=[
+            ssh_answer("evil \x1b]52;c;aGk=\x07 banner", returncode=0),
+            make_completed_process(returncode=128, stderr="ERROR: Repository not found."),
+        ]):
+            t.preflight(expected_user="alice")
+        assert "\x1b" not in capsys.readouterr().err
+
+    def test_https_never_probes_identity(self):
+        t = make_transport(protocol="https", has_credential_helper=True)
+        with patch("subprocess.run", return_value=make_completed_process(
+                returncode=128, stderr="remote: Repository not found.")) as m:
+            t.preflight(expected_user="alice")
+        assert m.call_count == 1
+        assert m.call_args.args[0][:2] == ["git", "ls-remote"]
+
+    def test_no_expected_user_keeps_ls_remote(self):
+        t = make_transport(protocol="ssh")
+        with patch("subprocess.run", return_value=make_completed_process(
+                returncode=128, stderr="ERROR: Repository not found.")) as m:
+            t.preflight()
+        assert m.call_args.args[0][:2] == ["git", "ls-remote"]
+
+
+class TestDiscoverGitSshCommandPrecedence:
+    """git prefers GIT_SSH_COMMAND over core.sshCommand; so does discovery (#121)."""
+
+    def test_env_beats_core_ssh_command(self, tmp_path):
+        with patch.dict(os.environ, {"GIT_SSH_COMMAND": "ssh -i /env"}), \
+             patch("gh_safe_repo.git_transport._gh_get_protocol", return_value="ssh"), \
+             patch("gh_safe_repo.git_transport._git_config_get",
+                   return_value="ssh -i /config") as cfg:
+            t = discover_transport(str(tmp_path))
+        assert t.ssh_command == "ssh -i /env"
+        cfg.assert_not_called()
+
+    def test_core_ssh_command_used_without_env(self, tmp_path):
+        env = {k: v for k, v in os.environ.items() if k != "GIT_SSH_COMMAND"}
+        with patch.dict(os.environ, env, clear=True), \
+             patch("gh_safe_repo.git_transport._gh_get_protocol", return_value="ssh"), \
+             patch("gh_safe_repo.git_transport._git_config_get",
+                   return_value="ssh -i /config"):
+            t = discover_transport(str(tmp_path))
+        assert t.ssh_command == "ssh -i /config"
+
+
 class TestSecurityKeyHint:
     def test_recognises_sk_signing_failure(self):
         from gh_safe_repo.git_transport import security_key_hint

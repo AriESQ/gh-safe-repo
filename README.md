@@ -214,7 +214,10 @@ The repo is initialized so a default branch exists (branch protection needs
 one), then the auto-generated `README.md` is deleted so you start clean. Set
 `auto_init = true` in config to keep it. The owner must match your
 authenticated account; this guards against mistakes on multi-account
-systems.
+systems. If the owner is another account logged in to `gh`, the error
+suggests `gh auth switch -u <owner>`, or its token for one run:
+`GH_TOKEN=$(gh auth token --user <owner>) gh-safe-repo ...` (a
+`GITHUB_TOKEN` already in the environment takes priority over both).
 
 ### Push an existing local project
 
@@ -258,7 +261,10 @@ alone](#what-fix-leaves-alone)), or one line, `All settings compliant.`, when
 nothing does. It never prompts and never changes anything. The exit code
 makes it a CI gate: `0` when compliant, `3` when `fix` would change
 something; `PRESERVE` rows are not drift. You need admin on the repo, which
-may be owned by an org or another account.
+may be owned by an org or another account. When the repo's owner is not the
+authenticated account, the header names the account doing the work
+(`Auditing acme/widgets as alice...`), so a run under the wrong `gh`
+account is visible without `--debug`.
 
 ### Fix a repo you already have
 
@@ -641,7 +647,7 @@ no checks and `"ok": true`.
 | Code | Meaning |
 |---|---|
 | `0` | Success, or the user declined at an interactive prompt. For `audit`, the repo is compliant (`PRESERVE` rows do not count). For the mutating commands, success means everything applied was read back and verified |
-| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure, or a failed code push (the repo exists but may be empty or hold only some branches and tags; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure (including an SSH key that belongs to a different account than the token), or a failed code push (the repo exists but may be empty or hold only some branches and tags; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
 | `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, the `push` path is a git repo with no commits (or no local branch), `--config` with `--no-config`, an unknown flag. Nothing was created |
 | `3` | `audit` found settings that `fix` would change (`ADD`/`UPDATE`/`DELETE` rows; never `PRESERVE`). Or a mutating command applied the changes but at least one did not stick when read back |
 | `130` | Interrupted with Ctrl-C |
@@ -777,6 +783,35 @@ key per directory (`includeIf` plus `core.sshCommand`), run `copy` from a
 directory where that applies, or ssh falls back to your default key and
 fails with `Permission denied (publickey)`. The error then names the
 directory and the `core.sshCommand` it found; `--debug` prints it up front.
+A `GIT_SSH_COMMAND` in the environment wins over `core.sshCommand`, as it
+does for git itself.
+
+#### Which account pushes
+
+The API calls run as the token's account; the push runs as whichever
+account your git credential belongs to. With two accounts on one machine
+these can differ. `gh` stores `git_protocol` per host, not per account, so
+both accounts always share one protocol.
+
+- **SSH:** before creating the repo, the credential check runs `ssh -T
+  git@github.com` with the same ssh command the push will use and reads
+  which account the key belongs to (`Hi <login>!`). If that is not the
+  token's account (compared case-insensitively), the run stops with exit
+  `1` and nothing is created. The error suggests a per-directory
+  `core.sshCommand` (via `includeIf`), a one-run `GIT_SSH_COMMAND`, an
+  `IdentityFile` under `Host github.com` in `~/.ssh/config`, or HTTPS. A
+  `Host` alias is not used: gh-safe-repo always connects to
+  `git@github.com`. If the answer can't be read (a custom `GIT_SSH`
+  program, an unexpected banner), a warning says the account was not
+  checked and the plain access check from before runs instead.
+- **HTTPS:** not checked. `gh auth git-credential` (set up by `gh auth
+  setup-git`) follows `GH_TOKEN`, so with `GH_TOKEN=$(gh auth token --user
+  <owner>)` both sides use that account. Other helpers (osxkeychain, Git
+  Credential Manager) return whatever account they stored. The token-in-URL
+  fallback always uses the API token.
+
+The simplest setup that avoids a mismatch is one `GH_CONFIG_DIR` per
+account plus `core.sshCommand` set per directory with `includeIf`.
 
 ### `push <path> <owner/repo>`
 
@@ -789,11 +824,13 @@ of the three.
 
 1. The [pre-flight scanner](#pre-flight-scanner) runs on the directory.
 2. You review findings and confirm, or abort.
-3. Your git credentials for `github.com` are checked (an SSH probe when the
-   protocol is `ssh`; HTTPS is trusted). This runs right before creation so
-   a hardware key's touch is close to the real push. The check waits up to
-   45 seconds over SSH and 15 over HTTPS; a timeout says the key was
-   probably waiting for a touch.
+3. Your git credentials for `github.com` are checked: over SSH, `ssh -T`
+   also confirms the key belongs to the authenticated account (see [Which
+   account pushes](#which-account-pushes)); over HTTPS, a `git ls-remote`.
+   It is one connection, so one touch on a hardware key, and a missed touch
+   is retried once. This runs right before creation so the touch is close
+   to the real push. The check waits up to 45 seconds over SSH and 15 over
+   HTTPS; a timeout says the key was probably waiting for a touch.
 4. The repo is created; Actions, security and immutable-release settings are applied.
 5. Every local branch and tag is pushed in a single `git push` from a bare
    clone, so branches other than the checked-out one are included and a

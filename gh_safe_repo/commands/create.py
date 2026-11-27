@@ -15,7 +15,7 @@ from .. import actions_usage
 from ..diff import Change, ChangeCategory, ChangeType, Plan
 from ..display import safe_display
 from ..errors import APIError, AuthError, ConfigError, RepoExistsError, SafeRepoError
-from ..github_client import LocalWiring
+from ..github_client import COPY_REFSPECS, LocalWiring
 from ..local_repo import NO_BRANCHES, NO_COMMITS, branch_state, is_git_checkout
 from ..git_transport import (
     discover_transport,
@@ -202,15 +202,19 @@ def _abort_on_push_failure(e, owner, repo_name, recovery, transport=None):
 
     The repo already exists, so re-running `create` cannot recover. Say so,
     give the exact commands, and exit 1 so callers never mistake this for
-    success. Branch and tag protection are skipped: there is no branch yet,
-    and `fix` applies both once the code is pushed.
+    success. Branch and tag protection are skipped: the branch may not exist
+    yet, and `fix` applies both once the code is pushed.
+
+    Never say the repo is empty: a single push can land some refs before
+    others are rejected (#171 pushed every branch, then failed on refs/pull).
     """
     error(f"Code push failed: {e}")
     hint = _auth_hint(transport, str(e))
     if hint:
         error(f"Likely cause: {hint}")
     lines = [
-        f"\nThe repository {owner}/{repo_name} was created and configured, but is empty.",
+        f"\nThe repository {owner}/{repo_name} was created and configured, but the code "
+        "push did not complete: it may be empty or hold only some branches and tags.",
         "Re-running `create` will fail because the repo now exists. To finish:",
     ]
     lines += [f"  {cmd}" for cmd in recovery]
@@ -218,6 +222,23 @@ def _abort_on_push_failure(e, owner, repo_name, recovery, transport=None):
     # Recovery commands name the local path and branch: sanitize per line.
     print("\n".join(safe_display(line, multiline=True) for line in lines), file=sys.stderr)
     sys.exit(1)
+
+
+def _copy_recovery(src, dest, repo_name, sep=None):
+    """The commands that redo a `copy` push by hand (#171).
+
+    A bare clone holds branches and tags but not GitHub's read-only
+    refs/pull/*, and the explicit refspecs push exactly those two
+    namespaces. Never `--mirror`: GitHub rejects the pull refs it would
+    push. Re-running after a partial push is safe: refs already there at
+    the same SHA are up to date. Returns a list, or one line joined by sep.
+    """
+    refspecs = " ".join(f"'{r}'" for r in COPY_REFSPECS)
+    cmds = [
+        f"git clone --bare {src} {repo_name}.git",
+        f"git -C {repo_name}.git push {dest} {refspecs}",
+    ]
+    return sep.join(cmds) if sep else cmds
 
 
 def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
@@ -241,8 +262,8 @@ def _code_probes(client, owner, repo_name, *, local_path=None, wiring=None,
         probes = mirrored_ref_probes(
             client, from_owner, from_repo, owner, repo_name,
             remediation=(
-                f"Mirror it again: git clone --mirror {src} {repo_name}.git && "
-                f"git -C {repo_name}.git push --mirror {dest}; {then_fix}."
+                f"Copy it again: {_copy_recovery(src, dest, repo_name, ' && ')}; "
+                f"{then_fix}."
             ),
         )
         if source_default_branch:
@@ -495,7 +516,7 @@ def run(args):
             type=ChangeType.ADD,
             category=ChangeCategory.FILE,
             key="code",
-            new=f"Mirror all refs from {from_owner}/{from_repo}",
+            new=f"Copy all branches and tags from {from_owner}/{from_repo}",
         ))
 
     # Add scan + code push steps to the plan for `push`
@@ -639,11 +660,11 @@ def run(args):
     except APIError as e:
         warn(f"Immutable releases setting failed: {e}")
 
-    # Mirror code from source repo (`copy`)
+    # Copy branches and tags from the source repo (`copy`)
     if args.from_repo:
         _info(f"\nCopying code from {_BOLD}{from_owner}/{from_repo}{_RESET}...")
         try:
-            # A mirror push carries no HEAD: set the source's default branch
+            # The push carries no HEAD: set the source's default branch
             # explicitly, and protect that branch rather than the name the
             # empty repo was created with.
             # Push to the canonical destination owner, not the source's (#168).
@@ -652,14 +673,13 @@ def run(args):
                              default_branch=source_default_branch)
             if source_default_branch:
                 bp_plugin.branches = [source_default_branch]
-            _info(_c(_GREEN, f"  Code mirrored successfully."))
+            _info(_c(_GREEN, f"  Code copied successfully."))
         except APIError as e:
             src = client.transport.persistent_url(from_owner, from_repo)
             dest = client.transport.persistent_url(owner, repo_name)
-            _abort_on_push_failure(e, owner, repo_name, [
-                f"git clone --mirror {src} {repo_name}.git",
-                f"git -C {repo_name}.git push --mirror {dest}",
-            ], transport=client.transport)
+            _abort_on_push_failure(e, owner, repo_name,
+                                   _copy_recovery(src, dest, repo_name),
+                                   transport=client.transport)
 
     # Push code from local directory (`push`)
     wiring = None

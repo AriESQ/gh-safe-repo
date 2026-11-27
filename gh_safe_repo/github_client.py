@@ -23,6 +23,12 @@ from .errors import APIError, AuthError
 from .git_transport import GitTransport
 from .local_repo import is_git_checkout
 
+# What `copy` pushes from its bare clone: every branch and tag, in one push
+# (#171). Never --mirror: a mirror clone also holds GitHub's read-only
+# refs/pull/*, which GitHub rejects as hidden refs, and a mirror push deletes
+# destination refs the source lacks (#168).
+COPY_REFSPECS = ("refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*")
+
 
 @dataclass(frozen=True)
 class LocalWiring:
@@ -258,40 +264,47 @@ class GitHubClient:
     def copy_repo(self, *, source_owner, source_repo, dest_owner, dest_repo,
                   default_branch=None):
         """
-        Mirror-clone source_owner/source_repo and push all refs to
-        dest_owner/dest_repo. Uses the user's git credentials via
+        Bare-clone source_owner/source_repo and push every branch and tag
+        to dest_owner/dest_repo. Uses the user's git credentials via
         self.transport.
 
-        The owners are separate keyword-only arguments on purpose (#168):
-        `copy some-org/src me/dst` once pushed to some-org/dst, and a
-        mirror push to a repo the user can write overwrites and deletes
-        its refs. Pass the canonical login (ctx.owner) as dest_owner;
-        git push URLs are case-sensitive.
+        `git clone --bare` fetches refs/heads/* and refs/tags/* (annotated
+        and lightweight) but not GitHub's refs/pull/*, which a mirror clone
+        downloads and GitHub then refuses ("deny updating a hidden ref",
+        #171). Both namespaces go up in one `git push` with explicit
+        refspecs, so a security key costs one touch (#79).
 
-        default_branch (the source's) is then set on dest_repo: a mirror
-        push does not carry HEAD, so GitHub would otherwise pick its own
-        default (#77 verifies it).
+        The owners are separate keyword-only arguments on purpose (#168):
+        `copy some-org/src me/dst` once pushed to some-org/dst. Pass the
+        canonical login (ctx.owner) as dest_owner; git push URLs are
+        case-sensitive.
+
+        default_branch (the source's) is then set on dest_repo: the push
+        does not carry HEAD, so GitHub would otherwise pick its own default
+        (#77 verifies it).
         """
         transport = self._require_transport()
         source_url = transport.remote_url(source_owner, source_repo)
         dest_url = transport.remote_url(dest_owner, dest_repo)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            mirror_path = os.path.join(tmpdir, "mirror")
+            work_path = os.path.join(tmpdir, "copy.git")
 
             try:
-                transport.run_remote(["git", "clone", "--mirror", source_url, mirror_path])
+                transport.run_remote(["git", "clone", "--bare", source_url, work_path])
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git clone failed for {source_url}: {(e.stderr or '').strip()}"
                 ))
 
             transport.run(
-                ["git", "-C", mirror_path, "remote", "set-url", "--push", "origin", dest_url],
+                ["git", "-C", work_path, "remote", "set-url", "--push", "origin", dest_url],
             )
 
             try:
-                transport.run_remote(["git", "-C", mirror_path, "push", "--mirror", "origin"])
+                transport.run_remote(
+                    ["git", "-C", work_path, "push", "origin", *COPY_REFSPECS]
+                )
             except subprocess.CalledProcessError as e:
                 raise APIError(transport.redact(
                     f"git push failed to {dest_url}: {(e.stderr or '').strip()}"

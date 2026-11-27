@@ -232,15 +232,16 @@ pushed branch and tag is checked against GitHub SHA for SHA. Details in
 The directory needs at least one commit. For a project you have only just
 `git init`-ed, see [Starting from a directory with no commits](#starting-from-a-directory-with-no-commits).
 
-### Mirror an existing repo
+### Copy an existing repo
 
 ```bash
 gh-safe-repo copy <owner/source> <owner/repo>
 gh-safe-repo copy <owner/priv> <owner/pub> --public   # scanned thoroughly first
 ```
 
-Clones the source with full history, scans it, mirrors it into the new repo,
-and copies the source's default branch, description and topics. The result
+Clones the source with full history, scans it, pushes every branch and tag
+into the new repo, and copies the source's default branch, description and
+topics. Pull requests (GitHub's read-only `refs/pull/*`) are not copied. The result
 is a new repository, not a GitHub fork: it has no "forked from" link. If you
 abort at the scan, no code reaches GitHub.
 
@@ -604,7 +605,7 @@ The creating commands add checks that only a new repo needs:
 | `file/readme` | the auto-generated README is gone (`new` without `auto_init = true`) | exit `3`, with the `gh api` command to delete it |
 | `repo/description`, `repo/topics` | `copy`: copied from the source | exit `3`, with the `gh repo edit` command |
 | `branch_protection/protected_branches`, `tag_protection/protected_tags` | the ruleset covers the default branch and configured tag patterns | exit `3` |
-| `code/branches`, `code/tags` | `push`: every pushed ref is on GitHub at the pushed SHA. `copy`: every ref of the source is on the new repo at the source's SHA. Annotated tags compare by tag object SHA | exit `1`, with the push or mirror command to re-run |
+| `code/branches`, `code/tags` | `push`: every pushed ref is on GitHub at the pushed SHA. `copy`: every branch and tag of the source is on the new repo at the source's SHA. Annotated tags compare by tag object SHA | exit `1`, with the push or copy commands to re-run |
 | `repo/default_branch` | `push`/`copy`: the default branch is the one chosen | exit `3`, with the `gh repo edit --default-branch` command |
 | `local/origin`, `local/tracking` | `push`: your repo's `origin` is the new repo and the current branch tracks it | warning only (`"advisory": true`), with the `git remote` or `git push -u` command. An `origin` that already pointed elsewhere is reported as left alone |
 
@@ -640,7 +641,7 @@ no checks and `"ok": true`.
 | Code | Meaning |
 |---|---|
 | `0` | Success, or the user declined at an interactive prompt. For `audit`, the repo is compliant (`PRESERVE` rows do not count). For the mutating commands, success means everything applied was read back and verified |
-| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure, or a failed code push (the repo exists but is empty; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
+| `1` | Operational failure: auth, permissions, API error, a pre-flight scan that blocked the run, a confirmation prompt that hit end of input without `--yes`, a credential pre-flight failure, or a failed code push (the repo exists but may be empty or hold only some branches and tags; recovery commands are printed). For `create`, also a fatal verification check. For `scan`, also critical findings present |
 | `2` | Usage error: bad `owner/repo`, path is not a directory or not a git repo, the `push` path is a git repo with no commits (or no local branch), `--config` with `--no-config`, an unknown flag. Nothing was created |
 | `3` | `audit` found settings that `fix` would change (`ADD`/`UPDATE`/`DELETE` rows; never `PRESERVE`). Or a mutating command applied the changes but at least one did not stick when read back |
 | `130` | Interrupted with Ctrl-C |
@@ -840,8 +841,9 @@ create a branch with `git switch -c <branch>` first.
 3. You review findings and confirm, or abort.
 4. Git credentials are checked, as above.
 5. The repo is created; Actions, security and immutable-release settings are applied.
-6. History is mirrored (`git clone --mirror` + `git push --mirror`) and the
-   source's default branch is set.
+6. Every branch and tag is copied (`git clone --bare`, then one `git push`
+   with `refs/heads/*` and `refs/tags/*` refspecs; never `--mirror`, whose
+   `refs/pull/*` GitHub rejects) and the source's default branch is set.
 7. Branch and tag protection are applied.
 8. [Verification](#verification): the new repo's branches and tags are
    compared with the source's, SHA for SHA.
@@ -1184,7 +1186,7 @@ gh-safe-repo new <owner/repo>
       │   ├─ PUT  …/vulnerability-alerts, …/automated-security-fixes, …/private-vulnerability-reporting
       │   ├─ PATCH /repos/{owner}/{repo}  (security_and_analysis)
       │   ├─ PUT  …/immutable-releases
-      │   ├─ git push (publish) or git push --mirror (mirror)
+      │   ├─ git push (push) or git push refs/heads/* refs/tags/* (copy)
       │   └─ POST/PATCH …/rulesets  (branch and tag protection, after the push)
       │
       └─ Verify: read every changed setting back

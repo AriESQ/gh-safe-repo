@@ -10,8 +10,9 @@ HELP = "Create a repo and copy an existing one into it, history and all (not a f
 def add_arguments(parser):
     parser.description = (
         "Copy an existing repository into a new one. The source is cloned\n"
-        "with full history, scanned for secrets, and mirrored into the new\n"
-        "repo along with its default branch, description and topics.\n"
+        "with full history, scanned for secrets, and every branch and tag\n"
+        "is pushed to the new repo along with its default branch,\n"
+        "description and topics. Pull requests are not copied.\n"
         "The result is a new repository, not a GitHub fork: it has no\n"
         "'forked from' link."
     )

@@ -9,6 +9,9 @@ since the initial release.
 
 ## [Unreleased]
 
+### Fixed
+- The closing "Done" banner's top and bottom borders were 2 and 1 columns shorter than its content rows, so the right edge did not line up.
+
 ## [0.15.1] - 2026-11-27
 
 ### Fixed

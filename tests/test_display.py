@@ -453,3 +453,32 @@ class TestPlanAndBanners:
         # The box is sized from the escaped text, so its right edge lines up.
         widths = {len(line) for line in out.splitlines() if line.startswith("│")}
         assert len(widths) == 1
+
+
+class TestBannerBorders:
+    """Every line of a closing banner has the same display width (top and
+    bottom borders were 2 and 1 columns short of the content rows)."""
+
+    ANSI = __import__("re").compile(r"\x1b\[[0-9;]*m")
+
+    def _widths(self, out):
+        lines = [self.ANSI.sub("", l) for l in out.splitlines() if l.strip()]
+        assert lines[0].startswith("╭") and lines[-1].startswith("╰")
+        return {len(l) for l in lines}
+
+    @pytest.mark.parametrize("coloured", [False, True])
+    @pytest.mark.parametrize("call", [
+        lambda: print_success("octocat", "demo"),
+        lambda: print_success("octocat", "demo", local_push=True, protocol="ssh"),
+        lambda: _common.print_success_fix("octocat", "demo"),
+    ])
+    def test_all_lines_equal_width(self, request, capsys, coloured, call):
+        if coloured:
+            request.getfixturevalue("colour")
+        else:
+            for name in TOOL_CODES:
+                request.getfixturevalue("monkeypatch").setattr(_common, name, "")
+        call()
+        out = capsys.readouterr().out
+        assert ("\x1b[" in out) is coloured
+        assert len(self._widths(out)) == 1
